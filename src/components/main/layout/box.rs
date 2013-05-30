@@ -8,7 +8,7 @@ use css::node_style::StyledNode;
 use layout::context::LayoutContext;
 use layout::display_list_builder::{DisplayListBuilder, ToGfxColor};
 use layout::flow::FlowContext;
-use layout::model::BoxModel;
+use layout::model::{BoxModel};
 use layout::text;
 
 use core::cell::Cell;
@@ -374,14 +374,6 @@ pub impl RenderBox {
     fn get_min_width(&self, _: &LayoutContext) -> Au {
         // FIXME(pcwalton): I think we only need to calculate this if the damage says that CSS
         // needs to be restyled.
-        do self.with_mut_base |base| {
-            // TODO(pcwalton): Hmm, it seems wasteful to have the box model stuff inside every
-            // render box if they can only be nonzero if the box is an element.
-            if base.node.is_element() {
-                base.model.populate(base.node.style())
-            }
-        }
-
         match *self {
             // TODO: This should account for the minimum width of the box element in isolation.
             // That includes borders, margins, and padding, but not child widths. The block
@@ -456,38 +448,15 @@ pub impl RenderBox {
         (Au(0), Au(0))
     }
 
+    fn with_model<R>(&self, callback: &fn(&mut BoxModel) -> R) ->  R {
+        do self.with_imm_base |base| {
+            callback(&mut base.model)
+        }
+    }
+
     /// The box formed by the content edge as defined in CSS 2.1 § 8.1. Coordinates are relative to
     /// the owning flow.
     fn content_box(&self) -> Rect<Au> {
-        let origin = self.position().origin;
-        match *self {
-            ImageRenderBoxClass(image_box) => {
-                Rect {
-                    origin: origin,
-                    size: image_box.base.position.size,
-                }
-            },
-            GenericRenderBoxClass(*) => {
-                self.position()
-
-                // FIXME: The following hits an ICE for whatever reason.
-
-                /*
-                let origin = self.d().position.origin;
-                let size  = self.d().position.size;
-                let (offset_left, offset_right) = self.get_used_width();
-                let (offset_top, offset_bottom) = self.get_used_height();
-
-                Rect {
-                    origin: Point2D(origin.x + offset_left, origin.y + offset_top),
-                    size: Size2D(size.width - (offset_left + offset_right),
-                                 size.height - (offset_top + offset_bottom))
-                }
-                */
-            },
-            TextRenderBoxClass(*) => self.position(),
-            UnscannedTextRenderBoxClass(*) => fail!(~"Shouldn't see unscanned boxes here.")
-        }
     }
 
     /// The box formed by the border edge as defined in CSS 2.1 § 8.1. Coordinates are relative to
