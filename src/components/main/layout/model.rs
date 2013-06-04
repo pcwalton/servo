@@ -133,7 +133,7 @@ impl BoxModel {
                 // FIXME(eatkinson): Handle 'em' and 'pt' correctly
                 Au::from_frac_px(v)
             }
-            CSSPaddingPercentage(p) => cb_width.scale_by(p)
+            CSSPaddingPercentage(p) => cb_width.scale_by(p/100.0)
         }
     }
 
