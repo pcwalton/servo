@@ -8,7 +8,7 @@ use css::node_style::StyledNode;
 use layout::context::LayoutContext;
 use layout::display_list_builder::{DisplayListBuilder, ExtraDisplayListData, ToGfxColor};
 use layout::flow::FlowContext;
-use layout::model::{BoxModel};
+use layout::model::BoxModel;
 use layout::text;
 
 use core::cell::Cell;
@@ -181,7 +181,7 @@ impl RenderBoxBase {
 pub impl RenderBox {
     /// Borrows this render box immutably in order to work with its common data.
     #[inline(always)]
-    fn with_imm_base<R>(&self, callback: &fn(&RenderBoxBase) -> R) -> R {
+    fn with_base<R>(&self, callback: &fn(&RenderBoxBase) -> R) -> R {
         match *self {
             GenericRenderBoxClass(generic_box) => callback(generic_box),
             ImageRenderBoxClass(image_box) => {
@@ -215,7 +215,7 @@ pub impl RenderBox {
 
     /// A convenience function to return the position of this box.
     fn position(&self) -> Rect<Au> {
-        do self.with_imm_base |base| {
+        do self.with_base |base| {
             base.position
         }
     }
@@ -454,12 +454,20 @@ pub impl RenderBox {
         }
     }
 
+        do self.with_base |base| {
+            base.model.border.left + base.model.padding.left +
+            base.model.border.right + base.model.padding.right
+    fn with_model<R>(&self, callback: &fn(&mut BoxModel) -> R) ->  R {
+        callback(&mut base.model)
+    }
     fn content_box(&self) -> Rect<Au> {
-        do self.with_imm_base |base| {
-            let origin = Point2D(base.position.origin.x + base.model.border.left + base.model.padding.left, 
-                base.position.origin.y);
+        do self.with_base |base| {
+            let origin = Point2D(base.position.origin.x +
+                                 base.model.border.left +
+                                 base.model.padding.left,
+                                 base.position.origin.y);
             let size = Size2D(base.position.size.width, 
-                base.position.size.height);
+                              base.position.size.height);
             Rect(origin, size)
         }
     }
@@ -481,12 +489,12 @@ pub impl RenderBox {
     /// A convenience function to access the computed style of the DOM node that this render box
     /// represents.
     fn style(&self) -> CompleteStyle {
-        self.with_imm_base(|base| base.node.style())
+        self.with_base(|base| base.node.style())
     }
 
     /// A convenience function to access the DOM node that this render box represents.
     fn node(&self) -> AbstractNode<LayoutView> {
-        self.with_imm_base(|base| base.node)
+        self.with_base(|base| base.node)
     }
 
     /// Returns the nearest ancestor-or-self `Element` to the DOM node that this render box
@@ -494,7 +502,7 @@ pub impl RenderBox {
     ///
     /// If there is no ancestor-or-self `Element` node, fails.
     fn nearest_ancestor_element(&self) -> AbstractNode<LayoutView> {
-        do self.with_imm_base |base| {
+        do self.with_base |base| {
             let mut node = base.node;
             while !node.is_element() {
                 match node.parent_node() {

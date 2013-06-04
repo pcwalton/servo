@@ -22,21 +22,25 @@ use newcss::values::{CSSBorderWidthThick, CSSBorderWidthThin};
 use newcss::values::{CSSWidth, CSSWidthLength, CSSWidthPercentage, CSSWidthAuto};
 use newcss::values::{CSSMargin, CSSMarginLength, CSSMarginPercentage, CSSMarginAuto};
 use newcss::values::{CSSPadding, CSSPaddingLength, CSSPaddingPercentage};
+
 /// Encapsulates the borders, padding, and margins, which we collectively call the "box model".
 pub struct BoxModel {
+    /// The size of the borders.
     border: SideOffsets2D<Au>,
+    /// The size of the padding.
     padding: SideOffsets2D<Au>,
+    /// The size of the margins.
     margin: SideOffsets2D<Au>,
     cb_width: Au,
 }
 
 /// Useful helper data type when computing values for blocks and positioned elements.
-pub enum MaybeAuto{
+pub enum MaybeAuto {
     Auto,
     Specified(Au),
 }
 
-impl MaybeAuto{
+impl MaybeAuto {
     pub fn from_margin(margin: CSSMargin, cb_width: Au) -> MaybeAuto{
         match margin {
             CSSMarginAuto => Auto,
@@ -84,7 +88,7 @@ impl Zero for BoxModel {
 }
 
 impl BoxModel {
-    /// Populates the box model parameters from the given computed style.
+    /// Populates the box model border parameters from the given computed style.
     pub fn compute_borders(&mut self, style: CompleteStyle) {
         // Compute the borders.
         self.border.top = self.compute_border_width(style.border_top_width());
@@ -93,11 +97,16 @@ impl BoxModel {
         self.border.left = self.compute_border_width(style.border_left_width());
     }
 
-    pub fn compute_padding(&mut self, style: CompleteStyle, cb_width: Au){
-        self.padding.top = self.compute_padding_length(style.padding_top(), cb_width);
-        self.padding.right = self.compute_padding_length(style.padding_right(), cb_width);
-        self.padding.bottom = self.compute_padding_length(style.padding_bottom(), cb_width);
-        self.padding.left = self.compute_padding_length(style.padding_left(), cb_width);
+    /// Populates the box model padding parameters from the given computed style.
+    pub fn compute_padding(&mut self, style: CompleteStyle, content_box_width: Au) {
+        self.padding.top = self.compute_padding_length(style.padding_top(),
+                                                       content_box_width);
+        self.padding.right = self.compute_padding_length(style.padding_right(),
+                                                         content_box_width);
+        self.padding.bottom = self.compute_padding_length(style.padding_bottom(),
+                                                          content_box_width);
+        self.padding.left = self.compute_padding_length(style.padding_left(),
+                                                        content_box_width);
     }
 
     pub fn noncontent_width(&self) -> Au {
@@ -150,7 +159,7 @@ impl RenderBox {
                                                                list: &Cell<DisplayList<E>>,
                                                                abs_bounds: &Rect<Au>) {
         // Fast path.
-        let border = do self.with_imm_base |base| {
+        let border = do self.with_base |base| {
             base.model.border
         };
         if border.is_zero() {

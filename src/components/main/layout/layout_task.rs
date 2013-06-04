@@ -36,7 +36,7 @@ use script::layout_interface::{AddStylesheetMsg, BuildData, BuildMsg, ContentBox
 use script::layout_interface::{HitTestQuery, ContentBoxResponse, HitTestResponse};
 use script::layout_interface::{ContentBoxesQuery, ContentBoxesResponse, ExitMsg, LayoutQuery};
 use script::layout_interface::{LayoutResponse, LayoutTask, MatchSelectorsDamage, Msg, NoDamage};
-use script::layout_interface::{QueryMsg, ReflowDamage};
+use script::layout_interface::{QueryMsg, ReflowDamage, ReflowForDisplay};
 use script::script_task::{ScriptMsg, SendEventMsg};
 use servo_net::image_cache_task::{ImageCacheTask, ImageResponseMsg};
 use servo_net::local_image_cache::LocalImageCache;
@@ -115,12 +115,10 @@ impl Layout {
         let image_cache = self.local_image_cache;
         let font_ctx = self.font_ctx;
         let screen_size = self.screen_size.unwrap();
-        let doc_url = self.doc_url.clone();
 
         LayoutContext {
             image_cache: image_cache,
             font_ctx: font_ctx,
-            doc_url: doc_url.unwrap(),
             screen_size: Rect(Point2D(Au(0), Au(0)), screen_size),
         }
     }
@@ -227,29 +225,31 @@ impl Layout {
             };
         }
 
-        // Build the display list, and send it to the renderer.
-        do profile(time::LayoutDispListBuildCategory, self.profiler_chan.clone()) {
-            let builder = DisplayListBuilder {
-                ctx: &layout_ctx,
-            };
+        // Build the display list if necessary, and send it to the renderer.
+        if data.goal == ReflowForDisplay {
+            do profile(time::LayoutDispListBuildCategory, self.profiler_chan.clone()) {
+                let builder = DisplayListBuilder {
+                    ctx: &layout_ctx,
+                };
 
-            let display_list = @Cell(DisplayList::new());
-            
-            // TODO: Set options on the builder before building.
-            // TODO: Be smarter about what needs painting.
-            layout_root.build_display_list(&builder, &layout_root.position(), display_list);
+                let display_list = @Cell(DisplayList::new());
 
-            let root_size = do layout_root.with_base |base| {
-                base.position.size
-            };
+                // TODO: Set options on the builder before building.
+                // TODO: Be smarter about what needs painting.
+                layout_root.build_display_list(&builder, &layout_root.position(), display_list);
 
-            let render_layer = RenderLayer {
-                display_list: display_list.take(),
-                size: Size2D(root_size.width.to_px() as uint, root_size.height.to_px() as uint)
-            };
+                let root_size = do layout_root.with_base |base| {
+                    base.position.size
+                };
 
-            self.render_task.channel.send(RenderMsg(render_layer));
-        } // time(layout: display list building)
+                let render_layer = RenderLayer {
+                    display_list: display_list.take(),
+                    size: Size2D(root_size.width.to_px() as uint, root_size.height.to_px() as uint)
+                };
+
+                self.render_task.channel.send(RenderMsg(render_layer));
+            } // time(layout: display list building)
+        }
 
         // Tell script that we're done.
         data.script_join_chan.send(());
@@ -346,10 +346,12 @@ impl Layout {
                         let display_list = &display_list.take().list;
                         for display_list.each_reverse |display_item| {
                             let bounds = display_item.bounds();
+
+                            // FIXME(pcwalton): Move this to be a method on Rect.
                             if x <= bounds.origin.x + bounds.size.width &&
-                               bounds.origin.x <= x &&
-                               y < bounds.origin.y + bounds.size.height &&
-                               bounds.origin.y <  y {
+                                    x >= bounds.origin.x &&
+                                    y < bounds.origin.y + bounds.size.height &&
+                                    y >= bounds.origin.y {
                                 resp = Ok(HitTestResponse(display_item.base().extra.node()));
                                 break;
                             }
