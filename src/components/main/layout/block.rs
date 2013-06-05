@@ -255,18 +255,18 @@ impl BlockFlowData {
         let mut cur_y = Au(0);
         let mut top_offset = Au(0);
 
-        self.box.map(|&box| {
+        for self.box.each |&box| {
             do box.with_model |model| {
                 top_offset = model.margin.top + model.border.top + model.padding.top;
                 cur_y += top_offset;
             }
-        });
+        };
 
-        self.box.map(|&box| {
+        for self.box.each |&box| {
             do box.with_model |model| {
                 cur_y += model.margin.top + model.border.top + model.padding.top;
             }
-        });
+        };
 
         for BlockFlow(self).each_child |kid| {
             do kid.with_mut_base |child_node| {
