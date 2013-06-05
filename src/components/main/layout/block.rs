@@ -207,17 +207,16 @@ impl BlockFlowData {
                 let available_width = remaining_width - model.noncontent_width();
 
                 // Top and bottom margins for blocks are 0 if auto.
-                let margin_top = MaybeAuto::from_margin(style.margin_top());
+                let margin_top = MaybeAuto::from_margin(style.margin_top(), remaining_width);
                 let margin_top = margin_top.spec_or_default(Au(0));
-                let margin_bottom = MaybeAuto::from_margin(style.margin_bottom());
+                let margin_bottom = MaybeAuto::from_margin(style.margin_bottom(), remaining_width);
                 let margin_bottom = margin_bottom.spec_or_default(Au(0));
 
                 let (width, margin_left, margin_right) =
-                    (MaybeAuto::from_width(style.width()),
-                     MaybeAuto::from_margin(style.margin_left()),
-                     MaybeAuto::from_margin(style.margin_right()));
+                    (MaybeAuto::from_width(style.width(), remaining_width),
+                     MaybeAuto::from_margin(style.margin_left(), remaining_width),
+                     MaybeAuto::from_margin(style.margin_right(), remaining_width));
 
-                // FIXME(pcwalton): We discard the width here. Is that correct?
                 let (width, margin_left, margin_right) = self.compute_horiz(width,
                                                                             margin_left,
                                                                             margin_right,

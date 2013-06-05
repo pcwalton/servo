@@ -454,12 +454,6 @@ pub impl RenderBox {
         }
     }
 
-        do self.with_base |base| {
-            base.model.border.left + base.model.padding.left +
-            base.model.border.right + base.model.padding.right
-    fn with_model<R>(&self, callback: &fn(&mut BoxModel) -> R) ->  R {
-        callback(&mut base.model)
-    }
     fn content_box(&self) -> Rect<Au> {
         do self.with_base |base| {
             let origin = Point2D(base.position.origin.x +
