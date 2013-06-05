@@ -82,6 +82,7 @@ impl WindowMethods<Application> for Window {
             glut::timer_func(50, *register_timer_callback);
         };
 
+
         // Register event handlers.
         do glut::reshape_func(window.glut_window) |width, height| {
             match window.resize_callback {
