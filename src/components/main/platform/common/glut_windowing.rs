@@ -7,15 +7,17 @@
 /// GLUT is a very old and bare-bones toolkit. However, it has good cross-platform support, at
 /// least on desktops. It is designed for testing Servo without the need of a UI.
 
-use windowing::{ApplicationMethods, CompositeCallback, LoadUrlCallback, ClickCallback};
-use windowing::{ResizeCallback, ScrollCallback, ZoomCallback, WindowMethods};
+use windowing::{ApplicationMethods, CompositeCallback, LoadUrlCallback, MouseCallback};
+use windowing::{ResizeCallback, ScrollCallback, WindowMethods, WindowMouseEvent, WindowClickEvent};
+use windowing::{WindowMouseDownEvent, WindowMouseUpEvent, ZoomCallback};
 
 use alert::{Alert, AlertMethods};
 use core::libc::c_int;
 use geom::point::Point2D;
 use geom::size::Size2D;
-use glut::glut::{DOUBLE, WindowHeight, WindowWidth};
+use glut::glut::{ACTIVE_CTRL, DOUBLE, WindowHeight, WindowWidth};
 use glut::glut;
+use glut::machack;
 
 /// A structure responsible for setting up and tearing down the entire windowing system.
 pub struct Application;
@@ -35,12 +37,14 @@ pub struct Window {
     composite_callback: Option<CompositeCallback>,
     resize_callback: Option<ResizeCallback>,
     load_url_callback: Option<LoadUrlCallback>,
-    click_callback: Option<ClickCallback>,
+    mouse_callback: Option<MouseCallback>,
     scroll_callback: Option<ScrollCallback>,
     zoom_callback: Option<ZoomCallback>,
 
     drag_origin: Point2D<c_int>,
-    down_button: c_int
+
+    mouse_down_button: @mut c_int,
+    mouse_down_point: @mut Point2D<c_int>,
 }
 
 impl WindowMethods<Application> for Window {
@@ -57,13 +61,13 @@ impl WindowMethods<Application> for Window {
             composite_callback: None,
             resize_callback: None,
             load_url_callback: None,
-            click_callback: None,
+            mouse_callback: None,
             scroll_callback: None,
             zoom_callback: None,
 
             drag_origin: Point2D(0, 0),
-            down_button: 0 // FIXME: Hacky solution to 2 button mouse. 
-                           // Replace with tkuehn's code.
+
+            mouse_down_button: @mut 0,
         };
 
 
@@ -84,14 +88,15 @@ impl WindowMethods<Application> for Window {
         do glut::keyboard_func |key, _, _| {
             window.handle_key(key)
         }
-        do glut::mouse_func |button, _, x, y| {
-            window.handle_click(x, y);
-            window.down_button = button;
-            window.start_drag(x, y)
+        do glut::mouse_func |button, state, x, y| {
+            if button < 3 {
+                window.handle_mouse(button, state, x, y);
+            } else {
+                window.handle_scroll(if button == 4 { -30.0 } else { 30.0 });
+            }
         }
-        do glut::motion_func |x, y| {
-            window.continue_drag(x, y)
-        }
+
+        machack::perform_scroll_wheel_hack();
 
         window
     }
@@ -121,9 +126,9 @@ impl WindowMethods<Application> for Window {
         self.load_url_callback = Some(new_load_url_callback)
     }
 
-    /// Registers a callback to be run when a click event occurs.
-    pub fn set_click_callback(&mut self, new_click_callback: ClickCallback) {
-        self.click_callback = Some(new_click_callback)
+    /// Registers a callback to be run when a mouse event occurs.
+    pub fn set_mouse_callback(&mut self, new_mouse_callback: MouseCallback) {
+        self.mouse_callback = Some(new_mouse_callback)
     }
 
     /// Registers a callback to be run when the user scrolls.
@@ -151,40 +156,61 @@ impl Window {
     /// Helper function to handle keyboard events.
     fn handle_key(&self, key: u8) {
         debug!("got key: %d", key as int);
-        if key == 12 {  // ^L
-            self.load_url()
+        match key {
+            12 => self.load_url(),                                                      // Ctrl+L
+            k if k == ('=' as u8) && (glut::get_modifiers() & ACTIVE_CTRL) != 0 => {    // Ctrl++
+                for self.zoom_callback.each |&callback| {
+                    callback(Point2D(0.0, 20.0));
+                }
+            }
+            k if k == 31 && (glut::get_modifiers() & ACTIVE_CTRL) != 0 => {             // Ctrl+-
+                for self.zoom_callback.each |&callback| {
+                    callback(Point2D(0.0, -20.0));
+                }
+            }
+            _ => {}
         }
     }
 
     /// Helper function to handle a click
-    fn handle_click(&self, x: c_int, y: c_int) {
-        match self.click_callback {
+    fn handle_mouse(&self, button: c_int, state: c_int, x: c_int, y: c_int) {
+        // FIXME(tkuehn): max pixel dist should be based on pixel density
+        let max_pixel_dist = 10f;
+        match self.mouse_callback {
             None => {}
-            Some(callback) => callback(Point2D(x as f32, y as f32)),
+            Some(callback) => {
+                let event: WindowMouseEvent;
+                match state {
+                    glut::MOUSE_DOWN => {
+                        event = WindowMouseDownEvent(button as uint, Point2D(x as f32, y as f32));
+                        *self.mouse_down_point = Point2D(x, y);
+                        *self.mouse_down_button = button;
+                    }
+                    glut::MOUSE_UP => {
+                        event = WindowMouseUpEvent(button as uint, Point2D(x as f32, y as f32));
+                        if *self.mouse_down_button == button {
+                            let pixel_dist = *self.mouse_down_point - Point2D(x, y);
+                            let pixel_dist = ((pixel_dist.x * pixel_dist.x +
+                                              pixel_dist.y * pixel_dist.y) as float).sqrt();
+                            if pixel_dist < max_pixel_dist {
+                                let click_event = WindowClickEvent(button as uint,
+                                                                   Point2D(x as f32, y as f32));
+                                callback(click_event);
+                            }
+                        }
+                    }
+                    _ => fail!("I cannot recognize the type of mouse action that occured. :-(")
+                };
+                callback(event);
+            }
         }
     }
 
-    /// Helper function to start a drag.
-    fn start_drag(&mut self, x: c_int, y: c_int) {
-        self.drag_origin = Point2D(x, y)
-    }
-
-    /// Helper function to continue a drag.
-    fn continue_drag(&mut self, x: c_int, y: c_int) {
-        let new_point = Point2D(x, y);
-        let delta = new_point - self.drag_origin;
-        self.drag_origin = new_point;
-
-        if self.down_button == 2 { 
-            match self.zoom_callback {
-                None => {}
-                Some(callback) => callback(Point2D(delta.x as f32, delta.y as f32)),
-            }
-        } else {
-            match self.scroll_callback {
-                None => {}
-                Some(callback) => callback(Point2D(delta.x as f32, delta.y as f32)),
-            }
+    /// Helper function to handle a scroll.
+    fn handle_scroll(&mut self, delta: f32) {
+        match self.scroll_callback {
+            None => {}
+            Some(callback) => callback(Point2D(0.0, delta)),
         }
     }
 
