@@ -45,12 +45,12 @@ pub fn render_layers(layer_ref: *RenderLayer,
     do time::profile(time::RenderingPrepBuffCategory, prof_chan.clone()) {
         let layer: &RenderLayer = unsafe { cast::transmute(layer_ref) };
         let mut y = 0;
-        while y < layer.size.height {
+        while y < (layer.size.height as f32 * scale).ceil() as uint {
             let mut x = 0;
-            while x < layer.size.width {
+            while x < (layer.size.width as f32 * scale).ceil() as uint {
                 // Figure out the dimension of this tile.
-                let right = uint::min(x + tile_size, layer.size.width);
-                let bottom = uint::min(y + tile_size, layer.size.height);
+                let right = uint::min(x + tile_size, (layer.size.width as f32 * scale).ceil() as uint);
+                let bottom = uint::min(y + tile_size, (layer.size.height as f32 * scale).ceil() as uint);
                 let width = right - x;
                 let height = bottom - y;
 
@@ -65,7 +65,8 @@ pub fn render_layers(layer_ref: *RenderLayer,
 
                 debug!("tile aligned_width %u", aligned_width);
 
-                let tile_rect = Rect(Point2D(x, y), Size2D(aligned_width, height));
+                let tile_rect = Rect(Point2D((x as f32 / scale) as uint, (y as f32 / scale) as uint), Size2D(aligned_width, height));
+                let screen_rect = Rect(Point2D(x, y), Size2D(aligned_width, height));
 
                 let buffer;
                 // FIXME: Try harder to search for a matching tile.
