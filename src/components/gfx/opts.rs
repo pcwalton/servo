@@ -13,7 +13,11 @@ pub struct Opts {
     render_backend: BackendType,
     n_render_threads: uint,
     tile_size: uint,
-    profiler_period: Option<f64>,
+    profiler_period: Option<f64>
+    zoom: f32,
+}
+
+#[allow(non_implicitly_copyable_typarams)]
 }
 
 #[allow(non_implicitly_copyable_typarams)]
@@ -28,6 +32,7 @@ pub fn from_cmdline_args(args: &[~str]) -> Opts {
         getopts::optopt(~"s"),  // size of tiles
         getopts::optopt(~"t"),  // threads to render with
         getopts::optflagopt(~"p"),  // profiler flag and output interval
+        getopts::optopt(~"z"),   // zoom level
     ];
 
     let opt_match = match getopts::getopts(args, opts) {
