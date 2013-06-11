@@ -37,6 +37,7 @@ pub fn render_layers(layer_ref: *RenderLayer,
                      f: RenderFn)
                      -> LayerBufferSet {
     let tile_size = opts.tile_size;
+    let scale = opts.zoom;
 
     // FIXME: Try not to create a new array here.
     let mut new_buffer_ports = ~[];
@@ -113,6 +114,7 @@ pub fn render_layers(layer_ref: *RenderLayer,
                                                                stride,
                                                                B8G8R8A8),
                         rect: tile_rect,
+                        screen_pos: screen_rect,
                         stride: stride as uint
                     };
                 //}
