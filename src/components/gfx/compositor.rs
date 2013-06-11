@@ -12,6 +12,9 @@ pub struct LayerBuffer {
     // The rect in the containing RenderLayer that this represents.
     rect: Rect<uint>,
 
+    // The position on the screen to which the buffer tile is rendered.
+    screen_pos: Rect<uint>,
+
     // NB: stride is in pixels, like OpenGL GL_UNPACK_ROW_LENGTH.
     stride: uint
 }

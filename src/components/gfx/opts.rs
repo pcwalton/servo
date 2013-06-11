@@ -13,11 +13,8 @@ pub struct Opts {
     render_backend: BackendType,
     n_render_threads: uint,
     tile_size: uint,
-    profiler_period: Option<f64>
+    profiler_period: Option<f64>,
     zoom: f32,
-}
-
-#[allow(non_implicitly_copyable_typarams)]
 }
 
 #[allow(non_implicitly_copyable_typarams)]
@@ -81,11 +78,17 @@ pub fn from_cmdline_args(args: &[~str]) -> Opts {
         None => None,
     };
 
+    let zoom: f32 = match getopts::opt_maybe_str(&opt_match, ~"z") {
+        Some(zoom_str) => f32::from_str(zoom_str).get(),
+        None => 1.0,
+    };
+
     Opts {
         urls: urls,
         render_backend: render_backend,
         n_render_threads: n_render_threads,
         tile_size: tile_size,
         profiler_period: profiler_period,
+        zoom: zoom,
     }
 }
