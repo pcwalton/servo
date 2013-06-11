@@ -8,6 +8,9 @@ use azure::AzFloat;
 use compositor::Compositor;
 use font_context::FontContext;
 use geom::matrix2d::Matrix2D;
+
+use geom::size::Size2D;
+
 use opts::Opts;
 use render_context::RenderContext;
 use render_layers::{RenderLayer, render_layers};
@@ -18,9 +21,7 @@ use core::task::SingleThreaded;
 use std::task_pool::TaskPool;
 use servo_net::util::spawn_listener;
 
-use servo_util::time::ProfilerChan;
-use servo_util::time::profile;
-use servo_util::time::time;
+use servo_util::time::{ProfilerChan, profile};
 use servo_util::time;
 
 pub enum Msg {
@@ -124,7 +125,7 @@ impl<C: Compositor + Owned> Renderer<C> {
 
     fn render(&mut self, render_layer: RenderLayer) {
         debug!("renderer: rendering");
-        do time("rendering") {
+        do profile(time::RenderingCategory, self.profiler_chan.clone()) {
             let layer_buffer_set = do render_layers(&render_layer,
                                                     &self.opts,
                                                     self.profiler_chan.clone()) |render_layer_ref,
@@ -142,8 +143,19 @@ impl<C: Compositor + Owned> Renderer<C> {
 
                         // Apply the translation to render the tile we want.
                         let matrix: Matrix2D<AzFloat> = Matrix2D::identity();
-                        let matrix = matrix.translate(&-(layer_buffer.rect.origin.x as AzFloat),
-                                                      &-(layer_buffer.rect.origin.y as AzFloat));
+                        let scale = thread_render_context.opts.zoom;
+
+                        let matrix = matrix.scale(scale as AzFloat, scale as AzFloat);
+                        let matrix = matrix.translate(-(layer_buffer.screen_pos.origin.x as f32 / scale) as AzFloat,
+                                                      -(layer_buffer.screen_pos.origin.y as f32 / scale) as AzFloat);
+
+                        // FIXME: (eschweic) translate above should be set by the lines below, but due to casting
+                        // floats as ints in layer_buffer.rect, this creates zooming artifacts.
+
+//                        let matrix = matrix.translate(-layer_buffer.rect.origin.x as AzFloat, 
+//                                                      -layer_buffer.rect.origin.y as AzFloat);
+
+
                         layer_buffer.draw_target.set_transform(&matrix);
 
                         // Clear the buffer.
@@ -162,7 +174,9 @@ impl<C: Compositor + Owned> Renderer<C> {
             };
 
             debug!("renderer: returning surface");
-            self.compositor.paint(layer_buffer_set, render_layer.size);
+//            self.compositor.paint(layer_buffer_set, render_layer.size);
+            let scale = self.opts.zoom;
+            self.compositor.paint(layer_buffer_set, Size2D((render_layer.size.width as f32 * scale) as uint, (render_layer.size.height as f32 * scale) as uint));
         }
     }
 }

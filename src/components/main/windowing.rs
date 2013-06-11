@@ -7,6 +7,12 @@
 use geom::point::Point2D;
 use geom::size::Size2D;
 
+pub enum WindowMouseEvent {
+    WindowClickEvent(uint, Point2D<f32>),
+    WindowMouseDownEvent(uint, Point2D<f32>),
+    WindowMouseUpEvent(uint, Point2D<f32>),
+}
+
 /// Type of the function that is called when the screen is to be redisplayed.
 pub type CompositeCallback = @fn();
 
@@ -16,12 +22,14 @@ pub type ResizeCallback = @fn(uint, uint);
 /// Type of the function that is called when a new URL is to be loaded.
 pub type LoadUrlCallback = @fn(&str);
 
-/// Type of the function that is called when hit testing is to be performed.
-/// FIXME this currently does not discriminate between left and right clicks or any modifiers
-pub type ClickCallback = @fn(Point2D<f32>);
+/// Type of the function that is called when a mouse hit test is to be performed.
+pub type MouseCallback = @fn(WindowMouseEvent);
 
 /// Type of the function that is called when the user scrolls.
 pub type ScrollCallback = @fn(Point2D<f32>);
+
+///Type of the function that is called when the user zooms.
+pub type ZoomCallback = @fn(f32);
 
 /// Methods for an abstract Application.
 pub trait ApplicationMethods {
@@ -43,13 +51,17 @@ pub trait WindowMethods<A> {
     /// Registers a callback to run when a new URL is to be loaded.
     pub fn set_load_url_callback(&mut self, new_load_url_callback: LoadUrlCallback);
     /// Registers a callback to run when the user clicks.
-    pub fn set_click_callback(&mut self, new_click_callback: ClickCallback);
+    pub fn set_mouse_callback(&mut self, new_mouse_callback: MouseCallback);
     /// Registers a callback to run when the user scrolls.
     pub fn set_scroll_callback(&mut self, new_scroll_callback: ScrollCallback);
+    /// Registers a callback to run when the user zooms.
+    pub fn set_zoom_callback(&mut self, new_zoom_callback: ZoomCallback);
 
     /// Spins the event loop.
     pub fn check_loop(@mut self);
     /// Schedules a redisplay at the next turn of the event loop.
     pub fn set_needs_display(@mut self);
+    /// Sets the title of the window
+    pub fn set_title(@mut self, title: &str);
 }
 
