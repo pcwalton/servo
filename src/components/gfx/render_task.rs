@@ -19,7 +19,7 @@ use render_context::RenderContext;
 
 use core::cell::Cell;
 use core::comm::{Chan, Port, SharedChan};
-
+use layers::texturegl::Texture;
 use servo_util::time::{ProfilerChan, profile};
 use servo_util::time;
 
@@ -160,11 +160,18 @@ impl<C: RenderListener + Owned> Renderer<C> {
                         let tile_rect = Rect(Point2D(x as f32 / scale, y as f32 / scale), Size2D(width as f32, height as f32));
                         let screen_rect = Rect(Point2D(x, y), Size2D(width, height));
 
-                        let buffer = LayerBuffer {
-                            draw_target: DrawTarget::new_with_fbo(self.opts.render_backend,
-                                                                  self.share_gl_context,
-                                                                  Size2D(width as i32, height as i32),
-                                                                  B8G8R8A8),
+                        let size = Size2D(width as i32, height as i32);
+                        let draw_target = DrawTarget::new_with_fbo(self.opts.render_backend,
+                                                                   self.share_gl_context,
+                                                                   size,
+                                                                   B8G8R8A8);
+
+                        // Create an empty texture to use as a placeholder.
+                        //
+                        // FIXME(pcwalton): This is wasteful!
+
+                        let mut buffer = LayerBuffer {
+                            texture: Texture::new(),
                             rect: tile_rect,
                             screen_pos: screen_rect,
                             stride: (width * 4) as uint
@@ -174,6 +181,7 @@ impl<C: RenderListener + Owned> Renderer<C> {
                             // Build the render context.
                             let ctx = RenderContext {
                                 canvas: &buffer,
+                                draw_target: &draw_target,
                                 font_ctx: self.font_ctx,
                                 opts: &self.opts
                             };
@@ -184,7 +192,7 @@ impl<C: RenderListener + Owned> Renderer<C> {
                             let matrix = matrix.translate(-(buffer.rect.origin.x) as AzFloat,
                                                           -(buffer.rect.origin.y) as AzFloat);
 
-                            ctx.canvas.draw_target.set_transform(&matrix);
+                            draw_target.set_transform(&matrix);
 
                             // Clear the buffer.
                             ctx.clear();
@@ -192,9 +200,12 @@ impl<C: RenderListener + Owned> Renderer<C> {
                             // Draw the display list.
                             do profile(time::RenderingDrawingCategory, self.profiler_chan.clone()) {
                                 render_layer.display_list.draw_into_context(&ctx);
-                                ctx.canvas.draw_target.flush();
+                                draw_target.flush();
                             }
                         }
+
+                        let texture_id = draw_target.steal_texture_id().get();
+                        buffer.texture = Texture::adopt_native_texture(texture_id);
 
                         new_buffers.push(buffer);
 

@@ -20,18 +20,19 @@ use std::arc::ARC;
 
 pub struct RenderContext<'self> {
     canvas: &'self LayerBuffer,
+    draw_target: &'self DrawTarget,
     font_ctx: @mut FontContext,
     opts: &'self Opts
 }
 
 pub impl<'self> RenderContext<'self>  {
     pub fn get_draw_target(&self) -> &'self DrawTarget {
-        &self.canvas.draw_target
+        self.draw_target
     }
 
     pub fn draw_solid_color(&self, bounds: &Rect<Au>, color: Color) {
-        self.canvas.draw_target.make_current();
-        self.canvas.draw_target.fill_rect(&bounds.to_azure_rect(), &ColorPattern(color));
+        self.draw_target.make_current();
+        self.draw_target.fill_rect(&bounds.to_azure_rect(), &ColorPattern(color));
     }
 
     pub fn draw_border(&self, bounds: &Rect<Au>, width: Au, color: Color) {
@@ -47,8 +48,8 @@ pub impl<'self> RenderContext<'self>  {
         let stroke_opts = StrokeOptions(width_px as AzFloat, 10 as AzFloat, stroke_fields);
         let draw_opts = DrawOptions(1 as AzFloat, 0 as uint16_t);
 
-        self.canvas.draw_target.make_current();
-        self.canvas.draw_target.stroke_rect(&rect, &pattern, &stroke_opts, &draw_opts);
+        self.draw_target.make_current();
+        self.draw_target.stroke_rect(&rect, &pattern, &stroke_opts, &draw_opts);
     }
 
     pub fn draw_image(&self, bounds: Rect<Au>, image: ARC<~Image>) {
@@ -56,8 +57,8 @@ pub impl<'self> RenderContext<'self>  {
         let size = Size2D(image.width as i32, image.height as i32);
         let stride = image.width * 4;
 
-        self.canvas.draw_target.make_current();
-        let draw_target_ref = &self.canvas.draw_target;
+        self.draw_target.make_current();
+        let draw_target_ref = &self.draw_target;
         let azure_surface = draw_target_ref.create_source_surface_from_data(image.data, size,
                                                                             stride as i32, B8G8R8A8);
         let source_rect = Rect(Point2D(0 as AzFloat, 0 as AzFloat),
@@ -78,8 +79,8 @@ pub impl<'self> RenderContext<'self>  {
                                 self.canvas.rect.origin.y as AzFloat),
                         Size2D(self.canvas.rect.size.width as AzFloat,
                                self.canvas.rect.size.height as AzFloat));
-        self.canvas.draw_target.make_current();
-        self.canvas.draw_target.fill_rect(&rect, &pattern);
+        self.draw_target.make_current();
+        self.draw_target.fill_rect(&rect, &pattern);
     }
 }
 

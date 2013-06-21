@@ -12,6 +12,7 @@
 extern mod azure;
 extern mod core;
 extern mod geom;
+extern mod layers;
 extern mod std;
 
 pub mod compositor;

@@ -39,7 +39,6 @@ NATIVE_BUILDS += \
 
 DEPS_rust-azure += \
 	rust-opengles \
-	rust-layers \
 	rust-glut \
 	rust-geom \
 	skia \

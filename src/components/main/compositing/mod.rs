@@ -8,7 +8,7 @@ use script::script_task::{LoadMsg, SendEventMsg};
 use script::layout_interface::{LayoutChan, RouteScriptMsg};
 use windowing::{ApplicationMethods, WindowMethods, WindowMouseEvent, WindowClickEvent};
 use windowing::{WindowMouseDownEvent, WindowMouseUpEvent};
-use servo_msg::compositor::{RenderListener, LayerBufferSet, RenderState};
+use servo_msg::compositor::{RenderListener, LayerBuffer, LayerBufferSet, RenderState};
 use servo_msg::compositor::{ReadyState, ScriptListener};
 use gfx::render_task::{RenderChan, ReRenderMsg};
 
@@ -23,9 +23,10 @@ use geom::point::Point2D;
 use geom::size::Size2D;
 use layers::layers::{ARGB32Format, ContainerLayer, ContainerLayerKind, Format};
 use layers::layers::{ImageData, WithDataFn};
-use layers::layers::{TextureLayerKind, TextureLayer, TextureManager};
+use layers::layers::{TextureLayerKind, TextureLayer};
 use layers::rendergl;
 use layers::scene::Scene;
+use layers::texturegl::Texture;
 use servo_util::{time, url};
 use servo_util::time::profile;
 use servo_util::time::ProfilerChan;
@@ -259,41 +260,52 @@ impl CompositorTask {
                         // size here.
                         let buffers = util::replace(&mut new_layer_buffer_set.buffers, ~[]);
 
-                        for buffers.each |buffer| {
+                        do vec::consume(buffers) |_, buffer| {
                             let width = buffer.rect.size.width as uint;
                             let height = buffer.rect.size.height as uint;
 
                             debug!("osmain: compositing buffer rect %?", &buffer.rect);
 
                             // Find or create a texture layer.
-                            let texture_layer;
-                            current_layer_child = match current_layer_child {
-                                None => {
-                                    debug!("osmain: adding new texture layer");
-                                    texture_layer = @mut TextureLayer::new(@buffer.draw_target.clone() as @TextureManager,
-                                                                           buffer.screen_pos.size);
-                                    root_layer.add_child(TextureLayerKind(texture_layer));
-                                    None
+                            match buffer {
+                                LayerBuffer {
+                                    screen_pos: screen_pos,
+                                    texture: texture,
+                                    _
+                                } => {
+                                    let texture_layer;
+                                    current_layer_child = match current_layer_child {
+                                        None => {
+                                            debug!("osmain: adding new texture layer");
+                                            texture_layer =
+                                                @mut TextureLayer::new(texture,
+                                                                       screen_pos.size);
+                                            root_layer.add_child(TextureLayerKind(texture_layer));
+                                            None
+                                        }
+                                        Some(TextureLayerKind(existing_texture_layer)) => {
+                                            texture_layer = existing_texture_layer;
+                                            texture_layer.texture = texture;
+
+                                            // Move on to the next sibling.
+                                            do current_layer_child.get().with_common |common| {
+                                                common.next_sibling
+                                            }
+                                        }
+                                        Some(_) => fail!(~"found unexpected layer kind"),
+                                    };
+
+                                    let origin = screen_pos.origin;
+                                    let origin = Point2D(origin.x as f32, origin.y as f32);
+
+                                    // Set the layer's transform.
+                                    let transform = identity().translate(origin.x, origin.y, 0.0);
+                                    let transform = transform.scale(width as f32,
+                                                                    height as f32,
+                                                                    1.0);
+                                    texture_layer.common.set_transform(transform);
                                 }
-                                Some(TextureLayerKind(existing_texture_layer)) => {
-                                    texture_layer = existing_texture_layer;
-                                    texture_layer.manager = @buffer.draw_target.clone() as @TextureManager;
-
-                                    // Move on to the next sibling.
-                                    do current_layer_child.get().with_common |common| {
-                                        common.next_sibling
-                                    }
-                                }
-                                Some(_) => fail!(~"found unexpected layer kind"),
-                            };
-
-                            let origin = buffer.screen_pos.origin;
-                            let origin = Point2D(origin.x as f32, origin.y as f32);
-
-                            // Set the layer's transform.
-                            let transform = identity().translate(origin.x, origin.y, 0.0);
-                            let transform = transform.scale(width as f32, height as f32, 1.0);
-                            texture_layer.common.set_transform(transform);
+                            }
                         }
 
                         // Delete leftover layers

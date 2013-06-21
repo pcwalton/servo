@@ -6,17 +6,20 @@ use azure::azure_hl::DrawTarget;
 use azure::azure::AzGLContext;
 use geom::rect::Rect;
 use geom::size::Size2D;
+use layers::texturegl::Texture;
 
+/// Represents the backing store and general information for a layer or one tile of a layer.
 pub struct LayerBuffer {
-    draw_target: DrawTarget,
+    /// The GPU texture.
+    texture: Texture,
 
-    // The rect in the containing RenderLayer that this represents.
+    /// The rect in the containing render layer that this represents.
     rect: Rect<f32>,
 
-    // The rect in pixels that will be drawn to the screen.
+    /// The on-screen position of this layer buffer, in pixels.
     screen_pos: Rect<uint>,
 
-    // NB: stride is in pixels, like OpenGL GL_UNPACK_ROW_LENGTH.
+    /// The number of pixels in one row (like OpenGL `GL_UNPACK_ROW_LENGTH`).
     stride: uint
 }
 
