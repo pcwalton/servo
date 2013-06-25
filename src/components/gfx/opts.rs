@@ -2,21 +2,38 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-//! Configuration options for a single run of the servo application. Created
+//! Configuration options for a single run of the Servo application. Created
 //! from command line arguments.
 
 use azure::azure_hl::{BackendType, CairoBackend, CoreGraphicsBackend};
 use azure::azure_hl::{CoreGraphicsAcceleratedBackend, Direct2DBackend, SkiaBackend};
 
+/// Global flags for Servo, usually set on the command line.
 pub struct Opts {
+    /// The initial URLs to load.
     urls: ~[~str],
+
+    /// The rendering backend to use (`-r`).
     render_backend: BackendType,
+
+    /// How many threads to use for CPU rendering (`-t`).
+    ///
+    /// NB: This is not currently used. All rendering is sequential.
     n_render_threads: uint,
+
+    /// True to use GPU rendering, false to use CPU rendering (`-g`). Note that compositing is
+    /// always done on the GPU.
+    gpu_rendering: bool,
+
+    /// The maximum size of each tile, in pixels (`-s`).
     tile_size: uint,
+
+    /// `None` to disable the profiler, `Some` and an interval in seconds to enable the profiler
+    /// and produce output on that interval (`-p`).
     profiler_period: Option<f64>,
 
     /// A scale factor to apply to tiles, to allow rendering tiles at higher resolutions for
-    /// testing pan and zoom code.
+    /// testing pan and zoom code (`-z`).
     zoom: uint,
 }
 
@@ -27,6 +44,7 @@ pub fn from_cmdline_args(args: &[~str]) -> Opts {
     let args = args.tail();
 
     let opts = ~[
+        getopts::optflag(~"g"), // GPU rendering
         getopts::optopt(~"o"),  // output file
         getopts::optopt(~"r"),  // rendering backend
         getopts::optopt(~"s"),  // size of tiles
@@ -86,10 +104,13 @@ pub fn from_cmdline_args(args: &[~str]) -> Opts {
         None => 1,
     };
 
+    let gpu_rendering = getopts::opt_present(&opt_match, ~"g");
+
     Opts {
         urls: urls,
         render_backend: render_backend,
         n_render_threads: n_render_threads,
+        gpu_rendering: gpu_rendering,
         tile_size: tile_size,
         profiler_period: profiler_period,
         zoom: zoom,

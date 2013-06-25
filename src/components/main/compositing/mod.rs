@@ -8,11 +8,8 @@ use script::script_task::{LoadMsg, SendEventMsg};
 use script::layout_interface::{LayoutChan, RouteScriptMsg};
 use windowing::{ApplicationMethods, WindowMethods, WindowMouseEvent, WindowClickEvent};
 use windowing::{WindowMouseDownEvent, WindowMouseUpEvent};
-use servo_msg::compositor::{RenderListener, LayerBuffer, LayerBufferSet, RenderState};
-use servo_msg::compositor::{ReadyState, ScriptListener};
-use gfx::render_task::{RenderChan, ReRenderMsg};
 
-use azure::azure_hl::{DataSourceSurface, DrawTarget, SourceSurfaceMethods, current_gl_context};
+use azure::azure_hl::{SourceSurfaceMethods, current_gl_context};
 use azure::azure::AzGLContext;
 use core::cell::Cell;
 use core::comm::{Chan, SharedChan, Port};
@@ -21,16 +18,18 @@ use core::util;
 use geom::matrix::identity;
 use geom::point::Point2D;
 use geom::size::Size2D;
-use layers::layers::{ARGB32Format, ContainerLayer, ContainerLayerKind, Format};
-use layers::layers::{ImageData, WithDataFn};
-use layers::layers::{TextureLayerKind, TextureLayer};
+use gfx::opts::Opts;
+use gfx::render_task::{RenderChan, ReRenderMsg};
+use layers::layers::{ARGB32Format, ContainerLayer, ContainerLayerKind, NoFlip, TextureLayerKind};
+use layers::layers::{TextureLayer, VerticalFlip};
 use layers::rendergl;
 use layers::scene::Scene;
 use layers::texturegl::Texture;
+use servo_msg::compositor::{RenderListener, LayerBuffer, LayerBufferSet, RenderState};
+use servo_msg::compositor::{ReadyState, ScriptListener};
 use servo_util::{time, url};
 use servo_util::time::profile;
 use servo_util::time::ProfilerChan;
-
 
 /// The implementation of the layers-based compositor.
 #[deriving(Clone)]
@@ -91,44 +90,22 @@ pub enum Msg {
     SetRenderChan(RenderChan<CompositorChan>),
 }
 
-/// Azure surface wrapping to work with the layers infrastructure.
-struct AzureDrawTargetImageData {
-    draw_target: DrawTarget,
-    data_source_surface: DataSourceSurface,
-    size: Size2D<uint>,
-}
-
-impl ImageData for AzureDrawTargetImageData {
-    fn size(&self) -> Size2D<uint> {
-        self.size
-    }
-    fn stride(&self) -> uint {
-        self.data_source_surface.stride() as uint
-    }
-    fn format(&self) -> Format {
-        // FIXME: This is not always correct. We should query the Azure draw target for the format.
-        ARGB32Format
-    }
-    fn with_data(&self, f: WithDataFn) {
-        do self.data_source_surface.with_data |data| {
-            f(data);
-        }
-    }
-}
-
 pub struct CompositorTask {
     port: Port<Msg>,
+    opts: Opts,
     profiler_chan: ProfilerChan,
     shutdown_chan: SharedChan<()>,
 }
 
 impl CompositorTask {
     pub fn new(port: Port<Msg>,
+               opts: Opts,
                profiler_chan: ProfilerChan,
                shutdown_chan: Chan<()>)
                -> CompositorTask {
         CompositorTask {
             port: port,
+            opts: opts,
             profiler_chan: profiler_chan,
             shutdown_chan: SharedChan::new(shutdown_chan),
         }
@@ -136,12 +113,15 @@ impl CompositorTask {
 
     /// Starts the compositor, which listens for messages on the specified port. 
     pub fn create(port: Port<Msg>,
-                                  profiler_chan: ProfilerChan,
-                                  shutdown_chan: Chan<()>) {
+                  opts: Opts,
+                  profiler_chan: ProfilerChan,
+                  shutdown_chan: Chan<()>) {
         let port = Cell(port);
+        let opts = Cell(opts);
         let shutdown_chan = Cell(shutdown_chan);
         do on_osmain {
             let compositor_task = CompositorTask::new(port.take(),
+                                                      opts.take(),
                                                       profiler_chan.clone(),
                                                       shutdown_chan.take());
             debug!("preparing to enter main loop");
@@ -176,6 +156,9 @@ impl CompositorTask {
         // Channel to the current renderer.
         // FIXME: This probably shouldn't be stored like this.
         let render_chan: @mut Option<RenderChan<CompositorChan>> = @mut None;
+
+        // FIXME(pcwalton): Ugh. We need to get rid of all the @ closures here...
+        let gpu_rendering = self.opts.gpu_rendering;
 
         let update_layout_callbacks: @fn(LayoutChan) = |layout_chan: LayoutChan| {
             let layout_chan_clone = layout_chan.clone();
@@ -277,9 +260,17 @@ impl CompositorTask {
                                     current_layer_child = match current_layer_child {
                                         None => {
                                             debug!("osmain: adding new texture layer");
-                                            texture_layer =
-                                                @mut TextureLayer::new(texture,
-                                                                       screen_pos.size);
+
+                                            // If using GPU rendering, flip the layer.
+                                            let flip = if gpu_rendering {
+                                                VerticalFlip
+                                            } else {
+                                                NoFlip
+                                            };
+
+                                            texture_layer = @mut TextureLayer::new(texture,
+                                                                                   screen_pos.size,
+                                                                                   flip);
                                             root_layer.add_child(TextureLayerKind(texture_layer));
                                             None
                                         }
