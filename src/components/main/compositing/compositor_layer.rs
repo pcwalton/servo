@@ -2,21 +2,22 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use std::cell::Cell;
-use geom::point::Point2D;
-use geom::size::Size2D;
-use geom::rect::Rect;
+use compositing::quadtree::{Quadtree, Normal, Invalid, Hidden};
+use constellation::{SendableChildFrameTree, SendableFrameTree};
 use geom::matrix::identity;
+use geom::point::Point2D;
+use geom::rect::Rect;
+use geom::size::Size2D;
 use gfx::render_task::{ReRenderMsg, UnusedBufferMsg};
-use servo_msg::compositor_msg::{LayerBuffer, LayerBufferSet, Epoch};
-use servo_msg::constellation_msg::PipelineId;
+use layers::layers::{ContainerLayerKind, ContainerLayer, TextureLayerKind, TextureLayer};
+use layers::layers::{TextureManager, VerticalFlip};
+use pipeline::Pipeline;
 use script::dom::event::{ClickEvent, MouseDownEvent, MouseUpEvent};
 use script::script_task::SendEventMsg;
+use servo_msg::compositor_msg::{LayerBuffer, LayerBufferSet, Epoch};
+use servo_msg::constellation_msg::PipelineId;
+use std::cell::Cell;
 use windowing::{MouseWindowEvent, MouseWindowClickEvent, MouseWindowMouseDownEvent, MouseWindowMouseUpEvent};
-use compositing::quadtree::{Quadtree, Normal, Invalid, Hidden};
-use layers::layers::{ContainerLayerKind, ContainerLayer, TextureLayerKind, TextureLayer, TextureManager};
-use pipeline::Pipeline;
-use constellation::{SendableChildFrameTree, SendableFrameTree};
 
 /// The CompositorLayer represents an element on a page that has a unique scroll
 /// or animation behavior. This can include absolute positioned elements, iframes, etc.
@@ -409,20 +410,21 @@ impl CompositorLayer {
         let all_tiles = quadtree.get_all_tiles();
         for buffer in all_tiles.iter() {
             debug!("osmain: compositing buffer rect %?", &buffer.rect);
-            
+
             // Find or create a texture layer.
             let texture_layer;
             current_layer_child = match current_layer_child {
                 None => {
                     debug!("osmain: adding new texture layer");
-                    texture_layer = @mut TextureLayer::new(@buffer.draw_target.clone() as @TextureManager,
-                                                           buffer.screen_pos.size);
+                    texture_layer = @mut TextureLayer::new(buffer.texture.clone(),
+                                                           buffer.screen_pos.size,
+                                                           VerticalFlip);
                     self.root_layer.add_child_end(TextureLayerKind(texture_layer));
                     None
                 }
                 Some(TextureLayerKind(existing_texture_layer)) => {
                     texture_layer = existing_texture_layer;
-                    texture_layer.manager = @buffer.draw_target.clone() as @TextureManager;
+                    texture_layer.texture = buffer.texture.clone();
                     
                     // Move on to the next sibling.
                     do current_layer_child.unwrap().with_common |common| {
@@ -461,15 +463,23 @@ impl CompositorLayer {
     
     // Add LayerBuffers to the specified layer. Returns false if the layer is not found.
     // If the epoch of the message does not match the layer's epoch, the message is ignored.
-    pub fn add_buffers(&mut self, pipeline_id: PipelineId, new_buffers: ~LayerBufferSet, epoch: Epoch) -> bool {
+    pub fn add_buffers(&mut self,
+                       pipeline_id: PipelineId,
+                       new_buffers: ~LayerBufferSet,
+                       epoch: Epoch)
+                       -> bool {
         let cell = Cell::new(new_buffers);
         if self.pipeline.id == pipeline_id {
             if self.epoch != epoch {
-                debug!("compositor epoch mismatch: %? != %?, id: %?", self.epoch, epoch, self.pipeline.id);
+                debug!("compositor epoch mismatch: %? != %?, id: %?",
+                       self.epoch,
+                       epoch,
+                       self.pipeline.id);
                 self.pipeline.render_chan.send(UnusedBufferMsg(cell.take().buffers));
                 return true;
             }
-            { // block here to prevent double mutable borrow of self
+            {
+                // Block here to prevent double mutable borrow of self.
                 let quadtree = match self.quadtree {
                     NoTree(*) => fail!("CompositorLayer: cannot add buffers, no quadtree initialized"),
                     Tree(ref mut quadtree) => quadtree,

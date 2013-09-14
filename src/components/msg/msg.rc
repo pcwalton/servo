@@ -8,11 +8,11 @@
        url = "http://servo.org/")];
 #[crate_type = "lib"];
 
-
 extern mod azure;
-extern mod std;
-extern mod geom;
 extern mod extra;
+extern mod geom;
+extern mod layers;
+extern mod std;
 
 pub mod compositor_msg;
 pub mod constellation_msg;

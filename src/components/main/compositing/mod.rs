@@ -29,7 +29,6 @@ use geom::point::Point2D;
 use geom::size::Size2D;
 use geom::rect::Rect;
 use layers::layers::{ARGB32Format, ContainerLayer, ContainerLayerKind, Format};
-use layers::layers::{ImageData, WithDataFn};
 use layers::rendergl;
 use layers::scene::Scene;
 use opengles::gl2;
@@ -160,31 +159,6 @@ pub enum Msg {
     SetIds(SendableFrameTree, Chan<()>, ConstellationChan),
 }
 
-/// Azure surface wrapping to work with the layers infrastructure.
-struct AzureDrawTargetImageData {
-    draw_target: DrawTarget,
-    data_source_surface: DataSourceSurface,
-    size: Size2D<uint>,
-}
-
-impl ImageData for AzureDrawTargetImageData {
-    fn size(&self) -> Size2D<uint> {
-        self.size
-    }
-    fn stride(&self) -> uint {
-        self.data_source_surface.stride() as uint
-    }
-    fn format(&self) -> Format {
-        // FIXME: This is not always correct. We should query the Azure draw target for the format.
-        ARGB32Format
-    }
-    fn with_data(&self, f: WithDataFn) {
-        do self.data_source_surface.with_data |data| {
-            f(data);
-        }
-    }
-}
-
 pub struct CompositorTask {
     opts: Opts,
     port: Port<Msg>,
@@ -281,8 +255,9 @@ impl CompositorTask {
                     GetGLContext(chan) => chan.send(current_gl_context()),
 
                     NewLayer(_id, new_size) => {
-                        // FIXME: This should create an additional layer instead of replacing the current one.
-                        // Once ResizeLayer messages are set up, we can switch to the new functionality.
+                        // FIXME: This should create an additional layer instead of replacing the
+                        // current one. Once ResizeLayer messages are set up, we can switch to the
+                        // new functionality.
 
                         let p = match compositor_layer {
                             Some(ref compositor_layer) => compositor_layer.pipeline.clone(),

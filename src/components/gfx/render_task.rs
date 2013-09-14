@@ -4,28 +4,29 @@
 
 // The task that handles all rendering/painting.
 
-use azure::{AzFloat, AzGLContext};
 use azure::azure_hl::{B8G8R8A8, DrawTarget};
+use azure::{AzFloat, AzGLContext};
 use display_list::DisplayList;
-use servo_msg::compositor_msg::{RenderListener, IdleRenderState, RenderingRenderState, LayerBuffer};
-use servo_msg::compositor_msg::{LayerBufferSet, Epoch};
-use servo_msg::constellation_msg::{ConstellationChan, PipelineId, RendererReadyMsg};
 use font_context::FontContext;
 use geom::matrix2d::Matrix2D;
-use geom::size::Size2D;
 use geom::rect::Rect;
-use opts::Opts;
-use render_context::RenderContext;
+use geom::size::Size2D;
+use layers::texturegl::Texture;
+use servo_msg::compositor_msg::{LayerBufferSet, Epoch};
+use servo_msg::compositor_msg::{RenderListener, IdleRenderState, RenderingRenderState, LayerBuffer};
+use servo_msg::constellation_msg::{ConstellationChan, PipelineId, RendererReadyMsg};
+use servo_util::time::{ProfilerChan, profile};
+use servo_util::time;
 
 use std::comm::{Chan, Port, SharedChan};
 use std::task::spawn_with;
 use extra::arc::Arc;
 
-use servo_util::time::{ProfilerChan, profile};
-use servo_util::time;
-
 use buffer_map::BufferMap;
-
+use display_list::DisplayList;
+use font_context::FontContext;
+use opts::Opts;
+use render_context::RenderContext;
 
 pub struct RenderLayer<T> {
     display_list: Arc<DisplayList<T>>,
@@ -223,8 +224,16 @@ impl<C: RenderListener + Send,T:Send+Freeze> RenderTask<C,T> {
                 for tile in tiles.iter() {
                     let width = tile.screen_rect.size.width;
                     let height = tile.screen_rect.size.height;
+
+                    // FIXME(pcwalton): Cache draw targets; don't recreate them all the time.
+                    let size = Size2D(width as i32, height as i32);
+                    let draw_target = DrawTarget::new_with_fbo(self.opts.render_backend,
+                                                               self.share_gl_context,
+                                                               size,
+                                                               B8G8R8A8);
+                    draw_target.make_current();
                     
-                    let buffer = match self.buffer_map.find(tile.screen_rect.size) {
+                    let mut buffer = match self.buffer_map.find(tile.screen_rect.size) {
                         Some(buffer) => {
                             let mut buffer = buffer;
                             buffer.rect = tile.page_rect;
@@ -232,23 +241,25 @@ impl<C: RenderListener + Send,T:Send+Freeze> RenderTask<C,T> {
                             buffer.resolution = scale;
                             buffer
                         }
-                        None => ~LayerBuffer {
-                            draw_target: DrawTarget::new_with_fbo(self.opts.render_backend,
-                                                                  self.share_gl_context,
-                                                                  Size2D(width as i32, height as i32),
-                                                                  B8G8R8A8),
-                            rect: tile.page_rect,
-                            screen_pos: tile.screen_rect,
-                            resolution: scale,
-                            stride: (width * 4) as uint
+                        None => {
+                            // Create an empty texture to use as a placeholder.
+                            //
+                            // FIXME(pcwalton): This is wasteful!
+                            ~LayerBuffer {
+                                texture: Arc::new(Texture::new()),
+                                rect: tile.page_rect,
+                                screen_pos: tile.screen_rect,
+                                resolution: scale,
+                                stride: (width * 4) as uint
+                            }
                         }
                     };
-                    
-                    
+
                     {
                         // Build the render context.
                         let ctx = RenderContext {
                             canvas: &buffer,
+                            draw_target: &draw_target,
                             font_ctx: self.font_ctx,
                             opts: &self.opts
                         };
@@ -259,7 +270,7 @@ impl<C: RenderListener + Send,T:Send+Freeze> RenderTask<C,T> {
                         let matrix = matrix.translate(-(buffer.rect.origin.x) as AzFloat,
                                                       -(buffer.rect.origin.y) as AzFloat);
                         
-                        ctx.canvas.draw_target.set_transform(&matrix);
+                        ctx.draw_target.set_transform(&matrix);
                         
                         // Clear the buffer.
                         ctx.clear();
@@ -267,14 +278,18 @@ impl<C: RenderListener + Send,T:Send+Freeze> RenderTask<C,T> {
                         // Draw the display list.
                         do profile(time::RenderingDrawingCategory, self.profiler_chan.clone()) {
                             render_layer.display_list.get().draw_into_context(&ctx);
-                            ctx.canvas.draw_target.flush();
+                            ctx.draw_target.flush();
                         }
                     }
+
+                    // Extract the texture from the draw target and place it into its slot in the
+                    // buffer.
+                    draw_target.make_current();
+                    let texture_id = draw_target.steal_texture_id().unwrap();
+                    buffer.texture = Arc::new(Texture::adopt_native_texture(texture_id));
                     
                     new_buffers.push(buffer);
-                    
                 }
-
             }
 
             let layer_buffer_set = ~LayerBufferSet {

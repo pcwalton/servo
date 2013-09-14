@@ -26,18 +26,19 @@ use extra::arc::Arc;
 
 pub struct RenderContext<'self> {
     canvas: &'self ~LayerBuffer,
+    draw_target: &'self DrawTarget,
     font_ctx: @mut FontContext,
     opts: &'self Opts
 }
 
 impl<'self> RenderContext<'self>  {
     pub fn get_draw_target(&self) -> &'self DrawTarget {
-        &self.canvas.draw_target
+        self.draw_target
     }
 
     pub fn draw_solid_color(&self, bounds: &Rect<Au>, color: Color) {
-        self.canvas.draw_target.make_current();
-        self.canvas.draw_target.fill_rect(&bounds.to_azure_rect(), &ColorPattern(color));
+        self.draw_target.make_current();
+        self.draw_target.fill_rect(&bounds.to_azure_rect(), &ColorPattern(color));
     }
 
     pub fn draw_border(&self,
@@ -49,7 +50,7 @@ impl<'self> RenderContext<'self>  {
         let rect = bounds.to_azure_rect();
         let border = border.to_float_px();
 
-        self.canvas.draw_target.make_current();
+        self.draw_target.make_current();
         let mut dash: [AzFloat, ..2] = [0 as AzFloat, 0 as AzFloat];
         let mut stroke_opts = StrokeOptions(0 as AzFloat, 10 as AzFloat);
  
@@ -58,28 +59,44 @@ impl<'self> RenderContext<'self>  {
         let y = rect.origin.y + border.top * 0.5;
         let start = Point2D(rect.origin.x, y);
         let end = Point2D(rect.origin.x + rect.size.width, y);
-        self.canvas.draw_target.stroke_line(start, end, &ColorPattern(color.top), &stroke_opts, &draw_opts);
+        self.draw_target.stroke_line(start,
+                                     end,
+                                     &ColorPattern(color.top),
+                                     &stroke_opts,
+                                     &draw_opts);
 
         // draw right border
         RenderContext::apply_border_style(style.right, border.right, dash,  &mut stroke_opts);
         let x = rect.origin.x + rect.size.width - border.right * 0.5;
         let start = Point2D(x, rect.origin.y);
         let end = Point2D(x, rect.origin.y + rect.size.height);
-        self.canvas.draw_target.stroke_line(start, end, &ColorPattern(color.right), &stroke_opts, &draw_opts);
+        self.draw_target.stroke_line(start,
+                                     end,
+                                     &ColorPattern(color.right),
+                                     &stroke_opts,
+                                     &draw_opts);
 
         // draw bottom border
         RenderContext::apply_border_style(style.bottom, border.bottom, dash, &mut stroke_opts);
         let y = rect.origin.y + rect.size.height - border.bottom * 0.5;
         let start = Point2D(rect.origin.x, y);
         let end = Point2D(rect.origin.x + rect.size.width, y);
-        self.canvas.draw_target.stroke_line(start, end, &ColorPattern(color.bottom), &stroke_opts, &draw_opts);
+        self.draw_target.stroke_line(start,
+                                     end,
+                                     &ColorPattern(color.bottom),
+                                     &stroke_opts,
+                                     &draw_opts);
 
         // draw left border
         RenderContext::apply_border_style(style.left, border.left, dash,  &mut stroke_opts);
         let x = rect.origin.x + border.left * 0.5;
         let start = Point2D(x, rect.origin.y);
         let end = Point2D(x, rect.origin.y + rect.size.height);
-        self.canvas.draw_target.stroke_line(start, end, &ColorPattern(color.left), &stroke_opts, &draw_opts);
+        self.draw_target.stroke_line(start,
+                                     end,
+                                     &ColorPattern(color.left),
+                                     &stroke_opts,
+                                     &draw_opts);
     }
 
     pub fn draw_image(&self, bounds: Rect<Au>, image: Arc<~Image>) {
@@ -87,8 +104,8 @@ impl<'self> RenderContext<'self>  {
         let size = Size2D(image.width as i32, image.height as i32);
         let stride = image.width * 4;
 
-        self.canvas.draw_target.make_current();
-        let draw_target_ref = &self.canvas.draw_target;
+        self.draw_target.make_current();
+        let draw_target_ref = &self.draw_target;
         let azure_surface = draw_target_ref.create_source_surface_from_data(image.data, size,
                                                                             stride as i32, B8G8R8A8);
         let source_rect = Rect(Point2D(0 as AzFloat, 0 as AzFloat),
@@ -109,8 +126,8 @@ impl<'self> RenderContext<'self>  {
                                 self.canvas.rect.origin.y as AzFloat),
                         Size2D(self.canvas.screen_pos.size.width as AzFloat,
                                self.canvas.screen_pos.size.height as AzFloat));
-        self.canvas.draw_target.make_current();
-        self.canvas.draw_target.fill_rect(&rect, &pattern);
+        self.draw_target.make_current();
+        self.draw_target.fill_rect(&rect, &pattern);
     }
 
     fn apply_border_style(style: CSSBorderStyle, border_width: AzFloat, dash: &mut [AzFloat], stroke_opts: &mut StrokeOptions){

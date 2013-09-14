@@ -4,14 +4,16 @@
 
 use azure::azure_hl::DrawTarget;
 use azure::azure::AzGLContext;
+use extra::arc::Arc;
 use geom::rect::Rect;
 use geom::size::Size2D;
+use layers::texturegl::Texture;
 
 use constellation_msg::PipelineId;
 
 #[deriving(Clone)]
 pub struct LayerBuffer {
-    draw_target: DrawTarget,
+    texture: Arc<Texture>,
 
     // The rect in the containing RenderLayer that this represents.
     rect: Rect<f32>,
@@ -24,7 +26,6 @@ pub struct LayerBuffer {
 
     // NB: stride is in pixels, like OpenGL GL_UNPACK_ROW_LENGTH.
     stride: uint,
-        
 }
 
 /// A set of layer buffers. This is an atomic unit used to switch between the front and back
