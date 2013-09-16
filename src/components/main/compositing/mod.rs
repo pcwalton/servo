@@ -240,7 +240,8 @@ impl CompositorTask {
 
                         let layer = CompositorLayer::from_frame_tree(frame_tree,
                                                                      self.opts.tile_size,
-                                                                     Some(10000000u));
+                                                                     Some(10000000u),
+                                                                     self.opts.cpu_painting);
                         root_layer.add_child_start(ContainerLayerKind(layer.root_layer));
                         compositor_layer = Some(layer);
 
@@ -264,8 +265,11 @@ impl CompositorTask {
                             None => fail!("Compositor: Received new layer without initialized pipeline"),
                         };
                         let page_size = Size2D(new_size.width as f32, new_size.height as f32);
-                        let new_layer = CompositorLayer::new(p, Some(page_size),
-                                                             self.opts.tile_size, Some(10000000u));
+                        let new_layer = CompositorLayer::new(p,
+                                                             Some(page_size),
+                                                             self.opts.tile_size,
+                                                             Some(10000000u),
+                                                             self.opts.cpu_painting);
                         
                         let current_child = root_layer.first_child;
                         // This assumes there is at most one child, which should be the case.

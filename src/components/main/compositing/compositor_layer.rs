@@ -9,7 +9,7 @@ use geom::point::Point2D;
 use geom::rect::Rect;
 use geom::size::Size2D;
 use gfx::render_task::{ReRenderMsg, UnusedBufferMsg};
-use layers::layers::{ContainerLayerKind, ContainerLayer, TextureLayerKind, TextureLayer};
+use layers::layers::{ContainerLayerKind, ContainerLayer, NoFlip, TextureLayerKind, TextureLayer};
 use layers::layers::{TextureManager, VerticalFlip};
 use pipeline::Pipeline;
 use script::dom::event::{ClickEvent, MouseDownEvent, MouseUpEvent};
@@ -50,6 +50,8 @@ pub struct CompositorLayer {
     epoch: Epoch,
     /// The behavior of this layer when a scroll message is received. 
     scroll_behavior: ScrollBehavior,
+    /// True if CPU rendering is enabled, false if we're using GPU rendering.
+    cpu_painting: bool,
 }
 
 /// Helper struct for keeping CompositorLayer children organized.
@@ -81,8 +83,12 @@ enum ScrollBehavior {
 impl CompositorLayer {
     /// Creates a new CompositorLayer with an optional page size. If no page size is given,
     /// the layer is initially hidden and initialized without a quadtree.
-    pub fn new(pipeline: Pipeline, page_size: Option<Size2D<f32>>, tile_size: uint, max_mem: Option<uint>)
-        -> CompositorLayer {
+    pub fn new(pipeline: Pipeline,
+               page_size: Option<Size2D<f32>>,
+               tile_size: uint,
+               max_mem: Option<uint>,
+               cpu_painting: bool)
+               -> CompositorLayer {
         CompositorLayer {
             pipeline: pipeline,
             page_size: page_size,
@@ -99,15 +105,18 @@ impl CompositorLayer {
             hidden: true,
             epoch: Epoch(0),
             scroll_behavior: Scroll,
+            cpu_painting: cpu_painting,
         }
     }
     
     /// Constructs a CompositorLayer tree from a frame tree.
     pub fn from_frame_tree(frame_tree: SendableFrameTree,
                            tile_size: uint,
-                           max_mem: Option<uint>) -> CompositorLayer {
+                           max_mem: Option<uint>,
+                           cpu_painting: bool)
+                           -> CompositorLayer {
         let SendableFrameTree { pipeline, children } = frame_tree;
-        let mut layer = CompositorLayer::new(pipeline, None, tile_size, max_mem);
+        let mut layer = CompositorLayer::new(pipeline, None, tile_size, max_mem, cpu_painting);
         layer.children = (do children.move_iter().map |child| {
             let SendableChildFrameTree { frame_tree, rect } = child;
             let container = @mut ContainerLayer();
@@ -122,7 +131,10 @@ impl CompositorLayer {
                 None => {}
             }
             
-            let child_layer = ~CompositorLayer::from_frame_tree(frame_tree, tile_size, max_mem);
+            let child_layer = ~CompositorLayer::from_frame_tree(frame_tree,
+                                                                tile_size,
+                                                                max_mem,
+                                                                cpu_painting);
             container.add_child_start(ContainerLayerKind(child_layer.root_layer));
             
             CompositorLayerChild {
@@ -416,9 +428,14 @@ impl CompositorLayer {
             current_layer_child = match current_layer_child {
                 None => {
                     debug!("osmain: adding new texture layer");
+                    let flip = if self.cpu_painting {
+                        NoFlip
+                    } else {
+                        VerticalFlip
+                    };
                     texture_layer = @mut TextureLayer::new(buffer.texture.clone(),
                                                            buffer.screen_pos.size,
-                                                           VerticalFlip);
+                                                           flip);
                     self.root_layer.add_child_end(TextureLayerKind(texture_layer));
                     None
                 }
@@ -564,7 +581,11 @@ impl CompositorLayer {
         container.common.set_transform(identity().translate(clipping_rect.origin.x,
                                                             clipping_rect.origin.y,
                                                             0.0));
-        let child = ~CompositorLayer::new(pipeline, page_size, tile_size, max_mem);
+        let child = ~CompositorLayer::new(pipeline,
+                                          page_size,
+                                          tile_size,
+                                          max_mem,
+                                          self.cpu_painting);
         container.add_child_start(ContainerLayerKind(child.root_layer));
         self.children.push(CompositorLayerChild {
             child: child,

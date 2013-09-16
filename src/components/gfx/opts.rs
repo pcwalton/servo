@@ -12,14 +12,34 @@ use std::float;
 use std::result;
 use std::uint;
 
+/// Global flags for Servo, currently set on the command line.
 #[deriving(Clone)]
 pub struct Opts {
+    /// The initial URLs to load.
     urls: ~[~str],
+
+    /// The rendering backend to use (`-r`).
     render_backend: BackendType,
+
+    /// How many threads to use for CPU rendering (`-t`).
+    ///
+    /// FIXME(pcwalton): This is not currently used. All rendering is sequential.
     n_render_threads: uint,
+
+    /// True to use CPU painting, false to use GPU painting via Skia-GL (`-c`). Note that
+    /// compositing is always done on the GPU.
+    cpu_painting: bool,
+
+    /// The maximum size of each tile in pixels (`-s`).
     tile_size: uint,
+
+    /// `None` to disable the profiler or `Some` with an interval in seconds to enable it and cause
+    /// it to produce output on that interval (`-p`).
     profiler_period: Option<float>,
+
+    /// True to exit after the page load (`-x`).
     exit_after_load: bool,
+
     output_file: Option<~str>,
 }
 
@@ -29,12 +49,13 @@ pub fn from_cmdline_args(args: &[~str]) -> Opts {
     let args = args.tail();
 
     let opts = ~[
-        getopts::optopt("o"),  // output file
-        getopts::optopt("r"),  // rendering backend
-        getopts::optopt("s"),  // size of tiles
-        getopts::optopt("t"),  // threads to render with
-        getopts::optflagopt("p"),  // profiler flag and output interval
-        getopts::optflag("x"), // exit after load flag
+        getopts::optflag("c"),       // CPU rendering
+        getopts::optopt("o"),       // output file
+        getopts::optopt("r"),       // rendering backend
+        getopts::optopt("s"),       // size of tiles
+        getopts::optopt("t"),       // threads to render with
+        getopts::optflagopt("p"),   // profiler flag and output interval
+        getopts::optflag("x"),      // exit after load flag
     ];
 
     let opt_match = match getopts::getopts(args, opts) {
@@ -86,10 +107,13 @@ pub fn from_cmdline_args(args: &[~str]) -> Opts {
 
     let output_file = getopts::opt_maybe_str(&opt_match, "o");
 
+    let cpu_painting = getopts::opt_present(&opt_match, "c");
+
     Opts {
         urls: urls,
         render_backend: render_backend,
         n_render_threads: n_render_threads,
+        cpu_painting: cpu_painting,
         tile_size: tile_size,
         profiler_period: profiler_period,
         exit_after_load: exit_after_load,
