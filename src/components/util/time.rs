@@ -3,14 +3,14 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 // Timing functions.
-use std::comm::{Port, SharedChan};
-use std::iterator::AdditiveIterator;
-use std::rt::io::timer::Timer;
-use std::task::spawn_with;
-
 use extra::sort::tim_sort;
 use extra::time::precise_time_ns;
 use extra::treemap::TreeMap;
+use std::cell::Cell;
+use std::comm::{Port, SendDeferred, SharedChan};
+use std::iterator::AdditiveIterator;
+use std::rt::io::timer::Timer;
+use std::task::spawn_with;
 
 // front-end representation of the profiler used to communicate with the profiler
 #[deriving(Clone)]
@@ -18,6 +18,9 @@ pub struct ProfilerChan(SharedChan<ProfilerMsg>);
 impl ProfilerChan {
     pub fn new(chan: Chan<ProfilerMsg>) -> ProfilerChan {
         ProfilerChan(SharedChan::new(chan))
+    }
+    pub fn send_deferred(&self, msg: ProfilerMsg) {
+        self.chan.send_deferred(msg);
     }
 }
 
@@ -185,7 +188,7 @@ pub fn profile<T>(category: ProfilerCategory,
     let val = callback();
     let end_time = precise_time_ns();
     let ms = ((end_time - start_time) as float / 1000000f);
-    profiler_chan.send(TimeMsg(category, ms));
+    profiler_chan.send_deferred(TimeMsg(category, ms));
     return val;
 }
 
