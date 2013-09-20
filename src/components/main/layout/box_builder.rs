@@ -616,7 +616,9 @@ impl LayoutTreeBuilder {
     pub fn construct_trees(&mut self, layout_ctx: &LayoutContext, root: AbstractNode<LayoutView>)
                        -> Result<FlowContext, ()> {
         debug!("Constructing flow tree for DOM: ");
-        root.dump();
+        if cfg!(debug) {
+            root.dump();
+        }
 
         let mut new_flow = self.make_flow(Flow_Root, root);
         {
