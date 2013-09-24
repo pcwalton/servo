@@ -6,11 +6,12 @@
 
 use css::node_util::NodeUtil;
 use css::select_handler::NodeSelectHandler;
+use layout::incremental;
 
 use script::dom::node::{AbstractNode, LayoutView};
 use newcss::complete::CompleteSelectResults;
 use newcss::select::{SelectCtx, SelectResults};
-use servo_util::tree::TreeUtils;
+use servo_util::tree::TreeNodeRef;
 
 pub trait MatchMethods {
     fn restyle_subtree(&self, select_ctx: &SelectCtx);
@@ -27,14 +28,27 @@ impl MatchMethods for AbstractNode<LayoutView> {
     fn restyle_subtree(&self, select_ctx: &SelectCtx) {
         // Only elements have styles
         if self.is_element() {
-            let select_handler = NodeSelectHandler { node: *self };
-            let incomplete_results = select_ctx.select_style(self, &select_handler);
-            // Combine this node's results with its parent's to resolve all inherited values
-            let complete_results = compose_results(*self, incomplete_results);
-            self.set_css_select_results(complete_results);
+            do self.with_imm_element |elem| {
+                let inline_style = match elem.style_attribute {
+                    None => None,
+                    Some(ref sheet) => Some(sheet),
+                };
+                let select_handler = NodeSelectHandler { node: *self };
+                let incomplete_results = select_ctx.select_style(self, inline_style, &select_handler);
+                // Combine this node's results with its parent's to resolve all inherited values
+                let complete_results = compose_results(*self, incomplete_results);
+
+                // If there was an existing style, compute the damage that
+                // incremental layout will need to fix.
+                if self.have_css_select_results() {
+                    let damage = incremental::compute_damage(self, self.get_css_select_results(), &complete_results);
+                    self.set_restyle_damage(damage);
+                }
+                self.set_css_select_results(complete_results);
+            };
         }
 
-        for self.each_child |kid| {
+        for kid in self.children() {
             kid.restyle_subtree(select_ctx); 
         }
     }

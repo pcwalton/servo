@@ -3,12 +3,15 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 use dom::bindings::codegen::DOMParserBinding;
-use dom::bindings::utils::{DOMString, ErrorResult, WrapperCache, CacheableWrapper};
-use dom::document::Document;
-use dom::element::{Element, HTMLHtmlElement, HTMLHtmlElementTypeId};
+use dom::bindings::codegen::DOMParserBinding::SupportedTypeValues::{Text_html, Text_xml};
+use dom::bindings::utils::{DOMString, Fallible, WrapperCache, CacheableWrapper};
+use dom::document::{AbstractDocument, Document, XML};
+use dom::element::HTMLHtmlElementTypeId;
+use dom::htmldocument::HTMLDocument;
+use dom::htmlelement::HTMLElement;
+use dom::htmlhtmlelement::HTMLHtmlElement;
 use dom::node::Node;
 use dom::window::Window;
-use script_task::global_script_context;
 
 pub struct DOMParser {
     owner: @mut Window, //XXXjdm Document instead?
@@ -22,29 +25,41 @@ impl DOMParser {
             wrapper: WrapperCache::new()
         };
 
-        let cx = global_script_context().js_compartment.cx.ptr;
+        // TODO(tkuehn): This just handles the top-level page. Need to handle subframes.
+        let cx = owner.page.js_info.get_ref().js_compartment.cx.ptr;
         let cache = owner.get_wrappercache();
         let scope = cache.get_wrapper();
         parser.wrap_object_shared(cx, scope);
         parser
     }
 
-    pub fn Constructor(owner: @mut Window, _rv: &mut ErrorResult) -> @mut DOMParser {
-        DOMParser::new(owner)
+    pub fn Constructor(owner: @mut Window) -> Fallible<@mut DOMParser> {
+        Ok(DOMParser::new(owner))
     }
 
     pub fn ParseFromString(&self,
-                           _s: DOMString,
-                           _type: DOMParserBinding::SupportedType,
-                           _rv: &mut ErrorResult)
-                           -> @mut Document {
+                           _s: &DOMString,
+                           ty: DOMParserBinding::SupportedType)
+                           -> Fallible<AbstractDocument> {
         unsafe {
-            let root = ~HTMLHtmlElement {
-                parent: Element::new(HTMLHtmlElementTypeId, ~"html")
+            let root = @HTMLHtmlElement {
+                htmlelement: HTMLElement::new(HTMLHtmlElementTypeId, ~"html")
             };
 
-            let root = Node::as_abstract_node(root);
-            Document(root, None)
+            let root = Node::as_abstract_node((*self.owner.page).js_info.get_ref().js_compartment.cx.ptr, root);
+            let cx = (*self.owner.page).js_info.get_ref().js_compartment.cx.ptr;
+
+            match ty {
+                Text_html => {
+                    Ok(HTMLDocument::new(root, None))
+                }
+                Text_xml => {
+                    Ok(AbstractDocument::as_abstract(cx, @mut Document::new(root, None, XML)))
+                }
+                _ => {
+                    fail!("unsupported document type")
+                }
+            }
         }
     }
 }

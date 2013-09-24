@@ -10,19 +10,20 @@
 
 extern mod azure;
 extern mod geom;
-extern mod http_client;
+extern mod newcss (name = "css");
 extern mod stb_image;
-extern mod std;
+extern mod extra;
 extern mod servo_net (name = "net");
 extern mod servo_util (name = "util");
+extern mod servo_msg (name = "msg");
 
 // Eventually we would like the shaper to be pluggable, as many operating systems have their own
 // shapers. For now, however, this is a hard dependency.
 extern mod harfbuzz;
 
-// Linux-specific library dependencies
-#[cfg(target_os="linux")] extern mod fontconfig;
-#[cfg(target_os="linux")] extern mod freetype;
+// Linux and Android-specific library dependencies
+#[cfg(target_os="linux")] #[cfg(target_os="android")] extern mod fontconfig;
+#[cfg(target_os="linux")] #[cfg(target_os="android")] extern mod freetype;
 
 // Mac OS-specific library dependencies
 #[cfg(target_os="macos")] extern mod core_foundation;
@@ -35,14 +36,12 @@ pub use gfx_font_list = font_list;
 pub use servo_gfx_font = font;
 pub use servo_gfx_font_list = font_list;
 
-priv mod render_context;
+mod render_context;
 
 // Rendering
 pub mod color;
-pub mod compositor;
 pub mod display_list;
 pub mod geometry;
-pub mod render_layers;
 pub mod render_task;
 pub mod surface;
 
@@ -53,6 +52,7 @@ pub mod font_list;
 
 // Misc.
 pub mod opts;
+mod buffer_map;
 
 // Platform-specific implementations.
 #[path="platform/mod.rs"]

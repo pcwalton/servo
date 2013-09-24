@@ -6,7 +6,7 @@
 /// Implementation of the callbacks that the CSS selector engine uses to query the DOM.
 ///
 
-use core::str::eq_slice;
+use std::str::eq_slice;
 use newcss::select::SelectHandler;
 use script::dom::node::{AbstractNode, LayoutView};
 
@@ -30,17 +30,14 @@ impl SelectHandler<AbstractNode<LayoutView>> for NodeSelectHandler {
 
     fn named_parent_node(&self, node: &AbstractNode<LayoutView>, name: &str)
                          -> Option<AbstractNode<LayoutView>> {
-        match node.parent_node() {
-            Some(parent) => {
-                do with_node_name(parent) |node_name| {
-                    if eq_slice(name, node_name) {
-                        Some(parent)
-                    } else {
-                        None
-                    }
+        do node.parent_node().chain |parent| {
+            do with_node_name(parent) |node_name| {
+                if eq_slice(name, node_name) {
+                    Some(parent)
+                } else {
+                    None
                 }
             }
-            None => None
         }
     }
 
@@ -104,7 +101,7 @@ impl SelectHandler<AbstractNode<LayoutView>> for NodeSelectHandler {
                 None => false,
                 Some(existing_classes) => {
                     let mut ret = false;
-                    for str::each_split_char(existing_classes, ' ') |s| {
+                    for s in existing_classes.split_iter(' ') {
                         if s == class {
                             ret = true;
                             break;

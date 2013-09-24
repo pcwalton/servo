@@ -7,9 +7,9 @@
 use file_loader;
 use http_loader;
 
-use core::cell::Cell;
-use core::comm::{Chan, Port, SharedChan};
-use std::net::url::{Url, to_str};
+use std::cell::Cell;
+use std::comm::{Chan, Port, SharedChan};
+use extra::url::Url;
 use util::spawn_listener;
 
 pub enum ControlMsg {
@@ -52,7 +52,7 @@ pub fn ResourceTask() -> ResourceTask {
 }
 
 fn create_resource_task_with_loaders(loaders: ~[(~str, LoaderTaskFactory)]) -> ResourceTask {
-    let loaders_cell = Cell(loaders);
+    let loaders_cell = Cell::new(loaders);
     let chan = do spawn_listener |from_client| {
         // TODO: change copy to move once we can move out of closures
         ResourceManager(from_client, loaders_cell.take()).start()
@@ -94,7 +94,7 @@ impl ResourceManager {
 
         match self.get_loader_factory(&url) {
             Some(loader_factory) => {
-                debug!("resource_task: loading url: %s", to_str(&url));
+                debug!("resource_task: loading url: %s", url.to_str());
                 loader_factory(url, progress_chan);
             }
             None => {
@@ -105,7 +105,7 @@ impl ResourceManager {
     }
 
     fn get_loader_factory(&self, url: &Url) -> Option<LoaderTask> {
-        for self.loaders.each |scheme_loader| {
+        for scheme_loader in self.loaders.iter() {
             match *scheme_loader {
                 (ref scheme, ref loader_factory) => {
 	            if (*scheme) == url.scheme {
@@ -125,7 +125,6 @@ fn test_exit() {
 }
 
 #[test]
-#[allow(non_implicitly_copyable_typarams)]
 fn test_bad_scheme() {
     let resource_task = ResourceTask();
     let progress = Port();
@@ -138,11 +137,10 @@ fn test_bad_scheme() {
 }
 
 #[test]
-#[allow(non_implicitly_copyable_typarams)]
 fn should_delegate_to_scheme_loader() {
     let payload = ~[1, 2, 3];
     let loader_factory = |_url: Url, progress_chan: Chan<ProgressMsg>| {
-        progress_chan.send(Payload(copy payload));
+        progress_chan.send(Payload(payload.clone()));
         progress_chan.send(Done(Ok(())));
     };
     let loader_factories = ~[(~"snicklefritz", loader_factory)];

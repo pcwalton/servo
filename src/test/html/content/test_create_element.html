@@ -1,0 +1,19 @@
+<html>
+<head>
+  <title></title>
+  <script src="harness.js"></script>
+</head>
+<body>
+  <script>
+    var elem = document.createElement("foo");
+    is(elem.tagName, "FOO");
+    var elem = document.createElement("p");
+    is(elem instanceof HTMLParagraphElement, true);
+    var elem = document.createElement("sPAn");
+    is(elem instanceof HTMLSpanElement, true);
+    var text = document.createTextNode("hello");
+    is(text instanceof Text, true);
+    finish();
+  </script>
+</body>
+</html>

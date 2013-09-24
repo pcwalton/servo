@@ -4,114 +4,197 @@
 
 // The task that handles all rendering/painting.
 
-use azure::AzFloat;
-use compositor::{Compositor, IdleRenderState, RenderingRenderState};
+use azure::{AzFloat, AzGLContext};
+use azure::azure_hl::{B8G8R8A8, DrawTarget};
+use display_list::DisplayList;
+use servo_msg::compositor_msg::{RenderListener, IdleRenderState, RenderingRenderState, LayerBuffer};
+use servo_msg::compositor_msg::{LayerBufferSet, Epoch};
+use servo_msg::constellation_msg::{ConstellationChan, PipelineId, RendererReadyMsg};
 use font_context::FontContext;
 use geom::matrix2d::Matrix2D;
+use geom::size::Size2D;
+use geom::rect::Rect;
 use opts::Opts;
 use render_context::RenderContext;
-use render_layers::{RenderLayer, render_layers};
 
-use core::cell::Cell;
-use core::comm::{Chan, Port, SharedChan};
-use core::task::SingleThreaded;
-use std::task_pool::TaskPool;
-use servo_net::util::spawn_listener;
+use std::comm::{Chan, Port, SharedChan};
+use std::task::spawn_with;
+use extra::arc::Arc;
 
 use servo_util::time::{ProfilerChan, profile};
 use servo_util::time;
 
-pub enum Msg {
-    RenderMsg(RenderLayer),
+use buffer_map::BufferMap;
+
+
+pub struct RenderLayer<T> {
+    display_list: Arc<DisplayList<T>>,
+    size: Size2D<uint>
+}
+
+pub enum Msg<T> {
+    RenderMsg(RenderLayer<T>),
+    ReRenderMsg(~[BufferRequest], f32, Epoch),
+    UnusedBufferMsg(~[~LayerBuffer]),
+    PaintPermissionGranted,
+    PaintPermissionRevoked,
     ExitMsg(Chan<()>),
 }
 
+/// A request from the compositor to the renderer for tiles that need to be (re)displayed.
 #[deriving(Clone)]
-pub struct RenderTask {
-    channel: SharedChan<Msg>,
+pub struct BufferRequest {
+    // The rect in pixels that will be drawn to the screen
+    screen_rect: Rect<uint>,
+    
+    // The rect in page coordinates that this tile represents
+    page_rect: Rect<f32>,
 }
 
-impl RenderTask {
-    pub fn new<C:Compositor + Owned>(compositor: C,
-                                     opts: Opts,
-                                     profiler_chan: ProfilerChan)
-                                     -> RenderTask {
-        let compositor_cell = Cell(compositor);
-        let opts_cell = Cell(opts);
-        let (port, chan) = comm::stream();
-        let port = Cell(port);
-
-        do spawn {
-            let compositor = compositor_cell.take();
-
-            // FIXME: Annoying three-cell dance here. We need one-shot closures.
-            let opts = opts_cell.with_ref(|o| copy *o);
-            let n_threads = opts.n_render_threads;
-            let new_opts_cell = Cell(opts);
-
-            let profiler_chan = profiler_chan.clone();
-            let profiler_chan_copy = profiler_chan.clone();
-
-            let thread_pool = do TaskPool::new(n_threads, Some(SingleThreaded)) {
-                let opts_cell = Cell(new_opts_cell.with_ref(|o| copy *o));
-                let profiler_chan = Cell(profiler_chan.clone());
-
-                let f: ~fn(uint) -> ThreadRenderContext = |thread_index| {
-                    let opts = opts_cell.with_ref(|opts| copy *opts);
-
-                    ThreadRenderContext {
-                        thread_index: thread_index,
-                        font_ctx: @mut FontContext::new(opts.render_backend,
-                                                        false,
-                                                        profiler_chan.take()),
-                        opts: opts,
-                    }
-                };
-                f
-            };
-
-            // FIXME: rust/#5967
-            let mut renderer = Renderer {
-                port: port.take(),
-                compositor: compositor,
-                thread_pool: thread_pool,
-                opts: opts_cell.take(),
-                profiler_chan: profiler_chan_copy,
-            };
-
-            renderer.start();
-        }
-
-        RenderTask {
-            channel: SharedChan::new(chan),
-        }
+pub fn BufferRequest(screen_rect: Rect<uint>, page_rect: Rect<f32>) -> BufferRequest {
+    BufferRequest {
+        screen_rect: screen_rect,
+        page_rect: page_rect,
     }
 }
 
-/// Data that needs to be kept around for each render thread.
-priv struct ThreadRenderContext {
-    thread_index: uint,
-    font_ctx: @mut FontContext,
-    opts: Opts,
+// FIXME(rust#9155): this should be a newtype struct, but
+// generic newtypes ICE when compiled cross-crate
+#[deriving(Clone)]
+pub struct RenderChan<T> {
+    chan: SharedChan<Msg<T>>,
+}
+impl<T: Send> RenderChan<T> {
+    pub fn new(chan: Chan<Msg<T>>) -> RenderChan<T> {
+        RenderChan {
+            chan: SharedChan::new(chan),
+        }
+    }
+}
+impl<T: Send> GenericChan<Msg<T>> for RenderChan<T> {
+    fn send(&self, msg: Msg<T>) {
+        assert!(self.try_send(msg), "RenderChan.send: render port closed")
+    }
+}
+impl<T: Send> GenericSmartChan<Msg<T>> for RenderChan<T> {
+    fn try_send(&self, msg: Msg<T>) -> bool {
+        self.chan.try_send(msg)
+    }
 }
 
-priv struct Renderer<C> {
-    port: Port<Msg>,
+struct RenderTask<C,T> {
+    id: PipelineId,
+    port: Port<Msg<T>>,
     compositor: C,
-    thread_pool: TaskPool<ThreadRenderContext>,
+    constellation_chan: ConstellationChan,
+    font_ctx: @mut FontContext,
     opts: Opts,
 
     /// A channel to the profiler.
     profiler_chan: ProfilerChan,
+
+    share_gl_context: AzGLContext,
+
+    /// The layer to be rendered
+    render_layer: Option<RenderLayer<T>>,
+    /// Permission to send paint messages to the compositor
+    paint_permission: bool,
+    /// Cached copy of last layers rendered
+    last_paint_msg: Option<~LayerBufferSet>,
+    /// A counter for epoch messages
+    epoch: Epoch,
+    /// A data structure to store unused LayerBuffers
+    buffer_map: BufferMap<~LayerBuffer>,
 }
 
-impl<C: Compositor + Owned> Renderer<C> {
+impl<C: RenderListener + Send,T:Send+Freeze> RenderTask<C,T> {
+    pub fn create(id: PipelineId,
+                  port: Port<Msg<T>>,
+                  compositor: C,
+                  constellation_chan: ConstellationChan,
+                  opts: Opts,
+                  profiler_chan: ProfilerChan) {
+
+        do spawn_with((port, compositor, constellation_chan, opts, profiler_chan))
+            |(port, compositor, constellation_chan, opts, profiler_chan)| {
+
+            let share_gl_context = compositor.get_gl_context();
+
+            // FIXME: rust/#5967
+            let mut render_task = RenderTask {
+                id: id,
+                port: port,
+                compositor: compositor,
+                constellation_chan: constellation_chan,
+                font_ctx: @mut FontContext::new(opts.render_backend.clone(),
+                                                false,
+                                                profiler_chan.clone()),
+                opts: opts,
+                profiler_chan: profiler_chan,
+                share_gl_context: share_gl_context,
+                render_layer: None,
+
+                paint_permission: false,
+                last_paint_msg: None,
+                epoch: Epoch(0),
+                buffer_map: BufferMap::new(10000000),
+            };
+
+            render_task.start();
+        }
+    }
+
     fn start(&mut self) {
-        debug!("renderer: beginning rendering loop");
+        debug!("render_task: beginning rendering loop");
 
         loop {
             match self.port.recv() {
-                RenderMsg(render_layer) => self.render(render_layer),
+                RenderMsg(render_layer) => {
+                    if self.paint_permission {
+                        self.epoch.next();
+                        self.compositor.set_layer_page_size(self.id, render_layer.size, self.epoch);
+                    } else {
+                        self.constellation_chan.send(RendererReadyMsg(self.id));
+                    }
+                    self.render_layer = Some(render_layer);
+                    self.last_paint_msg = None;
+                }
+                ReRenderMsg(tiles, scale, epoch) => {
+                    if self.epoch == epoch {
+                        self.render(tiles, scale);
+                    } else {
+                        debug!("renderer epoch mismatch: %? != %?", self.epoch, epoch);
+                    }
+                }
+                UnusedBufferMsg(unused_buffers) => {
+                    // move_rev_iter is more efficient
+                    for buffer in unused_buffers.move_rev_iter() {
+                        self.buffer_map.insert(buffer);
+                    }
+                }
+                PaintPermissionGranted => {
+                    self.paint_permission = true;
+                    match self.render_layer {
+                        Some(ref render_layer) => {
+                            self.epoch.next();
+                            self.compositor.set_layer_page_size(self.id, render_layer.size, self.epoch);
+                        }
+                        None => {}
+                    }
+                    // FIXME: This sends the last paint request, anticipating what
+                    // the compositor will ask for. However, even if it sends the right
+                    // tiles, the compositor still asks for them, and they will be
+                    // re-rendered redundantly.
+                    match self.last_paint_msg {
+                        Some(ref layer_buffer_set) => {
+                            self.compositor.paint(self.id, layer_buffer_set.clone(), self.epoch);
+                        }
+                        None => {} // Nothing to do
+                    }
+                }
+                PaintPermissionRevoked => {
+                    self.paint_permission = false;
+                }
                 ExitMsg(response_ch) => {
                     response_ch.send(());
                     break;
@@ -120,55 +203,92 @@ impl<C: Compositor + Owned> Renderer<C> {
         }
     }
 
-    fn render(&mut self, render_layer: RenderLayer) {
-        debug!("renderer: rendering");
+    fn render(&mut self, tiles: ~[BufferRequest], scale: f32) {
+        let render_layer;
+        match self.render_layer {
+            Some(ref r_layer) => {
+                render_layer = r_layer;
+            }
+            _ => return, // nothing to do
+        }
+
         self.compositor.set_render_state(RenderingRenderState);
-        do profile(time::RenderingCategory, self.profiler_chan.clone()) {
-            let layer_buffer_set = do render_layers(&render_layer,
-                                                    &self.opts,
-                                                    self.profiler_chan.clone()) |render_layer_ref,
-                                                                                 layer_buffer,
-                                                                                 buffer_chan| {
-                let layer_buffer_cell = Cell(layer_buffer);
-                do self.thread_pool.execute |thread_render_context| {
-                    do layer_buffer_cell.with_ref |layer_buffer| {
+        do time::profile(time::RenderingCategory, self.profiler_chan.clone()) {
+
+            // FIXME: Try not to create a new array here.
+            let mut new_buffers = ~[];
+
+            // Divide up the layer into tiles.
+            do time::profile(time::RenderingPrepBuffCategory, self.profiler_chan.clone()) {
+                for tile in tiles.iter() {
+                    let width = tile.screen_rect.size.width;
+                    let height = tile.screen_rect.size.height;
+                    
+                    let buffer = match self.buffer_map.find(tile.screen_rect.size) {
+                        Some(buffer) => {
+                            let mut buffer = buffer;
+                            buffer.rect = tile.page_rect;
+                            buffer.screen_pos = tile.screen_rect;
+                            buffer.resolution = scale;
+                            buffer
+                        }
+                        None => ~LayerBuffer {
+                            draw_target: DrawTarget::new_with_fbo(self.opts.render_backend,
+                                                                  self.share_gl_context,
+                                                                  Size2D(width as i32, height as i32),
+                                                                  B8G8R8A8),
+                            rect: tile.page_rect,
+                            screen_pos: tile.screen_rect,
+                            resolution: scale,
+                            stride: (width * 4) as uint
+                        }
+                    };
+                    
+                    
+                    {
                         // Build the render context.
                         let ctx = RenderContext {
-                            canvas: layer_buffer,
-                            font_ctx: thread_render_context.font_ctx,
-                            opts: &thread_render_context.opts
+                            canvas: &buffer,
+                            font_ctx: self.font_ctx,
+                            opts: &self.opts
                         };
 
                         // Apply the translation to render the tile we want.
                         let matrix: Matrix2D<AzFloat> = Matrix2D::identity();
-                        let scale = thread_render_context.opts.zoom as f32;
-
                         let matrix = matrix.scale(scale as AzFloat, scale as AzFloat);
-                        let matrix = matrix.translate(-(layer_buffer.rect.origin.x as f32) as AzFloat,
-                                                      -(layer_buffer.rect.origin.y as f32) as AzFloat);
-
-
-                        layer_buffer.draw_target.set_transform(&matrix);
-
+                        let matrix = matrix.translate(-(buffer.rect.origin.x) as AzFloat,
+                                                      -(buffer.rect.origin.y) as AzFloat);
+                        
+                        ctx.canvas.draw_target.set_transform(&matrix);
+                        
                         // Clear the buffer.
                         ctx.clear();
                         
-
                         // Draw the display list.
-                        let render_layer: &RenderLayer = unsafe {
-                            cast::transmute(render_layer_ref)
-                        };
-                        
-                        render_layer.display_list.draw_into_context(&ctx);
+                        do profile(time::RenderingDrawingCategory, self.profiler_chan.clone()) {
+                            render_layer.display_list.get().draw_into_context(&ctx);
+                            ctx.canvas.draw_target.flush();
+                        }
                     }
-
-                    // Send back the buffer.
-                    buffer_chan.send(layer_buffer_cell.take());
+                    
+                    new_buffers.push(buffer);
+                    
                 }
+
+            }
+
+            let layer_buffer_set = ~LayerBufferSet {
+                buffers: new_buffers,
             };
 
-            debug!("renderer: returning surface");
-            self.compositor.paint(layer_buffer_set, render_layer.size);
+            debug!("render_task: returning surface");
+            if self.paint_permission {
+                self.compositor.paint(self.id, layer_buffer_set.clone(), self.epoch);
+            } else {
+                self.constellation_chan.send(RendererReadyMsg(self.id));
+            }
+            debug!("caching paint msg");
+            self.last_paint_msg = Some(layer_buffer_set);
             self.compositor.set_render_state(IdleRenderState);
         }
     }

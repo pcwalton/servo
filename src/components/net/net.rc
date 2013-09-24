@@ -9,10 +9,10 @@
 #[crate_type = "lib"];
 
 extern mod geom;
-extern mod http_client;
+extern mod http;
 extern mod servo_util (name = "util");
 extern mod stb_image;
-extern mod std;
+extern mod extra;
 
 /// Image handling.
 ///

@@ -22,9 +22,6 @@
 [submodule "src/support/opengles/rust-opengles"]
 	path = src/support/opengles/rust-opengles
 	url = https://github.com/mozilla-servo/rust-opengles.git
-[submodule "src/support/glut/rust-glut"]
-	path = src/support/glut/rust-glut
-	url = https://github.com/mozilla-servo/rust-glut.git
 [submodule "src/support/layers/rust-layers"]
 	path = src/support/layers/rust-layers
 	url = https://github.com/mozilla-servo/rust-layers.git
@@ -87,10 +84,40 @@
 	url = https://github.com/mozilla/rust.git
 [submodule "src/support/alert/rust-alert"]
 	path = src/support/alert/rust-alert
-	url = git://github.com/mozilla-servo/rust-alert.git
+	url = https://github.com/mozilla-servo/rust-alert.git
 [submodule "src/support/nss/nss"]
 	path = src/support/nss/nss
-	url = git://github.com/mozilla-servo/nss.git
+	url = https://github.com/mozilla-servo/nss.git
 [submodule "src/support/nss/nspr"]
 	path = src/support/nss/nspr
-	url = git://github.com/mozilla-servo/nspr.git
+	url = https://github.com/mozilla-servo/nspr.git
+[submodule "src/support/glfw/glfw"]
+	path = src/support/glfw/glfw
+	url = https://github.com/mozilla-servo/glfw.git
+[submodule "src/support/glfw/glfw-rs"]
+	path = src/support/glfw/glfw-rs
+	url = https://github.com/mozilla-servo/glfw-rs.git
+[submodule "src/support/css/rust-cssparser"]
+	path = src/support/css/rust-cssparser
+	url = https://github.com/mozilla-servo/rust-cssparser.git
+[submodule "src/support/png/rust-png"]
+	path = src/support/png/rust-png
+	url = https://github.com/mozilla-servo/rust-png.git
+[submodule "src/support/png/libpng"]
+	path = src/support/png/libpng
+	url = https://github.com/mozilla-servo/libpng.git
+[submodule "src/platform/android/fontconfig"]
+	path = src/platform/android/fontconfig
+	url = http://github.com/webconvforge/fontconfig.git
+[submodule "src/platform/android/libexpat"]
+	path = src/platform/android/libexpat
+	url = http://github.com/webconvforge/libexpat.git
+[submodule "src/platform/android/libfreetype2"]
+	path = src/platform/android/libfreetype2
+	url = http://github.com/webconvforge/libfreetype2.git
+[submodule "src/support/glut/rust-glut"]
+	path = src/support/glut/rust-glut
+	url = http://github.com/mozilla-servo/rust-glut.git
+[submodule "src/support/http/rust-http"]
+	path = src/support/http/rust-http
+	url = https://github.com/mozilla-servo/rust-http

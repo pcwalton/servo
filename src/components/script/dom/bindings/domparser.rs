@@ -8,7 +8,9 @@ use dom::bindings::utils::{BindingObject, DerivedWrapper};
 use dom::domparser::DOMParser;
 
 use js::jsapi::{JSContext, JSObject, JSVal};
-use js::glue::bindgen::{RUST_OBJECT_TO_JSVAL};
+use js::glue::{RUST_OBJECT_TO_JSVAL};
+
+use std::cast;
 
 impl CacheableWrapper for DOMParser {
     fn get_wrappercache(&mut self) -> &mut WrapperCache {
@@ -22,8 +24,8 @@ impl CacheableWrapper for DOMParser {
 }
 
 impl BindingObject for DOMParser {
-    fn GetParentObject(&self, _cx: *JSContext) -> @mut CacheableWrapper {
-        return self.owner as @mut CacheableWrapper;
+    fn GetParentObject(&self, _cx: *JSContext) -> Option<@mut CacheableWrapper> {
+        Some(self.owner as @mut CacheableWrapper)
     }
 }
 
@@ -32,6 +34,7 @@ impl DerivedWrapper for DOMParser {
         fail!(~"nyi")
     }
 
+    #[fixed_stack_segment]
     fn wrap_shared(@mut self, cx: *JSContext, scope: *JSObject, vp: *mut JSVal) -> i32 {
         let obj = self.wrap_object_shared(cx, scope);
         if obj.is_null() {

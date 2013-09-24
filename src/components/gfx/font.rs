@@ -9,16 +9,26 @@ use platform::font_context::FontContextHandle;
 use platform::font::{FontHandle, FontTable};
 use render_context::RenderContext;
 use servo_util::range::Range;
+use std::cast;
+use std::ptr;
+use std::str;
+use std::vec;
+use servo_util::cache::{Cache, HashCache};
 use text::glyph::{GlyphStore, GlyphIndex};
 use text::shaping::ShaperMethods;
 use text::{Shaper, TextRun};
+use extra::arc::Arc;
 
 use azure::{AzFloat, AzScaledFontRef};
 use azure::scaled_font::ScaledFont;
 use azure::azure_hl::{BackendType, ColorPattern};
 use geom::{Point2D, Rect, Size2D};
 
+use servo_util::time;
+use servo_util::time::profile;
 use servo_util::time::ProfilerChan;
+
+use newcss::values::CSSTextDecoration;
 
 // FontHandle encapsulates access to the platform's font API,
 // e.g. quartz, FreeType. It provides access to metrics and tables
@@ -49,12 +59,12 @@ pub type FractionalPixel = float;
 
 pub type FontTableTag = u32;
 
-trait FontTableTagConversions {
-    pub fn tag_to_str(&self) -> ~str;
+pub trait FontTableTagConversions {
+    fn tag_to_str(&self) -> ~str;
 }
 
 impl FontTableTagConversions for FontTableTag {
-    pub fn tag_to_str(&self) -> ~str {
+    fn tag_to_str(&self) -> ~str {
         unsafe {
             let reversed = str::raw::from_buf_len(cast::transmute(self), 4);
             return str::from_chars([reversed.char_at(3),
@@ -72,6 +82,8 @@ pub trait FontTableMethods {
 pub struct FontMetrics {
     underline_size:   Au,
     underline_offset: Au,
+    strikeout_size:   Au,
+    strikeout_offset: Au,
     leading:          Au,
     x_height:         Au,
     em_size:          Au,
@@ -81,7 +93,7 @@ pub struct FontMetrics {
 }
 
 // TODO(Issue #200): use enum from CSS bindings for 'font-weight'
-#[deriving(Eq)]
+#[deriving(Clone, Eq)]
 pub enum CSSFontWeight {
     FontWeight100,
     FontWeight200,
@@ -94,7 +106,7 @@ pub enum CSSFontWeight {
     FontWeight900,
 }
 
-pub impl CSSFontWeight {
+impl CSSFontWeight {
     pub fn is_bold(self) -> bool {
         match self {
             FontWeight900 | FontWeight800 | FontWeight700 | FontWeight600 => true,
@@ -109,7 +121,7 @@ pub impl CSSFontWeight {
 // the instance's properties.
 //
 // For now, the cases are differentiated with a typedef
-#[deriving(Eq)]
+#[deriving(Clone, Eq)]
 pub struct FontStyle {
     pt_size: float,
     weight: CSSFontWeight,
@@ -134,14 +146,14 @@ struct ResolvedFont {
 // It's used to swizzle/unswizzle gfx::Font instances when
 // communicating across tasks, such as the display list between layout
 // and render tasks.
-#[deriving(Eq)]
+#[deriving(Clone, Eq)]
 pub struct FontDescriptor {
     style: UsedFontStyle,
     selector: FontSelector,
 }
 
-pub impl FontDescriptor {
-    fn new(style: UsedFontStyle, selector: FontSelector) -> FontDescriptor {
+impl FontDescriptor {
+    pub fn new(style: UsedFontStyle, selector: FontSelector) -> FontDescriptor {
         FontDescriptor {
             style: style,
             selector: selector,
@@ -150,7 +162,7 @@ pub impl FontDescriptor {
 }
 
 // A FontSelector is a platform-specific strategy for serializing face names.
-#[deriving(Eq)]
+#[deriving(Clone, Eq)]
 pub enum FontSelector {
     SelectorPlatformIdentifier(~str),
 }
@@ -170,24 +182,24 @@ pub struct FontGroup {
     fonts: ~[@mut Font],
 }
 
-pub impl FontGroup {
-    fn new(families: @str, style: &UsedFontStyle, fonts: ~[@mut Font]) -> FontGroup {
+impl FontGroup {
+    pub fn new(families: @str, style: &UsedFontStyle, fonts: ~[@mut Font]) -> FontGroup {
         FontGroup {
             families: families,
-            style: copy *style,
+            style: (*style).clone(),
             fonts: fonts,
         }
     }
 
-    fn teardown(&mut self) {
+    pub fn teardown(&mut self) {
         self.fonts = ~[];
     }
 
-    fn create_textrun(&self, text: ~str, underline: bool) -> TextRun {
+    pub fn create_textrun(&self, text: ~str, decoration: CSSTextDecoration) -> TextRun {
         assert!(self.fonts.len() > 0);
 
         // TODO(Issue #177): Actually fall back through the FontGroup when a font is unsuitable.
-        return TextRun::new(self.fonts[0], text, underline);
+        return TextRun::new(self.fonts[0], text, decoration);
     }
 }
 
@@ -199,6 +211,24 @@ pub struct RunMetrics {
     // this bounding box is relative to the left origin baseline.
     // so, bounding_box.position.y = -ascent
     bounding_box: Rect<Au>
+}
+
+impl RunMetrics {
+    pub fn new(advance: Au, ascent: Au, descent: Au) -> RunMetrics {
+        let bounds = Rect(Point2D(Au(0), -ascent),
+                          Size2D(advance, ascent + descent));
+
+        // TODO(Issue #125): support loose and tight bounding boxes; using the
+        // ascent+descent and advance is sometimes too generous and
+        // looking at actual glyph extents can yield a tighter box.
+
+        RunMetrics { 
+            advance_width: advance,
+            bounding_box: bounds,
+            ascent: ascent,
+            descent: descent,
+        }
+    }
 }
 
 /**
@@ -213,10 +243,11 @@ pub struct Font {
     metrics: FontMetrics,
     backend: BackendType,
     profiler_chan: ProfilerChan,
+    shape_cache: HashCache<~str, Arc<GlyphStore>>,
 }
 
-pub impl Font {
-    fn new_from_buffer(ctx: &FontContext,
+impl Font {
+    pub fn new_from_buffer(ctx: &FontContext,
                        buffer: ~[u8],
                        style: &SpecifiedFontStyle,
                        backend: BackendType,
@@ -224,9 +255,9 @@ pub impl Font {
             -> Result<@mut Font, ()> {
         let handle = FontHandleMethods::new_from_buffer(&ctx.handle, buffer, style);
         let handle: FontHandle = if handle.is_ok() {
-            result::unwrap(handle)
+            handle.unwrap()
         } else {
-            return Err(handle.get_err());
+            return Err(handle.unwrap_err());
         };
         
         let metrics = handle.get_metrics();
@@ -236,14 +267,15 @@ pub impl Font {
             handle: handle,
             azure_font: None,
             shaper: None,
-            style: copy *style,
+            style: (*style).clone(),
             metrics: metrics,
             backend: backend,
             profiler_chan: profiler_chan,
+            shape_cache: HashCache::new(),
         });
     }
 
-    fn new_from_adopted_handle(_fctx: &FontContext, handle: FontHandle,
+    pub fn new_from_adopted_handle(_fctx: &FontContext, handle: FontHandle,
                                style: &SpecifiedFontStyle, backend: BackendType,
                                profiler_chan: ProfilerChan) -> @mut Font {
         let metrics = handle.get_metrics();
@@ -252,14 +284,15 @@ pub impl Font {
             handle: handle,
             azure_font: None,
             shaper: None,
-            style: copy *style,
+            style: (*style).clone(),
             metrics: metrics,
             backend: backend,
             profiler_chan: profiler_chan,
+            shape_cache: HashCache::new(),
         }
     }
 
-    fn new_from_existing_handle(fctx: &FontContext, handle: &FontHandle,
+    pub fn new_from_existing_handle(fctx: &FontContext, handle: &FontHandle,
                                 style: &SpecifiedFontStyle, backend: BackendType,
                                 profiler_chan: ProfilerChan) -> Result<@mut Font,()> {
 
@@ -272,7 +305,7 @@ pub impl Font {
         return Ok(Font::new_from_adopted_handle(fctx, styled_handle, style, backend, profiler_chan));
     }
 
-    priv fn get_shaper(@mut self) -> @Shaper {
+    fn get_shaper(@mut self) -> @Shaper {
         // fast path: already created a shaper
         match self.shaper {
             Some(shaper) => { return shaper; },
@@ -284,7 +317,7 @@ pub impl Font {
         shaper
     }
 
-    fn get_table_for_tag(&self, tag: FontTableTag) -> Option<FontTable> {
+    pub fn get_table_for_tag(&self, tag: FontTableTag) -> Option<FontTable> {
         let result = self.handle.get_table_for_tag(tag);
         let status = if result.is_some() { "Found" } else { "Didn't find" };
 
@@ -295,7 +328,7 @@ pub impl Font {
         return result;
     }
 
-    fn teardown(&mut self) {
+    pub fn teardown(&mut self) {
         self.shaper = None;
         self.azure_font = None;
     }
@@ -303,7 +336,7 @@ pub impl Font {
     // TODO: this should return a borrowed pointer, but I can't figure
     // out why borrowck doesn't like my implementation.
 
-    priv fn get_azure_font(&mut self) -> AzScaledFontRef {
+    fn get_azure_font(&mut self) -> AzScaledFontRef {
         // fast path: we've already created the azure font resource
         match self.azure_font {
             Some(ref azfont) => return azfont.get_ref(),
@@ -317,14 +350,15 @@ pub impl Font {
     }
 
     #[cfg(target_os="macos")]
-    priv fn create_azure_font(&mut self) -> ScaledFont {
+    fn create_azure_font(&mut self) -> ScaledFont {
         let cg_font = self.handle.get_CGFont();
         let size = self.style.pt_size as AzFloat;
         ScaledFont::new(self.backend, &cg_font, size)
     }
 
     #[cfg(target_os="linux")]
-    priv fn create_azure_font(&self) -> ScaledFont {
+    #[cfg(target_os="android")]
+    fn create_azure_font(&self) -> ScaledFont {
         let freetype_font = self.handle.face;
         let size = self.style.pt_size as AzFloat;
         ScaledFont::new(self.backend, freetype_font, size)
@@ -332,19 +366,20 @@ pub impl Font {
 }
 
 
-pub impl Font {
-    fn draw_text_into_context(&mut self,
+impl Font {
+    #[fixed_stack_segment]
+    pub fn draw_text_into_context(&mut self,
                               rctx: &RenderContext,
                               run: &TextRun,
                               range: &Range,
                               baseline_origin: Point2D<Au>,
                               color: Color) {
-        use core::libc::types::common::c99::{uint16_t, uint32_t};
+        use std::libc::types::common::c99::{uint16_t, uint32_t};
         use azure::{struct__AzDrawOptions,
                     struct__AzGlyph,
                     struct__AzGlyphBuffer,
                     struct__AzPoint};
-        use azure::azure::bindgen::{AzDrawTargetFillGlyphs};
+        use azure::azure::{AzDrawTargetFillGlyphs};
 
         let target = rctx.get_draw_target();
         let azfontref = self.get_azure_font();
@@ -357,82 +392,89 @@ pub impl Font {
             fields: 0x0200 as uint16_t
         };
 
-        let mut origin = copy baseline_origin;
+        let mut origin = baseline_origin.clone();
         let mut azglyphs = ~[];
-        vec::reserve(&mut azglyphs, range.length());
+        azglyphs.reserve(range.length());
 
-        for run.glyphs.iter_glyphs_for_char_range(range) |_i, glyph| {
-            let glyph_advance = glyph.advance();
-            let glyph_offset = glyph.offset().get_or_default(Au::zero_point());
+        for (glyphs, _offset, slice_range) in run.iter_slices_for_range(range) {
+            for (_i, glyph) in glyphs.iter_glyphs_for_char_range(&slice_range) {
+                let glyph_advance = glyph.advance();
+                let glyph_offset = glyph.offset().unwrap_or_default(Au::zero_point());
 
-            let azglyph = struct__AzGlyph {
-                mIndex: glyph.index() as uint32_t,
-                mPosition: struct__AzPoint {
-                    x: (origin.x + glyph_offset.x).to_px() as AzFloat,
-                    y: (origin.y + glyph_offset.y).to_px() as AzFloat
-                }
+                let azglyph = struct__AzGlyph {
+                    mIndex: glyph.index() as uint32_t,
+                    mPosition: struct__AzPoint {
+                        x: (origin.x + glyph_offset.x).to_nearest_px() as AzFloat,
+                        y: (origin.y + glyph_offset.y).to_nearest_px() as AzFloat
+                    }
+                };
+                origin = Point2D(origin.x + glyph_advance, origin.y);
+                azglyphs.push(azglyph)
             };
-            origin = Point2D(origin.x + glyph_advance, origin.y);
-            azglyphs.push(azglyph)
-        };
+        }
 
         let azglyph_buf_len = azglyphs.len();
         if azglyph_buf_len == 0 { return; } // Otherwise the Quartz backend will assert.
 
-        let glyphbuf = unsafe {
-            struct__AzGlyphBuffer {
-                mGlyphs: vec::raw::to_ptr(azglyphs),
-                mNumGlyphs: azglyph_buf_len as uint32_t            
-            }
+        let glyphbuf = struct__AzGlyphBuffer {
+            mGlyphs: vec::raw::to_ptr(azglyphs),
+            mNumGlyphs: azglyph_buf_len as uint32_t            
         };
 
-        // TODO(Issue #64): this call needs to move into azure_hl.rs
-        AzDrawTargetFillGlyphs(target.azure_draw_target,
-                               azfontref,
-                               ptr::to_unsafe_ptr(&glyphbuf),
-                               azure_pattern,
-                               ptr::to_unsafe_ptr(&options),
-                               ptr::null());
+        unsafe {
+            // TODO(Issue #64): this call needs to move into azure_hl.rs
+            AzDrawTargetFillGlyphs(target.azure_draw_target,
+                                   azfontref,
+                                   ptr::to_unsafe_ptr(&glyphbuf),
+                                   azure_pattern,
+                                   ptr::to_unsafe_ptr(&options),
+                                   ptr::null());
+        }
     }
 
-    fn measure_text(&self, run: &TextRun, range: &Range) -> RunMetrics {
+    pub fn measure_text(&self, run: &TextRun, range: &Range) -> RunMetrics {
         // TODO(Issue #199): alter advance direction for RTL
         // TODO(Issue #98): using inter-char and inter-word spacing settings  when measuring text
         let mut advance = Au(0);
-        for run.glyphs.iter_glyphs_for_char_range(range) |_i, glyph| {
-            advance += glyph.advance();
+        for (glyphs, _offset, slice_range) in run.iter_slices_for_range(range) {
+            for (_i, glyph) in glyphs.iter_glyphs_for_char_range(&slice_range) {
+                advance = advance + glyph.advance();
+            }
         }
-        let bounds = Rect(Point2D(Au(0), -self.metrics.ascent),
-                          Size2D(advance, self.metrics.ascent + self.metrics.descent));
+        RunMetrics::new(advance, self.metrics.ascent, self.metrics.descent)
+    }
 
-        // TODO(Issue #125): support loose and tight bounding boxes; using the
-        // ascent+descent and advance is sometimes too generous and
-        // looking at actual glyph extents can yield a tighter box.
+    pub fn measure_text_for_slice(&self,
+                                  glyphs: &GlyphStore,
+                                  slice_range: &Range)
+                                  -> RunMetrics {
+        let mut advance = Au(0);
+        for (_i, glyph) in glyphs.iter_glyphs_for_char_range(slice_range) {
+            advance = advance + glyph.advance();
+        }
+        RunMetrics::new(advance, self.metrics.ascent, self.metrics.descent)
+    }
 
-        RunMetrics { 
-            advance_width: advance,
-            bounding_box: bounds,
-            ascent: self.metrics.ascent,
-            descent: self.metrics.descent,
+    pub fn shape_text(@mut self, text: ~str, is_whitespace: bool) -> Arc<GlyphStore> {
+        do profile(time::LayoutShapingCategory, self.profiler_chan.clone()) {
+            let shaper = self.get_shaper();
+            do self.shape_cache.find_or_create(&text) |txt| {
+                let mut glyphs = GlyphStore::new(text.char_len(), is_whitespace);
+                shaper.shape_text(*txt, &mut glyphs);
+                Arc::new(glyphs)
+            }
         }
     }
 
-    fn shape_text(@mut self, text: &str, store: &mut GlyphStore) {
-        // TODO(Issue #229): use a more efficient strategy for repetitive shaping.
-        // For example, Gecko uses a per-"word" hashtable of shaper results.
-        let shaper = self.get_shaper();
-        shaper.shape_text(text, store);
+    pub fn get_descriptor(&self) -> FontDescriptor {
+        FontDescriptor::new(self.style.clone(), SelectorPlatformIdentifier(self.handle.face_identifier()))
     }
 
-    fn get_descriptor(&self) -> FontDescriptor {
-        FontDescriptor::new(copy self.style, SelectorPlatformIdentifier(self.handle.face_identifier()))
-    }
-
-    fn glyph_index(&self, codepoint: char) -> Option<GlyphIndex> {
+    pub fn glyph_index(&self, codepoint: char) -> Option<GlyphIndex> {
         self.handle.glyph_index(codepoint)
     }
 
-    fn glyph_h_advance(&self, glyph: GlyphIndex) -> FractionalPixel {
+    pub fn glyph_h_advance(&self, glyph: GlyphIndex) -> FractionalPixel {
         match self.handle.glyph_h_advance(glyph) {
           Some(adv) => adv,
           None => /* FIXME: Need fallback strategy */ 10f as FractionalPixel

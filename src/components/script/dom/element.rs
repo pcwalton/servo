@@ -4,145 +4,151 @@
 
 //! Element nodes.
 
-use dom::bindings::utils::DOMString;
+use dom::bindings::utils::{BindingObject, CacheableWrapper, DOMString, ErrorResult, Fallible, WrapperCache};
+use dom::bindings::utils::{null_str_as_empty, null_str_as_empty_ref};
+use dom::htmlcollection::HTMLCollection;
 use dom::clientrect::ClientRect;
 use dom::clientrectlist::ClientRectList;
-use dom::node::{ElementNodeTypeId, Node, ScriptView};
+use dom::node::{ElementNodeTypeId, Node, ScriptView, AbstractNode};
 use layout_interface::{ContentBoxQuery, ContentBoxResponse, ContentBoxesQuery};
 use layout_interface::{ContentBoxesResponse};
+use newcss::stylesheet::Stylesheet;
 
-use core::cell::Cell;
-use core::str::eq_slice;
-use std::net::url::Url;
+use js::jsapi::{JSContext, JSObject};
+
+use std::cell::Cell;
+use std::comm;
+use std::str::eq_slice;
+use std::ascii::StrAsciiExt;
 
 pub struct Element {
-    parent: Node<ScriptView>,
+    node: Node<ScriptView>,
     tag_name: ~str,     // TODO: This should be an atom, not a ~str.
     attrs: ~[Attr],
+    style_attribute: Option<Stylesheet>,
+}
+
+impl CacheableWrapper for Element {
+    fn get_wrappercache(&mut self) -> &mut WrapperCache {
+        self.node.get_wrappercache()
+    }
+
+    fn wrap_object_shared(@mut self, _cx: *JSContext, _scope: *JSObject) -> *JSObject {
+        fail!("no wrapping")
+    }
+}
+
+impl BindingObject for Element {
+    fn GetParentObject(&self, cx: *JSContext) -> Option<@mut CacheableWrapper> {
+        self.node.GetParentObject(cx)
+    }
 }
 
 #[deriving(Eq)]
 pub enum ElementTypeId {
+    HTMLElementTypeId,
     HTMLAnchorElementTypeId,
-    HTMLAsideElementTypeId,
+    HTMLAppletElementTypeId,
+    HTMLAreaElementTypeId,
+    HTMLAudioElementTypeId,
+    HTMLBaseElementTypeId,
     HTMLBRElementTypeId,
     HTMLBodyElementTypeId,
-    HTMLBoldElementTypeId,
+    HTMLButtonElementTypeId,
+    HTMLCanvasElementTypeId,
+    HTMLDataElementTypeId,
+    HTMLDataListElementTypeId,
+    HTMLDirectoryElementTypeId,
+    HTMLDListElementTypeId,
     HTMLDivElementTypeId,
+    HTMLEmbedElementTypeId,
+    HTMLFieldSetElementTypeId,
     HTMLFontElementTypeId,
     HTMLFormElementTypeId,
+    HTMLFrameElementTypeId,
+    HTMLFrameSetElementTypeId,
     HTMLHRElementTypeId,
     HTMLHeadElementTypeId,
     HTMLHeadingElementTypeId,
     HTMLHtmlElementTypeId,
+    HTMLIframeElementTypeId,
     HTMLImageElementTypeId,
     HTMLInputElementTypeId,
-    HTMLItalicElementTypeId,
+    HTMLLabelElementTypeId,
+    HTMLLegendElementTypeId,
     HTMLLinkElementTypeId,
-    HTMLListItemElementTypeId,
+    HTMLLIElementTypeId,
+    HTMLMapElementTypeId,
+    HTMLMediaElementTypeId,
     HTMLMetaElementTypeId,
+    HTMLMeterElementTypeId,
+    HTMLModElementTypeId,
+    HTMLObjectElementTypeId,
     HTMLOListElementTypeId,
+    HTMLOptGroupElementTypeId,
     HTMLOptionElementTypeId,
+    HTMLOutputElementTypeId,
     HTMLParagraphElementTypeId,
+    HTMLParamElementTypeId,
+    HTMLPreElementTypeId,
+    HTMLProgressElementTypeId,
+    HTMLQuoteElementTypeId,
     HTMLScriptElementTypeId,
-    HTMLSectionElementTypeId,
     HTMLSelectElementTypeId,
-    HTMLSmallElementTypeId,
+    HTMLSourceElementTypeId,
     HTMLSpanElementTypeId,
     HTMLStyleElementTypeId,
-    HTMLTableBodyElementTypeId,
-    HTMLTableCellElementTypeId,
     HTMLTableElementTypeId,
+    HTMLTableCaptionElementTypeId,
+    HTMLTableCellElementTypeId,
+    HTMLTableColElementTypeId,
     HTMLTableRowElementTypeId,
+    HTMLTableSectionElementTypeId,
+    HTMLTemplateElementTypeId,
+    HTMLTextAreaElementTypeId,
+    HTMLTimeElementTypeId,
     HTMLTitleElementTypeId,
+    HTMLTrackElementTypeId,
     HTMLUListElementTypeId,
-    UnknownElementTypeId,
-}
-
-//
-// Regular old elements
-//
-
-pub struct HTMLAnchorElement    { parent: Element }
-pub struct HTMLAsideElement     { parent: Element }
-pub struct HTMLBRElement        { parent: Element }
-pub struct HTMLBodyElement      { parent: Element }
-pub struct HTMLBoldElement      { parent: Element }
-pub struct HTMLDivElement       { parent: Element }
-pub struct HTMLFontElement      { parent: Element }
-pub struct HTMLFormElement      { parent: Element }
-pub struct HTMLHRElement        { parent: Element }
-pub struct HTMLHeadElement      { parent: Element }
-pub struct HTMLHtmlElement      { parent: Element }
-pub struct HTMLInputElement     { parent: Element }
-pub struct HTMLItalicElement    { parent: Element }
-pub struct HTMLLinkElement      { parent: Element }
-pub struct HTMLListItemElement  { parent: Element }
-pub struct HTMLMetaElement      { parent: Element }
-pub struct HTMLOListElement     { parent: Element }
-pub struct HTMLOptionElement    { parent: Element }
-pub struct HTMLParagraphElement { parent: Element }
-pub struct HTMLScriptElement    { parent: Element }
-pub struct HTMLSectionElement   { parent: Element }
-pub struct HTMLSelectElement    { parent: Element }
-pub struct HTMLSmallElement     { parent: Element }
-pub struct HTMLSpanElement      { parent: Element }
-pub struct HTMLStyleElement     { parent: Element }
-pub struct HTMLTableBodyElement { parent: Element }
-pub struct HTMLTableCellElement { parent: Element }
-pub struct HTMLTableElement     { parent: Element }
-pub struct HTMLTableRowElement  { parent: Element }
-pub struct HTMLTitleElement     { parent: Element }
-pub struct HTMLUListElement     { parent: Element }
-pub struct UnknownElement       { parent: Element }
-
-//
-// Fancier elements
-//
-
-pub struct HTMLHeadingElement {
-    parent: Element,
-    level: HeadingLevel,
-}
-
-pub struct HTMLImageElement {
-    parent: Element,
-    image: Option<Url>,
+    HTMLVideoElementTypeId,
+    HTMLUnknownElementTypeId,
 }
 
 //
 // Element methods
 //
 
-pub impl<'self> Element {
+impl<'self> Element {
     pub fn new(type_id: ElementTypeId, tag_name: ~str) -> Element {
         Element {
-            parent: Node::new(ElementNodeTypeId(type_id)),
+            node: Node::new(ElementNodeTypeId(type_id)),
             tag_name: tag_name,
-            attrs: ~[]
+            attrs: ~[],
+            style_attribute: None,
         }
     }
 
-    fn get_attr(&'self self, name: &str) -> Option<&'self str> {
+    pub fn get_attr(&'self self, name: &str) -> Option<&'self str> {
         // FIXME: Need an each() that links lifetimes in Rust.
-        for uint::range(0, self.attrs.len()) |i| {
-            if eq_slice(self.attrs[i].name, name) {
-                let val: &str = self.attrs[i].value;
+        for attr in self.attrs.iter() {
+            if eq_slice(attr.name, name) {
+                let val: &str = attr.value;
                 return Some(val);
             }
         }
         return None;
     }
 
-    fn set_attr(&mut self, name: &DOMString, value: &DOMString) {
-        let name = name.to_str();
-        let value = value.to_str();
-        // FIXME: We need a better each_mut in Rust; this is ugly.
-        let value_cell = Cell(value);
+    pub fn set_attr(&mut self,
+                    abstract_self: AbstractNode<ScriptView>,
+                    raw_name: &DOMString,
+                    raw_value: &DOMString) {
+        let name = null_str_as_empty(raw_name);
+        let value_cell = Cell::new(null_str_as_empty(raw_value));
         let mut found = false;
-        for uint::range(0, self.attrs.len()) |i| {
-            if eq_slice(self.attrs[i].name, name) {
-                self.attrs[i].value = value_cell.take().clone();
+        for attr in self.attrs.mut_iter() {
+            if eq_slice(attr.name, name) {
+                attr.value = value_cell.take().clone();
                 found = true;
                 break;
             }
@@ -151,76 +157,149 @@ pub impl<'self> Element {
             self.attrs.push(Attr::new(name.to_str(), value_cell.take().clone()));
         }
 
-        match self.parent.owner_doc {
-            Some(owner) => owner.content_changed(),
+        if "style" == name {
+            self.style_attribute = Some(
+                Stylesheet::from_attribute(
+                    FromStr::from_str("http://www.example.com/").unwrap(),
+                    null_str_as_empty_ref(raw_value)));
+        }
+
+        //XXXjdm We really need something like a vtable so we can call AfterSetAttr.
+        //       This hardcoding is awful.
+        match abstract_self.type_id() {
+            ElementNodeTypeId(HTMLImageElementTypeId) => {
+                do abstract_self.with_mut_image_element |image| {
+                    image.AfterSetAttr(raw_name, raw_value);
+                }
+            }
+            ElementNodeTypeId(HTMLIframeElementTypeId) => {
+                do abstract_self.with_mut_iframe_element |iframe| {
+                    iframe.AfterSetAttr(raw_name, raw_value);
+                }
+            }
+            _ => ()
+        }
+
+        match self.node.owner_doc {
+            Some(owner) => do owner.with_base |owner| { owner.content_changed() },
             None => {}
         }
     }
 
-    fn getClientRects(&self) -> Option<@mut ClientRectList> {
-        let rects = match self.parent.owner_doc {
-            Some(doc) => {
-                match doc.window {
-                    Some(win) => {
-                        let node = self.parent.abstract.get();
-                        assert!(node.is_element());
-                        let script_context = unsafe {
-                            &mut *win.script_context
-                        };
-                        match script_context.query_layout(ContentBoxesQuery(node)) {
-                            Ok(rects) => match rects {
-                                ContentBoxesResponse(rects) =>
-                                    do rects.map |r| {
-                                        ClientRect::new(
-                                             r.origin.y.to_f32(),
-                                             (r.origin.y + r.size.height).to_f32(),
-                                             r.origin.x.to_f32(),
-                                             (r.origin.x + r.size.width).to_f32())
-                                    },
-                                _ => fail!(~"unexpected layout reply")
-                            },
-                            Err(()) => {
-                                debug!("layout query error");
-                                ~[]
-                            }
-                        }
-                    }
-                    None => {
-                        debug!("no window");
-                        ~[]
-                    }
-                }
-            }
-            None => {
-                debug!("no document");
-                ~[]
-            }
-        };
-        Some(ClientRectList::new(rects))
+    fn get_scope_and_cx(&self) -> (*JSObject, *JSContext) {
+        let doc = self.node.owner_doc.unwrap();
+        let win = doc.with_base(|doc| doc.window.unwrap());
+        let cx = win.page.js_info.get_ref().js_compartment.cx.ptr;
+        let cache = win.get_wrappercache();
+        let scope = cache.get_wrapper();
+        (scope, cx)
+    }
+}
+
+impl Element {
+    pub fn TagName(&self) -> DOMString {
+        Some(self.tag_name.to_owned().to_ascii_upper())
     }
 
-    fn getBoundingClientRect(&self) -> Option<@mut ClientRect> {
-        match self.parent.owner_doc {
+    pub fn Id(&self) -> DOMString {
+        None
+    }
+
+    pub fn SetId(&self, _id: &DOMString) {
+    }
+
+    pub fn GetAttribute(&self, name: &DOMString) -> DOMString {
+        self.get_attr(null_str_as_empty_ref(name)).map(|s| s.to_owned())
+    }
+
+    pub fn GetAttributeNS(&self, _namespace: &DOMString, _localname: &DOMString) -> DOMString {
+        None
+    }
+
+    pub fn SetAttribute(&mut self,
+                        abstract_self: AbstractNode<ScriptView>,
+                        name: &DOMString,
+                        value: &DOMString) -> ErrorResult {
+        self.set_attr(abstract_self, name, value);
+        Ok(())
+    }
+
+    pub fn SetAttributeNS(&self, _namespace: &DOMString, _localname: &DOMString, _value: &DOMString) -> ErrorResult {
+        Ok(())
+    }
+
+    pub fn RemoveAttribute(&self, _name: &DOMString) -> ErrorResult {
+        Ok(())
+    }
+
+    pub fn RemoveAttributeNS(&self, _namespace: &DOMString, _localname: &DOMString) -> ErrorResult {
+        Ok(())
+    }
+
+    pub fn HasAttribute(&self, _name: &DOMString) -> bool {
+        false
+    }
+
+    pub fn HasAttributeNS(&self, _nameapce: &DOMString, _localname: &DOMString) -> bool {
+        false
+    }
+
+    pub fn GetElementsByTagName(&self, _localname: &DOMString) -> @mut HTMLCollection {
+        let (scope, cx) = self.get_scope_and_cx();
+        HTMLCollection::new(~[], cx, scope)
+    }
+
+    pub fn GetElementsByTagNameNS(&self, _namespace: &DOMString, _localname: &DOMString) -> Fallible<@mut HTMLCollection> {
+        let (scope, cx) = self.get_scope_and_cx();
+        Ok(HTMLCollection::new(~[], cx, scope))
+    }
+
+    pub fn GetElementsByClassName(&self, _names: &DOMString) -> @mut HTMLCollection {
+        let (scope, cx) = self.get_scope_and_cx();
+        HTMLCollection::new(~[], cx, scope)
+    }
+
+    pub fn MozMatchesSelector(&self, _selector: &DOMString) -> Fallible<bool> {
+        Ok(false)
+    }
+
+    pub fn SetCapture(&self, _retargetToElement: bool) {
+    }
+
+    pub fn ReleaseCapture(&self) {
+    }
+
+    pub fn MozRequestFullScreen(&self) {
+    }
+
+    pub fn MozRequestPointerLock(&self) {
+    }
+
+    pub fn GetClientRects(&self, abstract_self: AbstractNode<ScriptView>) -> @mut ClientRectList {
+        let (rects, cx, scope) = match self.node.owner_doc {
             Some(doc) => {
-                match doc.window {
+                match doc.with_base(|doc| doc.window) {
                     Some(win) => {
-                        let node = self.parent.abstract.get();
+                        let node = abstract_self;
                         assert!(node.is_element());
-                        let script_context = unsafe { &mut *win.script_context };
-                        match script_context.query_layout(ContentBoxQuery(node)) {
-                            Ok(rect) => match rect {
-                                ContentBoxResponse(rect) =>
-                                    Some(ClientRect::new(
-                                             rect.origin.y.to_f32(),
-                                             (rect.origin.y + rect.size.height).to_f32(),
-                                             rect.origin.x.to_f32(),
-                                             (rect.origin.x + rect.size.width).to_f32())),
-                                _ => fail!(~"unexpected layout result")
+                        let page = win.page;
+                        let (port, chan) = comm::stream();
+                        match page.query_layout(ContentBoxesQuery(node, chan), port) {
+                            ContentBoxesResponse(rects) => {
+                                let cx = page.js_info.get_ref().js_compartment.cx.ptr;
+                                let cache = win.get_wrappercache();
+                                let scope = cache.get_wrapper();
+                                let rects = do rects.map |r| {
+                                    ClientRect::new(
+                                         r.origin.y.to_f32(),
+                                         (r.origin.y + r.size.height).to_f32(),
+                                         r.origin.x.to_f32(),
+                                         (r.origin.x + r.size.width).to_f32(),
+                                         cx,
+                                         scope)
+                                };
+                                Some((rects, cx, scope))
                             },
-                            Err(()) => {
-                                debug!("error querying layout");
-                                None
-                            }
                         }
                     }
                     None => {
@@ -233,7 +312,105 @@ pub impl<'self> Element {
                 debug!("no document");
                 None
             }
+        }.unwrap();
+
+        ClientRectList::new(rects, cx, scope)
+    }
+
+    pub fn GetBoundingClientRect(&self, abstract_self: AbstractNode<ScriptView>) -> @mut ClientRect {
+        match self.node.owner_doc {
+            Some(doc) => {
+                match doc.with_base(|doc| doc.window) {
+                    Some(win) => {
+                        let page = win.page;
+                        let node = abstract_self;
+                        assert!(node.is_element());
+                        let (port, chan) = comm::stream();
+                        match page.query_layout(ContentBoxQuery(node, chan), port) {
+                            ContentBoxResponse(rect) => {
+                                let cx = page.js_info.get_ref().js_compartment.cx.ptr;
+                                let cache = win.get_wrappercache();
+                                let scope = cache.get_wrapper();
+                                ClientRect::new(
+                                    rect.origin.y.to_f32(),
+                                    (rect.origin.y + rect.size.height).to_f32(),
+                                    rect.origin.x.to_f32(),
+                                    (rect.origin.x + rect.size.width).to_f32(),
+                                    cx,
+                                    scope)
+                            }
+                        }
+                    }
+                    None => fail!("no window")
+                }
+            }
+            None => fail!("no document")
         }
+    }
+
+    pub fn ScrollIntoView(&self, _top: bool) {
+    }
+
+    pub fn ScrollTop(&self) -> i32 {
+        0
+    }
+
+    pub fn SetScrollTop(&mut self, _scroll_top: i32) {
+    }
+
+    pub fn ScrollLeft(&self) -> i32 {
+        0
+    }
+
+    pub fn SetScrollLeft(&mut self, _scroll_left: i32) {
+    }
+
+    pub fn ScrollWidth(&self) -> i32 {
+        0
+    }
+
+    pub fn ScrollHeight(&self) -> i32 {
+        0
+    }
+
+    pub fn ClientTop(&self) -> i32 {
+        0
+    }
+
+    pub fn ClientLeft(&self) -> i32 {
+        0
+    }
+
+    pub fn ClientWidth(&self) -> i32 {
+        0
+    }
+
+    pub fn ClientHeight(&self) -> i32 {
+        0
+    }
+
+    pub fn GetInnerHTML(&self) -> Fallible<DOMString> {
+        Ok(None)
+    }
+
+    pub fn SetInnerHTML(&mut self, _value: &DOMString) -> ErrorResult {
+        Ok(())
+    }
+
+    pub fn GetOuterHTML(&self) -> Fallible<DOMString> {
+        Ok(None)
+    }
+
+    pub fn SetOuterHTML(&mut self, _value: &DOMString) -> ErrorResult {
+        Ok(())
+    }
+
+    pub fn InsertAdjacentHTML(&mut self, _position: &DOMString, _text: &DOMString) -> ErrorResult {
+        Ok(())
+    }
+
+    pub fn QuerySelector(&self, _selectors: &DOMString) -> Fallible<Option<AbstractNode<ScriptView>>> {
+        Ok(None)
     }
 }
 
@@ -250,13 +427,3 @@ impl Attr {
         }
     }
 }
-
-pub enum HeadingLevel {
-    Heading1,
-    Heading2,
-    Heading3,
-    Heading4,
-    Heading5,
-    Heading6,
-}
-

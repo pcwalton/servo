@@ -6,32 +6,43 @@
 
 use geom::point::Point2D;
 use geom::size::Size2D;
-use gfx::compositor::RenderState;
-use script::compositor_interface::ReadyState;
+use servo_msg::compositor_msg::{ReadyState, RenderState};
 
-pub enum WindowMouseEvent {
-    WindowClickEvent(uint, Point2D<f32>),
-    WindowMouseDownEvent(uint, Point2D<f32>),
-    WindowMouseUpEvent(uint, Point2D<f32>),
+pub enum MouseWindowEvent {
+    MouseWindowClickEvent(uint, Point2D<f32>),
+    MouseWindowMouseDownEvent(uint, Point2D<f32>),
+    MouseWindowMouseUpEvent(uint, Point2D<f32>),
 }
 
-/// Type of the function that is called when the screen is to be redisplayed.
-pub type CompositeCallback = @fn();
+pub enum WindowNavigateMsg {
+    Forward,
+    Back,
+}
 
-/// Type of the function that is called when the window is resized.
-pub type ResizeCallback = @fn(uint, uint);
-
-/// Type of the function that is called when a new URL is to be loaded.
-pub type LoadUrlCallback = @fn(&str);
-
-/// Type of the function that is called when a mouse hit test is to be performed.
-pub type MouseCallback = @fn(WindowMouseEvent);
-
-/// Type of the function that is called when the user scrolls.
-pub type ScrollCallback = @fn(Point2D<f32>);
-
-///Type of the function that is called when the user zooms.
-pub type ZoomCallback = @fn(f32);
+/// Events that the windowing system sends to Servo.
+pub enum WindowEvent {
+    /// Sent when no message has arrived.
+    ///
+    /// FIXME: This is a bogus event and is only used because we don't have the new
+    /// scheduler integrated with the platform event loop.
+    IdleWindowEvent,
+    /// Sent when the window is resized.
+    ResizeWindowEvent(uint, uint),
+    /// Sent when a new URL is to be loaded.
+    LoadUrlWindowEvent(~str),
+    /// Sent when a mouse hit test is to be performed.
+    MouseWindowEventClass(MouseWindowEvent),
+    /// Sent when the user scrolls. Includes the current cursor position.
+    ScrollWindowEvent(Point2D<f32>, Point2D<i32>),
+    /// Sent when the user zooms.
+    ZoomWindowEvent(f32),
+    /// Sent when the user uses chrome navigation (i.e. backspace or shift-backspace).
+    NavigationWindowEvent(WindowNavigateMsg),
+    /// Sent when rendering is finished.
+    FinishedWindowEvent,
+    /// Sent when the user quits the application
+    QuitWindowEvent,
+}
 
 /// Methods for an abstract Application.
 pub trait ApplicationMethods {
@@ -40,32 +51,21 @@ pub trait ApplicationMethods {
 
 pub trait WindowMethods<A> {
     /// Creates a new window.
-    pub fn new(app: &A) -> @mut Self;
+    fn new(app: &A) -> @mut Self;
     /// Returns the size of the window.
-    pub fn size(&self) -> Size2D<f32>;
+    fn size(&self) -> Size2D<f32>;
     /// Presents the window to the screen (perhaps by page flipping).
-    pub fn present(&mut self);
+    fn present(&mut self);
+ 
+    /// Spins the event loop and returns the next event.
+    fn recv(@mut self) -> WindowEvent;
 
-    /// Registers a callback to run when a composite event occurs.
-    pub fn set_composite_callback(&mut self, new_composite_callback: CompositeCallback);
-    /// Registers a callback to run when a resize event occurs.
-    pub fn set_resize_callback(&mut self, new_resize_callback: ResizeCallback);
-    /// Registers a callback to run when a new URL is to be loaded.
-    pub fn set_load_url_callback(&mut self, new_load_url_callback: LoadUrlCallback);
-    /// Registers a callback to run when the user clicks.
-    pub fn set_mouse_callback(&mut self, new_mouse_callback: MouseCallback);
-    /// Registers a callback to run when the user scrolls.
-    pub fn set_scroll_callback(&mut self, new_scroll_callback: ScrollCallback);
-    /// Registers a callback to run when the user zooms.
-    pub fn set_zoom_callback(&mut self, new_zoom_callback: ZoomCallback);
-
-    /// Spins the event loop.
-    pub fn check_loop(@mut self);
-    /// Schedules a redisplay at the next turn of the event loop.
-    pub fn set_needs_display(@mut self);
     /// Sets the ready state of the current page.
-    pub fn set_ready_state(@mut self, ready_state: ReadyState);
+    fn set_ready_state(@mut self, ready_state: ReadyState);
     /// Sets the render state of the current page.
-    pub fn set_render_state(@mut self, render_state: RenderState);
+    fn set_render_state(@mut self, render_state: RenderState);
+
+    /// Returns the hidpi factor of the monitor.
+    fn hidpi_factor(@mut self) -> f32;
 }
 

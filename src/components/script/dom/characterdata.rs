@@ -4,61 +4,71 @@
 
 //! DOM bindings for `CharacterData`.
 
-use dom::bindings::utils::{DOMString, null_string, str};
+use dom::bindings::utils::{DOMString, ErrorResult, Fallible};
+use dom::bindings::utils::{BindingObject, CacheableWrapper, WrapperCache};
 use dom::node::{Node, NodeTypeId, ScriptView};
-
-use core::str;
+use js::jsapi::{JSObject, JSContext};
 
 pub struct CharacterData {
-    parent: Node<ScriptView>,
-    data: DOMString
+    node: Node<ScriptView>,
+    data: ~str
 }
 
 impl CharacterData {
     pub fn new(id: NodeTypeId, data: ~str) -> CharacterData {
         CharacterData {
-            parent: Node::new(id),
-            data: str(data)
+            node: Node::new(id),
+            data: data
         }
     }
     
-    pub fn GetData(&self) -> DOMString {
-        copy self.data
+    pub fn Data(&self) -> DOMString {
+        Some(self.data.clone())
     }
 
-    pub fn SetData(&mut self, arg: DOMString) {
-        self.data = arg;
+    pub fn SetData(&mut self, arg: &DOMString) -> ErrorResult {
+        self.data = arg.get_ref().clone();
+        Ok(())
     }
 
     pub fn Length(&self) -> u32 {
-        match self.data {
-            str(ref s) => s.len() as u32,
-            null_string => 0
-        }
+        self.data.len() as u32
     }
 
-    pub fn SubstringData(&self, offset: u32, count: u32) -> DOMString {
-        match self.data {
-            str(ref s) => str(s.slice(offset as uint, count as uint).to_str()),
-            null_string => null_string
-        }
+    pub fn SubstringData(&self, offset: u32, count: u32) -> Fallible<DOMString> {
+        Ok(Some(self.data.slice(offset as uint, count as uint).to_str()))
     }
 
-    pub fn AppendData(&mut self, arg: DOMString) {
-        let s = self.data.to_str();
-        self.data = str(str::append(s, arg.to_str()));
+    pub fn AppendData(&mut self, arg: &DOMString) -> ErrorResult {
+        self.data.push_str(arg.get_ref().clone());
+        Ok(())
     }
 
-    pub fn InsertData(&mut self, _offset: u32, _arg: DOMString) {
+    pub fn InsertData(&mut self, _offset: u32, _arg: &DOMString) -> ErrorResult {
         fail!("CharacterData::InsertData() is unimplemented")
     }
 
-    pub fn DeleteData(&mut self, _offset: u32, _count: u32) {
+    pub fn DeleteData(&mut self, _offset: u32, _count: u32) -> ErrorResult {
         fail!("CharacterData::DeleteData() is unimplemented")
     }
 
-    pub fn ReplaceData(&mut self, _offset: u32, _count: u32, _arg: DOMString) {
+    pub fn ReplaceData(&mut self, _offset: u32, _count: u32, _arg: &DOMString) -> ErrorResult {
         fail!("CharacterData::ReplaceData() is unimplemented")
     }
 }
 
+impl CacheableWrapper for CharacterData {
+    fn get_wrappercache(&mut self) -> &mut WrapperCache {
+        self.node.get_wrappercache()
+    }
+
+    fn wrap_object_shared(@mut self, _cx: *JSContext, _scope: *JSObject) -> *JSObject {
+        fail!(~"need to implement wrapping");
+    }
+}
+
+impl BindingObject for CharacterData {
+    fn GetParentObject(&self, cx: *JSContext) -> Option<@mut CacheableWrapper> {
+        self.node.GetParentObject(cx)
+    }
+}

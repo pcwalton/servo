@@ -12,7 +12,8 @@ use font::{CSSFontWeight, FontHandleMethods, FontMetrics, FontTableMethods};
 use font::{FontTableTag, FontWeight100, FontWeight200, FontWeight300, FontWeight400};
 use font::{FontWeight500, FontWeight600, FontWeight700, FontWeight800, FontWeight900};
 use font::{FractionalPixel, SpecifiedFontStyle};
-use geometry::Au;
+use geometry::{Au, px_to_pt};
+use geometry;
 use platform::macos::font_context::FontContextHandle;
 use text::glyph::GlyphIndex;
 
@@ -28,17 +29,19 @@ use core_text::font_descriptor::{SymbolicTraitAccessors, TraitAccessors};
 use core_text::font_descriptor::{kCTFontDefaultOrientation};
 use core_text;
 
+use std::ptr;
+
 pub struct FontTable {
     data: CFData,
 }
 
 // Noncopyable.
 impl Drop for FontTable {
-    fn finalize(&self) {}
+    fn drop(&self) {}
 }
 
-pub impl FontTable {
-    fn wrap(data: CFData) -> FontTable {
+impl FontTable {
+    pub fn wrap(data: CFData) -> FontTable {
         FontTable { data: data }
     }
 }
@@ -54,15 +57,15 @@ pub struct FontHandle {
     ctfont: CTFont,
 }
 
-pub impl FontHandle {
-    fn new_from_CTFont(_: &FontContextHandle, ctfont: CTFont) -> Result<FontHandle, ()> {
+impl FontHandle {
+    pub fn new_from_CTFont(_: &FontContextHandle, ctfont: CTFont) -> Result<FontHandle, ()> {
         Ok(FontHandle {
-            mut cgfont: None,
+            cgfont: None,
             ctfont: ctfont,
         })
     }
 
-    fn get_CGFont(&mut self) -> CGFont {
+    pub fn get_CGFont(&mut self) -> CGFont {
         match self.cgfont {
             Some(ref font) => font.clone(),
             None => {
@@ -77,9 +80,9 @@ pub impl FontHandle {
 impl FontHandleMethods for FontHandle {
     fn new_from_buffer(_: &FontContextHandle, buf: ~[u8], style: &SpecifiedFontStyle)
                     -> Result<FontHandle, ()> {
-        let fontprov : CGDataProvider = vec::as_imm_buf(buf, |cbuf, len| {
+        let fontprov : CGDataProvider = do buf.as_imm_buf |cbuf, len| {
             core_graphics::data_provider::new_from_buffer(cbuf, len)
-        });
+        };
 
         let cgfont = core_graphics::font::create_with_data_provider(&fontprov);
         let ctfont = core_text::font::new_from_CGFont(&cgfont, style.pt_size);
@@ -157,6 +160,9 @@ impl FontHandleMethods for FontHandle {
         let bounding_rect: CGRect = self.ctfont.bounding_box();
         let ascent = Au::from_pt(self.ctfont.ascent() as float);
         let descent = Au::from_pt(self.ctfont.descent() as float);
+        let em_size = Au::from_frac_px(self.ctfont.pt_size() as float);
+
+        let scale = px_to_pt(self.ctfont.pt_size() as float) / (self.ctfont.ascent() as float + self.ctfont.descent() as float);
 
         let metrics =  FontMetrics {
             underline_size:   Au::from_pt(self.ctfont.underline_thickness() as float),
@@ -166,11 +172,13 @@ impl FontHandleMethods for FontHandle {
             // see also: https://bugs.webkit.org/show_bug.cgi?id=16768
             // see also: https://bugreports.qt-project.org/browse/QTBUG-13364
             underline_offset: Au::from_pt(self.ctfont.underline_position() as float),
+            strikeout_size:   geometry::from_pt(0.0), // FIXME(Issue #942)
+            strikeout_offset: geometry::from_pt(0.0), // FIXME(Issue #942)
             leading:          Au::from_pt(self.ctfont.leading() as float),
             x_height:         Au::from_pt(self.ctfont.x_height() as float),
-            em_size:          ascent + descent,
-            ascent:           ascent,
-            descent:          descent,
+            em_size:          em_size,
+            ascent:           ascent.scale_by(scale),
+            descent:          descent.scale_by(scale),
             max_advance:      Au::from_pt(bounding_rect.size.width as float)
         };
 

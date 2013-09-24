@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use core::cmp::{Ord, Eq};
+use std::cmp::{Ord, Eq};
 
 pub trait BinarySearchMethods<'self, T: Ord + Eq> {
     fn binary_search(&self, key: &T) -> Option<&'self T>;
@@ -11,10 +11,7 @@ pub trait BinarySearchMethods<'self, T: Ord + Eq> {
 
 impl<'self, T: Ord + Eq> BinarySearchMethods<'self, T> for &'self [T] {
     fn binary_search(&self, key: &T) -> Option<&'self T> {
-        match self.binary_search_index(key) {
-            None => None,
-            Some(i) => Some(&self[i])
-        }
+        self.binary_search_index(key).map(|i| &self[*i])
     }
 
     fn binary_search_index(&self, key: &T) -> Option<uint> {
@@ -66,6 +63,12 @@ fn test_match<T: Eq>(b: &T, a: Option<&T>) -> bool {
         Some(t) => t == b
     }
 } 
+
+pub fn zip_copies<A: Clone, B: Clone>(avec: &[A], bvec: &[B]) -> ~[(A,B)] {
+    avec.iter().map(|x| x.clone())
+        .zip(bvec.iter().map(|x| x.clone()))
+        .collect()
+}
 
 fn should_find_all_elements() {
     #[test];

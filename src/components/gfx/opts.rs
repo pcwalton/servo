@@ -8,44 +8,47 @@
 use azure::azure_hl::{BackendType, CairoBackend, CoreGraphicsBackend};
 use azure::azure_hl::{CoreGraphicsAcceleratedBackend, Direct2DBackend, SkiaBackend};
 
+use std::float;
+use std::result;
+use std::uint;
+
+#[deriving(Clone)]
 pub struct Opts {
     urls: ~[~str],
     render_backend: BackendType,
     n_render_threads: uint,
     tile_size: uint,
-    profiler_period: Option<f64>,
-
-    /// A scale factor to apply to tiles, to allow rendering tiles at higher resolutions for
-    /// testing pan and zoom code.
-    zoom: uint,
+    profiler_period: Option<float>,
+    exit_after_load: bool,
+    output_file: Option<~str>,
 }
 
-#[allow(non_implicitly_copyable_typarams)]
 pub fn from_cmdline_args(args: &[~str]) -> Opts {
-    use std::getopts;
+    use extra::getopts;
 
     let args = args.tail();
 
     let opts = ~[
-        getopts::optopt(~"o"),  // output file
-        getopts::optopt(~"r"),  // rendering backend
-        getopts::optopt(~"s"),  // size of tiles
-        getopts::optopt(~"t"),  // threads to render with
-        getopts::optflagopt(~"p"),  // profiler flag and output interval
-        getopts::optopt(~"z"),  // zoom level
+        getopts::optopt("o"),  // output file
+        getopts::optopt("r"),  // rendering backend
+        getopts::optopt("s"),  // size of tiles
+        getopts::optopt("t"),  // threads to render with
+        getopts::optflagopt("p"),  // profiler flag and output interval
+        getopts::optflag("x"), // exit after load flag
     ];
 
     let opt_match = match getopts::getopts(args, opts) {
-      result::Ok(m) => { copy m }
-      result::Err(f) => { fail!(getopts::fail_str(copy f)) }
+      result::Ok(m) => m,
+      result::Err(f) => fail!(getopts::fail_str(f.clone())),
     };
+
     let urls = if opt_match.free.is_empty() {
         fail!(~"servo asks that you provide 1 or more URLs")
     } else {
-        copy opt_match.free
+        opt_match.free.clone()
     };
 
-    let render_backend = match getopts::opt_maybe_str(&opt_match, ~"r") {
+    let render_backend = match getopts::opt_maybe_str(&opt_match, "r") {
         Some(backend_str) => {
             if backend_str == ~"direct2d" {
                 Direct2DBackend
@@ -64,27 +67,24 @@ pub fn from_cmdline_args(args: &[~str]) -> Opts {
         None => SkiaBackend
     };
 
-    let tile_size: uint = match getopts::opt_maybe_str(&opt_match, ~"s") {
-        Some(tile_size_str) => uint::from_str(tile_size_str).get(),
+    let tile_size: uint = match getopts::opt_maybe_str(&opt_match, "s") {
+        Some(tile_size_str) => uint::from_str(tile_size_str).unwrap(),
         None => 512,
     };
 
-    let n_render_threads: uint = match getopts::opt_maybe_str(&opt_match, ~"t") {
-        Some(n_render_threads_str) => uint::from_str(n_render_threads_str).get(),
+    let n_render_threads: uint = match getopts::opt_maybe_str(&opt_match, "t") {
+        Some(n_render_threads_str) => uint::from_str(n_render_threads_str).unwrap(),
         None => 1,      // FIXME: Number of cores.
     };
 
-    let profiler_period: Option<f64> =
-        // if only flag is present, default to 5 second period
-        match getopts::opt_default(&opt_match, ~"p", ~"5") {
-        Some(period) => Some(f64::from_str(period).get()),
-        None => None,
+    // if only flag is present, default to 5 second period
+    let profiler_period = do getopts::opt_default(&opt_match, "p", "5").map |period| {
+        float::from_str(*period).unwrap()
     };
 
-    let zoom: uint = match getopts::opt_maybe_str(&opt_match, ~"z") {
-        Some(zoom_str) => uint::from_str(zoom_str).get(),
-        None => 1,
-    };
+    let exit_after_load = getopts::opt_present(&opt_match, "x");
+
+    let output_file = getopts::opt_maybe_str(&opt_match, "o");
 
     Opts {
         urls: urls,
@@ -92,6 +92,7 @@ pub fn from_cmdline_args(args: &[~str]) -> Opts {
         n_render_threads: n_render_threads,
         tile_size: tile_size,
         profiler_period: profiler_period,
-        zoom: zoom,
+        exit_after_load: exit_after_load,
+        output_file: output_file,
     }
 }

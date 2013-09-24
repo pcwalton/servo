@@ -2,71 +2,131 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use compositing::resize_rate_limiter::ResizeRateLimiter;
 use platform::{Application, Window};
-use script::script_task::{LoadMsg, ScriptMsg, SendEventMsg};
-use windowing::{ApplicationMethods, WindowMethods, WindowMouseEvent, WindowClickEvent};
-use windowing::{WindowMouseDownEvent, WindowMouseUpEvent};
 
-use gfx::compositor::RenderState;
-use script::dom::event::{Event, ClickEvent, MouseDownEvent, MouseUpEvent};
-use script::compositor_interface::{ReadyState, CompositorInterface};
-use script::compositor_interface;
+pub use windowing;
+use windowing::{ApplicationMethods, WindowEvent, WindowMethods};
+use windowing::{IdleWindowEvent, ResizeWindowEvent, LoadUrlWindowEvent, MouseWindowEventClass};
+use windowing::{ScrollWindowEvent, ZoomWindowEvent, NavigationWindowEvent, FinishedWindowEvent};
+use windowing::{QuitWindowEvent, MouseWindowClickEvent, MouseWindowMouseDownEvent, MouseWindowMouseUpEvent};
 
-use azure::azure_hl::{DataSourceSurface, DrawTarget, SourceSurfaceMethods};
-use core::cell::Cell;
-use core::comm::{Chan, SharedChan, Port};
-use core::num::Orderable;
-use core::util;
+use servo_msg::compositor_msg::{RenderListener, LayerBufferSet, RenderState};
+use servo_msg::compositor_msg::{ReadyState, ScriptListener, Epoch};
+use servo_msg::constellation_msg::{ConstellationChan, NavigateMsg, PipelineId, ResizedWindowMsg, LoadUrlMsg};
+use servo_msg::constellation_msg;
+use gfx::opts::Opts;
+
+use azure::azure_hl::{DataSourceSurface, DrawTarget, SourceSurfaceMethods, current_gl_context};
+use azure::azure::AzGLContext;
+use std::comm;
+use std::comm::{Chan, SharedChan, Port};
+use std::num::Orderable;
+use std::vec;
+use std::rt::rtio::RtioTimer;
+use std::rt::io::timer::Timer;
 use geom::matrix::identity;
 use geom::point::Point2D;
 use geom::size::Size2D;
-use gfx::compositor::{Compositor, LayerBufferSet, RenderState};
-use layers::layers::{ARGB32Format, BasicImageData, ContainerLayer, ContainerLayerKind, Format};
-use layers::layers::{Image, ImageData, ImageLayer, ImageLayerKind, RGB24Format, WithDataFn};
+use geom::rect::Rect;
+use layers::layers::{ARGB32Format, ContainerLayer, ContainerLayerKind, Format};
+use layers::layers::{ImageData, WithDataFn};
 use layers::rendergl;
 use layers::scene::Scene;
+use opengles::gl2;
+use png;
 use servo_util::{time, url};
 use servo_util::time::profile;
 use servo_util::time::ProfilerChan;
 
-mod resize_rate_limiter;
+use extra::future::from_value;
+use extra::time::precise_time_s;
+
+use constellation::SendableFrameTree;
+use compositing::compositor_layer::CompositorLayer;
+
+mod quadtree;
+mod compositor_layer;
+
 
 /// The implementation of the layers-based compositor.
 #[deriving(Clone)]
-pub struct CompositorTask {
+pub struct CompositorChan {
     /// A channel on which messages can be sent to the compositor.
     chan: SharedChan<Msg>,
 }
 
-impl CompositorInterface for CompositorTask {
+/// Implementation of the abstract `ScriptListener` interface.
+impl ScriptListener for CompositorChan {
+
     fn set_ready_state(&self, ready_state: ReadyState) {
         let msg = ChangeReadyState(ready_state);
         self.chan.send(msg);
     }
+
+    fn invalidate_rect(&self, id: PipelineId, rect: Rect<uint>) {
+        self.chan.send(InvalidateRect(id, rect));
+    }
+
+    fn close(&self) {
+        self.chan.send(Exit);
+    }
+
 }
 
-impl CompositorTask {
-    /// Starts the compositor. Returns an interface that can be used to communicate with the
-    /// compositor and a port which allows notification when the compositor shuts down.
-    pub fn new(script_chan: SharedChan<ScriptMsg>, profiler_chan: ProfilerChan)
-               -> (CompositorTask, Port<()>) {
-        let script_chan = Cell(script_chan);
-        let (shutdown_port, shutdown_chan) = stream();
-        let shutdown_chan = Cell(shutdown_chan);
+/// Implementation of the abstract `RenderListener` interface.
+impl RenderListener for CompositorChan {
 
-        let chan: Chan<Msg> = do on_osmain |port| {
-            debug!("preparing to enter main loop");
-            run_main_loop(port,
-                          script_chan.take(),
-                          shutdown_chan.take(),
-                          profiler_chan.clone());
-        };
+    fn get_gl_context(&self) -> AzGLContext {
+        let (port, chan) = comm::stream();
+        self.chan.send(GetGLContext(chan));
+        port.recv()
+    }
 
-        let task = CompositorTask {
+    fn paint(&self, id: PipelineId, layer_buffer_set: ~LayerBufferSet, epoch: Epoch) {
+        self.chan.send(Paint(id, layer_buffer_set, epoch))
+    }
+
+    fn new_layer(&self, id: PipelineId, page_size: Size2D<uint>) {
+        let Size2D { width, height } = page_size;
+        self.chan.send(NewLayer(id, Size2D(width as f32, height as f32)))
+    }
+    fn set_layer_page_size(&self, id: PipelineId, page_size: Size2D<uint>, epoch: Epoch) {
+        let Size2D { width, height } = page_size;
+        self.chan.send(SetLayerPageSize(id, Size2D(width as f32, height as f32), epoch))
+    }
+    fn set_layer_clip_rect(&self, id: PipelineId, new_rect: Rect<uint>) {
+        let new_rect = Rect(Point2D(new_rect.origin.x as f32,
+                                    new_rect.origin.y as f32),
+                            Size2D(new_rect.size.width as f32,
+                                   new_rect.size.height as f32));
+        self.chan.send(SetLayerClipRect(id, new_rect))
+    }
+
+    fn delete_layer(&self, id: PipelineId) {
+        self.chan.send(DeleteLayer(id))
+    }
+
+    fn set_render_state(&self, render_state: RenderState) {
+        self.chan.send(ChangeRenderState(render_state))
+    }
+}
+
+impl CompositorChan {
+
+    pub fn new(chan: Chan<Msg>) -> CompositorChan {
+        CompositorChan {
             chan: SharedChan::new(chan),
-        };
-        (task, shutdown_port)
+        }
+    }
+
+    pub fn send(&self, msg: Msg) {
+        self.chan.send(msg);
+    }
+
+    pub fn get_size(&self) -> Size2D<int> {
+        let (port, chan) = comm::stream();
+        self.chan.send(GetSize(chan));
+        port.recv()
     }
 }
 
@@ -74,19 +134,37 @@ impl CompositorTask {
 pub enum Msg {
     /// Requests that the compositor shut down.
     Exit,
+    /// Requests the window size
+    GetSize(Chan<Size2D<int>>),
+    /// Requests the compositors GL context.
+    GetGLContext(Chan<AzGLContext>),
+
+    /// Alerts the compositor that there is a new layer to be rendered.
+    NewLayer(PipelineId, Size2D<f32>),
+    /// Alerts the compositor that the specified layer's page has changed size.
+    SetLayerPageSize(PipelineId, Size2D<f32>, Epoch),
+    /// Alerts the compositor that the specified layer's clipping rect has changed.
+    SetLayerClipRect(PipelineId, Rect<f32>),
+    /// Alerts the compositor that the specified layer has been deleted.
+    DeleteLayer(PipelineId),
+    /// Invalidate a rect for a given layer
+    InvalidateRect(PipelineId, Rect<uint>),
+
     /// Requests that the compositor paint the given layer buffer set for the given page size.
-    Paint(LayerBufferSet, Size2D<uint>),
+    Paint(PipelineId, ~LayerBufferSet, Epoch),
     /// Alerts the compositor to the current status of page loading.
     ChangeReadyState(ReadyState),
     /// Alerts the compositor to the current status of rendering.
     ChangeRenderState(RenderState),
+    /// Sets the channel to the current layout and render tasks, along with their id
+    SetIds(SendableFrameTree, Chan<()>, ConstellationChan),
 }
 
 /// Azure surface wrapping to work with the layers infrastructure.
 struct AzureDrawTargetImageData {
     draw_target: DrawTarget,
     data_source_surface: DataSourceSurface,
-    size: Size2D<uint>
+    size: Size2D<uint>,
 }
 
 impl ImageData for AzureDrawTargetImageData {
@@ -107,274 +185,365 @@ impl ImageData for AzureDrawTargetImageData {
     }
 }
 
-fn run_main_loop(port: Port<Msg>,
-                 script_chan: SharedChan<ScriptMsg>,
-                 shutdown_chan: Chan<()>,
-                 profiler_chan: ProfilerChan) {
-    let app: Application = ApplicationMethods::new();
-    let window: @mut Window = WindowMethods::new(&app);
-    let resize_rate_limiter = @mut ResizeRateLimiter(script_chan.clone());
+pub struct CompositorTask {
+    opts: Opts,
+    port: Port<Msg>,
+    profiler_chan: ProfilerChan,
+    shutdown_chan: SharedChan<()>,
+}
 
-    // Create an initial layer tree.
-    //
-    // TODO: There should be no initial layer tree until the renderer creates one from the display
-    // list. This is only here because we don't have that logic in the renderer yet.
-    let context = rendergl::init_render_context();
-    let root_layer = @mut ContainerLayer();
-    let original_layer_transform;
-    {
-        let image_data = @BasicImageData::new(Size2D(0, 0), 0, RGB24Format, ~[]);
-        let image = @mut Image::new(image_data as @ImageData);
-        let image_layer = @mut ImageLayer(image);
-        original_layer_transform = image_layer.common.transform;
-        image_layer.common.set_transform(original_layer_transform.scale(800.0, 600.0, 1.0));
-        root_layer.add_child(ImageLayerKind(image_layer));
+impl CompositorTask {
+    pub fn new(opts: Opts,
+               port: Port<Msg>,
+               profiler_chan: ProfilerChan,
+               shutdown_chan: Chan<()>)
+               -> CompositorTask {
+        CompositorTask {
+            opts: opts,
+            port: port,
+            profiler_chan: profiler_chan,
+            shutdown_chan: SharedChan::new(shutdown_chan),
+        }
     }
 
-    let scene = @mut Scene(ContainerLayerKind(root_layer), Size2D(800.0, 600.0), identity());
-    let done = @mut false;
+    /// Starts the compositor, which listens for messages on the specified port. 
+    pub fn run(&self) {
+        let app: Application = ApplicationMethods::new();
+        let window: @mut Window = WindowMethods::new(&app);
 
-    // FIXME: This should not be a separate offset applied after the fact but rather should be
-    // applied to the layers themselves on a per-layer basis. However, this won't work until scroll
-    // positions are sent to content.
-    let world_offset = @mut Point2D(0f32, 0f32);
-    let page_size = @mut Size2D(0f32, 0f32);
-    let window_size = @mut Size2D(800, 600);
+        // Create an initial layer tree.
+        //
+        // TODO: There should be no initial layer tree until the renderer creates one from the display
+        // list. This is only here because we don't have that logic in the renderer yet.
+        let context = rendergl::init_render_context();
+        let root_layer = @mut ContainerLayer();
+        let window_size = window.size();
+        let mut scene = Scene(ContainerLayerKind(root_layer), window_size, identity());
+        let mut window_size = Size2D(window_size.width as uint, window_size.height as uint);
+        let mut done = false;
+        let mut recomposite = false;
 
-    // Keeps track of the current zoom factor
-    let world_zoom = @mut 1f32;
+        // Keeps track of the current zoom factor
+        let mut world_zoom = 1f32;
+        let mut zoom_action = false;
+        let mut zoom_time = 0f;
 
-    let check_for_messages: @fn() = || {
-        // Periodically check if the script task responded to our last resize event
-        resize_rate_limiter.check_resize_response();
-        // Handle messages
-        while port.peek() {
-            match port.recv() {
-                Exit => *done = true,
+        // The root CompositorLayer
+        let mut compositor_layer: Option<CompositorLayer> = None;
+        let mut constellation_chan: Option<ConstellationChan> = None;
 
-                ChangeReadyState(ready_state) => window.set_ready_state(ready_state),
-                ChangeRenderState(render_state) => window.set_render_state(render_state),
-
-                Paint(new_layer_buffer_set, new_size) => {
-                    debug!("osmain: received new frame");
-
-                    *page_size = Size2D(new_size.width as f32, new_size.height as f32);
-
-                    let mut new_layer_buffer_set = new_layer_buffer_set;
-
-                    // Iterate over the children of the container layer.
-                    let mut current_layer_child = root_layer.first_child;
-
-                    // Replace the image layer data with the buffer data. Also compute the page
-                    // size here.
-                    let buffers = util::replace(&mut new_layer_buffer_set.buffers, ~[]);
-
-                    for buffers.each |buffer| {
-                        let width = buffer.rect.size.width as uint;
-                        let height = buffer.rect.size.height as uint;
-
-                        debug!("osmain: compositing buffer rect %?", &buffer.rect);
-
-                        let image_data = @AzureDrawTargetImageData {
-                            draw_target: buffer.draw_target.clone(),
-                            data_source_surface: buffer.draw_target.snapshot().get_data_surface(),
-                            size: Size2D(width, height)
-                        };
-                        let image = @mut Image::new(image_data as @ImageData);
-
-                        // Find or create an image layer.
-                        let image_layer;
-                        current_layer_child = match current_layer_child {
-                            None => {
-                                debug!("osmain: adding new image layer");
-                                image_layer = @mut ImageLayer(image);
-                                root_layer.add_child(ImageLayerKind(image_layer));
-                                None
-                            }
-                            Some(ImageLayerKind(existing_image_layer)) => {
-                                image_layer = existing_image_layer;
-                                image_layer.set_image(image);
-
-                                // Move on to the next sibling.
-                                do current_layer_child.get().with_common |common| {
-                                    common.next_sibling
-                                }
-                            }
-                            Some(_) => fail!(~"found unexpected layer kind"),
-                        };
-
-                        let origin = buffer.screen_pos.origin;
-                        let origin = Point2D(origin.x as f32, origin.y as f32);
-
-                        // Set the layer's transform.
-                        let transform = original_layer_transform.translate(origin.x,
-                                                                           origin.y,
-                                                                           0.0);
-                        let transform = transform.scale(width as f32, height as f32, 1.0);
-                        image_layer.common.set_transform(transform)
-                    }
-
-                    // TODO: Recycle the old buffers; send them back to the renderer to reuse if
-                    // it wishes.
-
-                    window.set_needs_display()
+        // Get BufferRequests from each layer.
+        let ask_for_tiles = || {
+            let window_size_page = Size2D(window_size.width as f32 / world_zoom,
+                                          window_size.height as f32 / world_zoom);
+            for layer in compositor_layer.mut_iter() {
+                if !layer.hidden {
+                    recomposite = layer.get_buffer_request(Rect(Point2D(0f32, 0f32), window_size_page),
+                                                           world_zoom) || recomposite;
+                } else { 
+                    debug!("Compositor: root layer is hidden!");
                 }
             }
-        }
-    };
-
-    do window.set_composite_callback {
-        do profile(time::CompositingCategory, profiler_chan.clone()) {
-            debug!("compositor: compositing");
-            // Adjust the layer dimensions as necessary to correspond to the size of the window.
-            scene.size = window.size();
-
-            // Render the scene.
-            rendergl::render_scene(context, scene);
-        }
-
-        window.present();
-    }
-
-    // Hook the windowing system's resize callback up to the resize rate limiter.
-    do window.set_resize_callback |width, height| {
-        debug!("osmain: window resized to %ux%u", width, height);
-        *window_size = Size2D(width, height);
-        resize_rate_limiter.window_resized(width, height)
-    }
-
-    let script_chan_clone = script_chan.clone();
-
-    // When the user enters a new URL, load it.
-    do window.set_load_url_callback |url_string| {
-        debug!("osmain: loading URL `%s`", url_string);
-        script_chan_clone.send(LoadMsg(url::make_url(url_string.to_str(), None)))
-    }
-
-    let script_chan_clone = script_chan.clone();
-
-    // When the user triggers a mouse event, perform appropriate hit testing
-    do window.set_mouse_callback |window_mouse_event: WindowMouseEvent| {
-        let event: Event;
-        let world_mouse_point = |layer_mouse_point: Point2D<f32>| {
-            layer_mouse_point + *world_offset
         };
-        match window_mouse_event {
-            WindowClickEvent(button, layer_mouse_point) => {
-                event = ClickEvent(button, world_mouse_point(layer_mouse_point));
+        
+        let check_for_messages: &fn(&Port<Msg>) = |port: &Port<Msg>| {
+            // Handle messages
+            while port.peek() {
+                match port.recv() {
+                    Exit => done = true,
+
+                    ChangeReadyState(ready_state) => window.set_ready_state(ready_state),
+                    ChangeRenderState(render_state) => window.set_render_state(render_state),
+
+                    SetIds(frame_tree, response_chan, new_constellation_chan) => {
+                        response_chan.send(());
+
+                        // This assumes there is at most one child, which should be the case.
+                        match root_layer.first_child {
+                            Some(old_layer) => root_layer.remove_child(old_layer),
+                            None => {}
+                        }
+
+                        let layer = CompositorLayer::from_frame_tree(frame_tree,
+                                                                     self.opts.tile_size,
+                                                                     Some(10000000u));
+                        root_layer.add_child_start(ContainerLayerKind(layer.root_layer));
+                        compositor_layer = Some(layer);
+
+                        constellation_chan = Some(new_constellation_chan);
+                    }
+
+                    GetSize(chan) => {
+                        let size = window.size();
+                        chan.send(Size2D(size.width as int, size.height as int));
+                    }
+
+                    GetGLContext(chan) => chan.send(current_gl_context()),
+
+                    NewLayer(_id, new_size) => {
+                        // FIXME: This should create an additional layer instead of replacing the current one.
+                        // Once ResizeLayer messages are set up, we can switch to the new functionality.
+
+                        let p = match compositor_layer {
+                            Some(ref compositor_layer) => compositor_layer.pipeline.clone(),
+                            None => fail!("Compositor: Received new layer without initialized pipeline"),
+                        };
+                        let page_size = Size2D(new_size.width as f32, new_size.height as f32);
+                        let new_layer = CompositorLayer::new(p, Some(page_size),
+                                                             self.opts.tile_size, Some(10000000u));
+                        
+                        let current_child = root_layer.first_child;
+                        // This assumes there is at most one child, which should be the case.
+                        match current_child {
+                            Some(old_layer) => root_layer.remove_child(old_layer),
+                            None => {}
+                        }
+                        root_layer.add_child_start(ContainerLayerKind(new_layer.root_layer));
+                        compositor_layer = Some(new_layer);
+
+                        ask_for_tiles();
+                    }
+
+                    SetLayerPageSize(id, new_size, epoch) => {
+                        match compositor_layer {
+                            Some(ref mut layer) => {
+                                let page_window = Size2D(window_size.width as f32 / world_zoom,
+                                                         window_size.height as f32 / world_zoom);
+                                assert!(layer.resize(id, new_size, page_window, epoch));
+                                ask_for_tiles();
+                            }
+                            None => {}
+                        }
+                    }
+
+                    SetLayerClipRect(id, new_rect) => {
+                        match compositor_layer {
+                            Some(ref mut layer) => {
+                                assert!(layer.set_clipping_rect(id, new_rect));
+                                ask_for_tiles();
+                            }
+                            None => {}
+                        }
+                    }
+
+                    DeleteLayer(id) => {
+                        match compositor_layer {
+                            Some(ref mut layer) => {
+                                assert!(layer.delete(id));
+                                ask_for_tiles();
+                            }
+                            None => {}
+                        }
+                    }
+
+                    Paint(id, new_layer_buffer_set, epoch) => {
+                        debug!("osmain: received new frame"); 
+
+                        match compositor_layer {
+                            Some(ref mut layer) => {
+                                assert!(layer.add_buffers(id, new_layer_buffer_set, epoch));
+                                recomposite = true;
+                            }
+                            None => {
+                                fail!("Compositor: given paint command with no CompositorLayer initialized");
+                            }
+                        }
+                        // TODO: Recycle the old buffers; send them back to the renderer to reuse if
+                        // it wishes.
+                    }
+
+                    InvalidateRect(id, rect) => {
+                        match compositor_layer {
+                            Some(ref mut layer) => {
+                                layer.invalidate_rect(id, Rect(Point2D(rect.origin.x as f32,
+                                                                       rect.origin.y as f32),
+                                                               Size2D(rect.size.width as f32,
+                                                                      rect.size.height as f32)));
+                                ask_for_tiles();
+                            }
+                            None => {} // Nothing to do
+                        }
+                    }
+                }
             }
-            WindowMouseDownEvent(button, layer_mouse_point) => {
-                event = MouseDownEvent(button, world_mouse_point(layer_mouse_point));
+        };
+
+        let check_for_window_messages: &fn(WindowEvent) = |event| {
+            match event {
+                IdleWindowEvent => {}
+
+                ResizeWindowEvent(width, height) => {
+                    let new_size = Size2D(width, height);
+                    if window_size != new_size {
+                        debug!("osmain: window resized to %ux%u", width, height);
+                        window_size = new_size;
+                        match constellation_chan {
+                            Some(ref chan) => chan.send(ResizedWindowMsg(new_size)),
+                            None => error!("Compositor: Recieved resize event without initialized layout chan"),
+                        }
+                    } else {
+                        debug!("osmain: dropping window resize since size is still %ux%u", width, height);
+                    }
+                }
+                
+                LoadUrlWindowEvent(url_string) => {
+                    debug!("osmain: loading URL `%s`", url_string);
+                    let root_pipeline_id = match compositor_layer {
+                        Some(ref layer) => layer.pipeline.id.clone(),
+                        None => fail!("Compositor: Received LoadUrlWindowEvent without initialized compositor layers"),
+                    };
+                    match constellation_chan {
+                        Some(ref chan) => chan.send(LoadUrlMsg(root_pipeline_id,
+                                                               url::make_url(url_string.to_str(), None),
+                                                               from_value(window_size))),
+                        None => error!("Compositor: Recieved loadurl event without initialized layout chan"),
+                    }
+                }
+                
+                MouseWindowEventClass(mouse_window_event) => {
+                    let point = match mouse_window_event {
+                        MouseWindowClickEvent(_, p) => Point2D(p.x / world_zoom, p.y / world_zoom),
+                        MouseWindowMouseDownEvent(_, p) => Point2D(p.x / world_zoom, p.y / world_zoom),
+                        MouseWindowMouseUpEvent(_, p) => Point2D(p.x / world_zoom, p.y / world_zoom),
+                    };
+                    for layer in compositor_layer.iter() {
+                        layer.send_mouse_event(mouse_window_event, point);
+                    }
+                }
+                
+                ScrollWindowEvent(delta, cursor) => {
+                    // TODO: modify delta to snap scroll to pixels.
+                    let page_delta = Point2D(delta.x as f32 / world_zoom, delta.y as f32 / world_zoom);
+                    let page_cursor: Point2D<f32> = Point2D(cursor.x as f32 / world_zoom,
+                                                            cursor.y as f32 / world_zoom);
+                    let page_window = Size2D(window_size.width as f32 / world_zoom,
+                                             window_size.height as f32 / world_zoom);
+                    for layer in compositor_layer.mut_iter() {
+                        recomposite = layer.scroll(page_delta, page_cursor, page_window) || recomposite;
+                    }
+                    ask_for_tiles();
+                }
+                
+                ZoomWindowEvent(magnification) => {
+                    zoom_action = true;
+                    zoom_time = precise_time_s();
+                    let old_world_zoom = world_zoom;
+
+                    // Determine zoom amount
+                    world_zoom = (world_zoom * magnification).max(&1.0);            
+                    root_layer.common.set_transform(identity().scale(world_zoom, world_zoom, 1f32));
+                    
+                    // Scroll as needed
+                    let page_delta = Point2D(window_size.width as f32 * (1.0 / world_zoom - 1.0 / old_world_zoom) * 0.5,
+                                             window_size.height as f32 * (1.0 / world_zoom - 1.0 / old_world_zoom) * 0.5);
+                    // TODO: modify delta to snap scroll to pixels.
+                    let page_cursor = Point2D(-1f32, -1f32); // Make sure this hits the base layer
+                    let page_window = Size2D(window_size.width as f32 / world_zoom,
+                                             window_size.height as f32 / world_zoom);
+                    for layer in compositor_layer.mut_iter() {
+                        layer.scroll(page_delta, page_cursor, page_window);
+                    }
+
+                    recomposite = true;
+                }
+
+                NavigationWindowEvent(direction) => {
+                    let direction = match direction {
+                        windowing::Forward => constellation_msg::Forward,
+                        windowing::Back => constellation_msg::Back,
+                    };
+                    match constellation_chan {
+                        Some(ref chan) => chan.send(NavigateMsg(direction)),
+                        None => error!("Compositor: Recieved navigation event without initialized layout chan"),
+                    }
+                }
+                
+                FinishedWindowEvent => {
+                    if self.opts.exit_after_load {
+                        done = true;
+                    }
+                }
+                
+                QuitWindowEvent => {
+                    done = true;
+                }
             }
-            WindowMouseUpEvent(button, layer_mouse_point) => {
-                event = MouseUpEvent(button, world_mouse_point(layer_mouse_point));
+        };
+        
+        
+        let profiler_chan = self.profiler_chan.clone();
+        let write_png = self.opts.output_file.is_some();
+        let exit = self.opts.exit_after_load;
+        let composite = || {
+            do profile(time::CompositingCategory, profiler_chan.clone()) {
+                debug!("compositor: compositing");
+                // Adjust the layer dimensions as necessary to correspond to the size of the window.
+                scene.size = window.size();
+
+                // Render the scene.
+                rendergl::render_scene(context, &scene);
             }
+
+            // Render to PNG. We must read from the back buffer (ie, before
+            // window.present()) as OpenGL ES 2 does not have glReadBuffer().
+            if write_png {
+                let (width, height) = (window_size.width as uint, window_size.height as uint);
+                let path = Path(*self.opts.output_file.get_ref());
+                let mut pixels = gl2::read_pixels(0, 0,
+                                                  width as gl2::GLsizei,
+                                                  height as gl2::GLsizei,
+                                                  gl2::RGB, gl2::UNSIGNED_BYTE);
+                // flip image vertically (texture is upside down)
+                let orig_pixels = pixels.clone();
+                let stride = width * 3;
+                for y in range(0, height) {
+                    let dst_start = y * stride;
+                    let src_start = (height - y - 1) * stride;
+                    vec::bytes::copy_memory(pixels.mut_slice(dst_start, dst_start + stride),
+                                            orig_pixels.slice(src_start, src_start + stride),
+                                            stride);
+                }
+                let img = png::Image {
+                    width: width as u32,
+                    height: height as u32,
+                    color_type: png::RGB8,
+                    pixels: pixels,
+                };
+                let res = png::store_png(&img, &path);
+                assert!(res.is_ok());
+
+                done = true;
+            }
+
+            window.present();
+
+            if exit { done = true; }
+        };
+
+        // Enter the main event loop.
+        let mut tm = Timer::new().unwrap();
+        while !done {
+            // Check for new messages coming from the rendering task.
+            check_for_messages(&self.port);
+
+            // Check for messages coming from the windowing system.
+            check_for_window_messages(window.recv());
+
+            if recomposite {
+                recomposite = false;
+                composite();
+            }
+
+            tm.sleep(10);
+
+            // If a pinch-zoom happened recently, ask for tiles at the new resolution
+            if zoom_action && precise_time_s() - zoom_time > 0.3 {
+                zoom_action = false;
+                ask_for_tiles();
+            }
+
         }
-        script_chan_clone.send(SendEventMsg(event));
-    }
 
-    // When the user scrolls, move the layer around.
-    do window.set_scroll_callback |delta| {
-        // FIXME (Rust #2528): Can't use `-=`.
-        let world_offset_copy = *world_offset;
-        *world_offset = world_offset_copy - delta;
-
-        // Clamp the world offset to the screen size.
-        let max_x = (page_size.width * *world_zoom - window_size.width as f32).max(&0.0);
-        world_offset.x = world_offset.x.clamp(&0.0, &max_x);
-        let max_y = (page_size.height * *world_zoom - window_size.height as f32).max(&0.0);
-        world_offset.y = world_offset.y.clamp(&0.0, &max_y);
-
-        debug!("compositor: scrolled to %?", *world_offset);
-
-        let mut scroll_transform = identity();
-
-        scroll_transform = scroll_transform.translate(window_size.width as f32 / 2f32 * *world_zoom - world_offset.x,
-                                                  window_size.height as f32 / 2f32 * *world_zoom - world_offset.y,
-                                                  0.0);
-        scroll_transform = scroll_transform.scale(*world_zoom, *world_zoom, 1f32);
-        scroll_transform = scroll_transform.translate(window_size.width as f32 / -2f32,
-                                                  window_size.height as f32 / -2f32,
-                                                  0.0);
-
-        root_layer.common.set_transform(scroll_transform);
-
-        window.set_needs_display()
-    }
-
-
-
-    // When the user pinch-zooms, scale the layer
-    do window.set_zoom_callback |magnification| {
-        let old_world_zoom = *world_zoom;
-
-        // Determine zoom amount
-        *world_zoom = (*world_zoom * magnification).max(&1.0);            
-
-        // Update world offset
-        let corner_to_center_x = world_offset.x + window_size.width as f32 / 2f32;
-        let new_corner_to_center_x = corner_to_center_x * *world_zoom / old_world_zoom;
-        world_offset.x = world_offset.x + new_corner_to_center_x - corner_to_center_x;
-
-        let corner_to_center_y = world_offset.y + window_size.height as f32 / 2f32;
-        let new_corner_to_center_y = corner_to_center_y * *world_zoom / old_world_zoom;
-        world_offset.y = world_offset.y + new_corner_to_center_y - corner_to_center_y;        
-
-        // Clamp to page bounds when zooming out
-        let max_x = (page_size.width * *world_zoom - window_size.width as f32).max(&0.0);
-        world_offset.x = world_offset.x.clamp(&0.0, &max_x);
-        let max_y = (page_size.height * *world_zoom - window_size.height as f32).max(&0.0);
-        world_offset.y = world_offset.y.clamp(&0.0, &max_y);
-
-
-        // Apply transformations
-        let mut zoom_transform = identity();
-        zoom_transform = zoom_transform.translate(window_size.width as f32 / 2f32 * *world_zoom - world_offset.x,
-                                                  window_size.height as f32 / 2f32 * *world_zoom - world_offset.y,
-                                                  0.0);
-        zoom_transform = zoom_transform.scale(*world_zoom, *world_zoom, 1f32);
-        zoom_transform = zoom_transform.translate(window_size.width as f32 / -2f32,
-                                                  window_size.height as f32 / -2f32,
-                                                  0.0);
-        root_layer.common.set_transform(zoom_transform);
-
-
-        window.set_needs_display()
-    }
-
-    // Enter the main event loop.
-    while !*done {
-        // Check for new messages coming from the rendering task.
-        check_for_messages();
-
-        // Check for messages coming from the windowing system.
-        window.check_loop();
-    }
-
-    shutdown_chan.send(())
-}
-
-/// Implementation of the abstract `Compositor` interface.
-impl Compositor for CompositorTask {
-    fn paint(&self, layer_buffer_set: LayerBufferSet, new_size: Size2D<uint>) {
-        self.chan.send(Paint(layer_buffer_set, new_size))
-    }
-    fn set_render_state(&self, render_state: RenderState) {
-        self.chan.send(ChangeRenderState(render_state))
+        self.shutdown_chan.send(())
     }
 }
-
-/// A function for spawning into the platform's main thread.
-fn on_osmain<T: Owned>(f: ~fn(port: Port<T>)) -> Chan<T> {
-    let (setup_port, setup_chan) = comm::stream();
-    // FIXME: rust#6399
-    let mut main_task = task::task();
-    main_task.sched_mode(task::PlatformThread);
-    do main_task.spawn {
-        let (port, chan) = comm::stream();
-        setup_chan.send(chan);
-        f(port);
-    }
-    setup_port.recv()
-}
-

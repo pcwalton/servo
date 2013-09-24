@@ -7,15 +7,15 @@
 use css::node_style::StyledNode;
 use layout::context::LayoutContext;
 use layout::display_list_builder::{DisplayListBuilder, ExtraDisplayListData, ToGfxColor};
-use layout::flow::FlowContext;
-use layout::model::BoxModel;
+use layout::float_context::{ClearType, ClearLeft, ClearRight, ClearBoth};
+use layout::model::{BoxModel, MaybeAuto};
 use layout::text;
 
-use core::cell::Cell;
-use core::cmp::ApproxEq;
-use core::managed;
-use core::num::Zero;
-use geom::{Point2D, Rect, Size2D};
+use std::cell::Cell;
+use std::cmp::ApproxEq;
+use std::managed;
+use std::num::Zero;
+use geom::{Point2D, Rect, Size2D, SideOffsets2D};
 use gfx::display_list::{BaseDisplayItem, BorderDisplayItem, BorderDisplayItemClass};
 use gfx::display_list::{DisplayList, ImageDisplayItem, ImageDisplayItemClass};
 use gfx::display_list::{SolidColorDisplayItem, SolidColorDisplayItemClass, TextDisplayItem};
@@ -25,17 +25,20 @@ use gfx::geometry::Au;
 use gfx::text::text_run::TextRun;
 use newcss::color::rgb;
 use newcss::complete::CompleteStyle;
-use newcss::units::{Cursive, Em, Fantasy, Monospace, Pt, Px, SansSerif, Serif};
+use newcss::units::{Em, Px};
+use newcss::units::{Cursive, Fantasy, Monospace, SansSerif, Serif};
+use newcss::values::{CSSBorderStyleDashed, CSSBorderStyleSolid};
+use newcss::values::{CSSClearNone, CSSClearLeft, CSSClearRight, CSSClearBoth};
 use newcss::values::{CSSFontFamilyFamilyName, CSSFontFamilyGenericFamily};
 use newcss::values::{CSSFontSizeLength, CSSFontStyleItalic, CSSFontStyleNormal};
-use newcss::values::{CSSFontStyleOblique, CSSTextAlign, CSSTextDecoration};
+use newcss::values::{CSSFontStyleOblique, CSSTextAlign, CSSTextDecoration, CSSLineHeight, CSSVerticalAlign};
 use newcss::values::{CSSTextDecorationNone, CSSFloatNone, CSSPositionStatic};
 use newcss::values::{CSSDisplayInlineBlock, CSSDisplayInlineTable};
 use script::dom::node::{AbstractNode, LayoutView};
 use servo_net::image::holder::ImageHolder;
 use servo_net::local_image_cache::LocalImageCache;
 use servo_util::range::*;
-use std::net::url::Url;
+use extra::url::Url;
 
 /// Render boxes (`struct RenderBox`) are the leaves of the layout tree. They cannot position
 /// themselves. In general, render boxes do not have a simple correspondence with CSS boxes as in
@@ -56,6 +59,7 @@ use std::net::url::Url;
 /// A box's type influences how its styles are interpreted during layout. For example, replaced
 /// content such as images are resized differently from tables, text, or other content. Different
 /// types of boxes may also contain custom data; for example, text boxes contain text.
+#[deriving(Clone)]
 pub enum RenderBox {
     GenericRenderBoxClass(@mut RenderBoxBase),
     ImageRenderBoxClass(@mut ImageRenderBox),
@@ -123,7 +127,7 @@ impl UnscannedTextRenderBox {
             // a text node?
             UnscannedTextRenderBox {
                 base: base,
-                text: text_node.parent.data.to_str(),
+                text: text_node.element.data.to_str(),
             }
         }
     }
@@ -149,9 +153,6 @@ pub struct RenderBoxBase {
     /// The DOM node that this `RenderBox` originates from.
     node: AbstractNode<LayoutView>,
 
-    /// The reference to the containing flow context which this box participates in.
-    ctx: FlowContext,
-
     /// The position of this box relative to its owning flow.
     position: Rect<Au>,
 
@@ -166,11 +167,10 @@ pub struct RenderBoxBase {
 
 impl RenderBoxBase {
     /// Constructs a new `RenderBoxBase` instance.
-    pub fn new(node: AbstractNode<LayoutView>, flow_context: FlowContext, id: int)
+    pub fn new(node: AbstractNode<LayoutView>, id: int)
                -> RenderBoxBase {
         RenderBoxBase {
             node: node,
-            ctx: flow_context,
             position: Au::zero_rect(),
             model: Zero::zero(),
             id: id,
@@ -178,10 +178,10 @@ impl RenderBoxBase {
     }
 }
 
-pub impl RenderBox {
+impl RenderBox {
     /// Borrows this render box immutably in order to work with its common data.
     #[inline(always)]
-    fn with_base<R>(&self, callback: &fn(&RenderBoxBase) -> R) -> R {
+    pub fn with_base<R>(&self, callback: &fn(&RenderBoxBase) -> R) -> R {
         match *self {
             GenericRenderBoxClass(generic_box) => callback(generic_box),
             ImageRenderBoxClass(image_box) => {
@@ -198,7 +198,7 @@ pub impl RenderBox {
 
     /// Borrows this render box mutably in order to work with its common data.
     #[inline(always)]
-    fn with_mut_base<R>(&self, callback: &fn(&mut RenderBoxBase) -> R) -> R {
+    pub fn with_mut_base<R>(&self, callback: &fn(&mut RenderBoxBase) -> R) -> R {
         match *self {
             GenericRenderBoxClass(generic_box) => callback(generic_box),
             ImageRenderBoxClass(image_box) => {
@@ -214,14 +214,14 @@ pub impl RenderBox {
     }
 
     /// A convenience function to return the position of this box.
-    fn position(&self) -> Rect<Au> {
+    pub fn position(&self) -> Rect<Au> {
         do self.with_base |base| {
             base.position
         }
     }
 
     /// A convenience function to return the debugging ID of this box.
-    fn id(&self) -> int {
+    pub fn id(&self) -> int {
         do self.with_mut_base |base| {
             base.id
         }
@@ -229,7 +229,7 @@ pub impl RenderBox {
 
     /// Returns true if this element is replaced content. This is true for images, form elements,
     /// and so on.
-    fn is_replaced(&self) -> bool {
+    pub fn is_replaced(&self) -> bool {
         match *self {
             ImageRenderBoxClass(*) => true,
             _ => false
@@ -237,7 +237,7 @@ pub impl RenderBox {
     }
 
     /// Returns true if this element can be split. This is true for text boxes.
-    fn can_split(&self) -> bool {
+    pub fn can_split(&self) -> bool {
         match *self {
             TextRenderBoxClass(*) => true,
             _ => false
@@ -245,7 +245,7 @@ pub impl RenderBox {
     }
 
     /// Returns true if this element is an unscanned text box that consists entirely of whitespace.
-    fn is_whitespace_only(&self) -> bool {
+    pub fn is_whitespace_only(&self) -> bool {
         match *self {
             UnscannedTextRenderBoxClass(unscanned_text_box) => {
                 unscanned_text_box.text.is_whitespace()
@@ -255,7 +255,7 @@ pub impl RenderBox {
     }
 
     /// Determines whether this box can merge with another render box.
-    fn can_merge_with_box(&self, other: RenderBox) -> bool {
+    pub fn can_merge_with_box(&self, other: RenderBox) -> bool {
         match (self, &other) {
             (&UnscannedTextRenderBoxClass(*), &UnscannedTextRenderBoxClass(*)) => {
                 self.font_style() == other.font_style() && self.text_decoration() == other.text_decoration()
@@ -269,7 +269,7 @@ pub impl RenderBox {
 
     /// Attempts to split this box so that its width is no more than `max_width`. Fails if this box
     /// is an unscanned text box.
-    fn split_to_width(&self, _: &LayoutContext, max_width: Au, starts_line: bool)
+    pub fn split_to_width(&self, max_width: Au, starts_line: bool)
                       -> SplitBoxResult {
         match *self {
             GenericRenderBoxClass(*) | ImageRenderBoxClass(*) => CannotSplit(*self),
@@ -288,51 +288,51 @@ pub impl RenderBox {
                        text_box.range,
                        max_width);
 
-                for text_box.run.iter_indivisible_pieces_for_range(
-                        &text_box.range) |piece_range| {
-                    debug!("split_to_width: considering piece (range=%?, remain_width=%?)",
-                           piece_range,
+                for (glyphs, offset, slice_range) in text_box.run.iter_slices_for_range(&text_box.range) {
+                    debug!("split_to_width: considering slice (offset=%?, range=%?, remain_width=%?)",
+                           offset,
+                           slice_range,
                            remaining_width);
 
-                    let metrics = text_box.run.metrics_for_range(piece_range);
+                    let metrics = text_box.run.metrics_for_slice(glyphs, &slice_range);
                     let advance = metrics.advance_width;
                     let should_continue: bool;
 
                     if advance <= remaining_width {
                         should_continue = true;
 
-                        if starts_line &&
-                                pieces_processed_count == 0 &&
-                                text_box.run.range_is_trimmable_whitespace(piece_range) {
+                        if starts_line && pieces_processed_count == 0 && glyphs.is_whitespace() {
                             debug!("split_to_width: case=skipping leading trimmable whitespace");
-                            left_range.shift_by(piece_range.length() as int);
+                            left_range.shift_by(slice_range.length() as int);
                         } else {
                             debug!("split_to_width: case=enlarging span");
-                            remaining_width -= advance;
-                            left_range.extend_by(piece_range.length() as int);
+                            remaining_width = remaining_width - advance;
+                            left_range.extend_by(slice_range.length() as int);
                         }
                     } else {    // The advance is more than the remaining width.
                         should_continue = false;
+                        let slice_begin = offset + slice_range.begin();
+                        let slice_end = offset + slice_range.end();
 
-                        if text_box.run.range_is_trimmable_whitespace(piece_range) {
+                        if glyphs.is_whitespace() {
                             // If there are still things after the trimmable whitespace, create the
                             // right chunk.
-                            if piece_range.end() < text_box.range.end() {
+                            if slice_end < text_box.range.end() {
                                 debug!("split_to_width: case=skipping trimmable trailing \
                                         whitespace, then split remainder");
                                 let right_range_end =
-                                    text_box.range.end() - piece_range.end();
-                                right_range = Some(Range::new(piece_range.end(), right_range_end));
+                                    text_box.range.end() - slice_end;
+                                right_range = Some(Range::new(slice_end, right_range_end));
                             } else {
                                 debug!("split_to_width: case=skipping trimmable trailing \
                                         whitespace");
                             }
-                        } else if piece_range.begin() < text_box.range.end() {
+                        } else if slice_begin < text_box.range.end() {
                             // There are still some things left over at the end of the line. Create
                             // the right chunk.
                             let right_range_end =
-                                text_box.range.end() - piece_range.begin();
-                            right_range = Some(Range::new(piece_range.begin(), right_range_end));
+                                text_box.range.end() - slice_begin;
+                            right_range = Some(Range::new(slice_begin, right_range_end));
                             debug!("split_to_width: case=splitting remainder with right range=%?",
                                    right_range);
                         }
@@ -370,11 +370,55 @@ pub impl RenderBox {
         }
     }
 
+    /// Guess the intrinsic width of this box for
+    /// computation of min and preferred widths.
+    //
+    // TODO(eatkinson): this is unspecified in
+    // CSS 2.1, but we need to do something reasonable
+    // here. What this function does currently is
+    // NOT reasonable.
+    //
+    // TODO(eatkinson): integrate with
+    // get_min_width and get_pref_width?
+    fn guess_width (&self) -> Au {
+        do self.with_base |base| {
+            if(!base.node.is_element()) {
+                Au(0)
+            } else {
+                let style = self.style();
+                let font_size = style.font_size();
+                let width = MaybeAuto::from_width(style.width(),
+                                                  Au(0),
+                                                  font_size).specified_or_zero();
+                let margin_left = MaybeAuto::from_margin(style.margin_left(),
+                                                         Au(0),
+                                                         font_size).specified_or_zero();
+                let margin_right = MaybeAuto::from_margin(style.margin_right(),
+                                                          Au(0),
+                                                          font_size).specified_or_zero();
+                let padding_left = base.model.compute_padding_length(style.padding_left(),
+                                                                     Au(0),
+                                                                     font_size);
+                let padding_right = base.model.compute_padding_length(style.padding_right(),
+                                                                      Au(0),
+                                                                      font_size);
+                let border_left = base.model.compute_border_width(style.border_left_width(),
+                                                                  font_size);
+                let border_right = base.model.compute_border_width(style.border_right_width(),
+                                                                   font_size);
+
+                width + margin_left + margin_right + padding_left + padding_right + 
+                    border_left + border_right
+            }
+        }
+    }
+
     /// Returns the *minimum width* of this render box as defined by the CSS specification.
-    fn get_min_width(&self, _: &LayoutContext) -> Au {
+    pub fn get_min_width(&self, _: &LayoutContext) -> Au {
         // FIXME(pcwalton): I think we only need to calculate this if the damage says that CSS
         // needs to be restyled.
-        match *self {
+
+        self.guess_width() + match *self {
             // TODO: This should account for the minimum width of the box element in isolation.
             // That includes borders, margins, and padding, but not child widths. The block
             // `FlowContext` will combine the width of this element and that of its children to
@@ -382,9 +426,7 @@ pub impl RenderBox {
             GenericRenderBoxClass(*) => Au(0),
 
             ImageRenderBoxClass(image_box) => {
-                // TODO: Consult the CSS `width` property as well as margins and borders.
-                // TODO: If the image isn't available, consult `width`.
-                Au::from_px(image_box.image.get_size().get_or_default(Size2D(0, 0)).width)
+                self.image_width(image_box)
             }
 
             TextRenderBoxClass(text_box) => {
@@ -396,8 +438,8 @@ pub impl RenderBox {
     }
 
     /// Returns the *preferred width* of this render box as defined by the CSS specification.
-    fn get_pref_width(&self, _: &LayoutContext) -> Au {
-        match *self {
+    pub fn get_pref_width(&self, _: &LayoutContext) -> Au {
+        self.guess_width() + match *self {
             // TODO: This should account for the preferred width of the box element in isolation.
             // That includes borders, margins, and padding, but not child widths. The block
             // `FlowContext` will combine the width of this element and that of its children to
@@ -405,7 +447,7 @@ pub impl RenderBox {
             GenericRenderBoxClass(*) => Au(0),
 
             ImageRenderBoxClass(image_box) => {
-                Au::from_px(image_box.image.get_size().get_or_default(Size2D(0, 0)).width)
+                self.image_width(image_box)
             }
 
             TextRenderBoxClass(text_box) => {
@@ -416,15 +458,9 @@ pub impl RenderBox {
                 // report nothing and the parent flow can factor in minimum/preferred widths of any
                 // text runs that it owns.
                 let mut max_line_width = Au(0);
-                for text_box.run.iter_natural_lines_for_range(&text_box.range)
-                        |line_range| {
-                    let mut line_width: Au = Au(0);
-                    for text_box.run.glyphs.iter_glyphs_for_char_range(line_range)
-                            |_, glyph| {
-                        line_width += glyph.advance()
-                    }
-
-                    max_line_width = Au::max(max_line_width, line_width);
+                for line_range in text_box.run.iter_natural_lines_for_range(&text_box.range) {
+                    let line_metrics = text_box.run.metrics_for_range(&line_range);
+                    max_line_width = Au::max(max_line_width, line_metrics.advance_width);
                 }
 
                 max_line_width
@@ -434,34 +470,86 @@ pub impl RenderBox {
         }
     }
 
+    // Calculate the width of an image, accounting for the width attribute
+    // TODO: This could probably go somewhere else
+    pub fn image_width(&self, image_box: @mut ImageRenderBox) -> Au {
+        let attr_width: Option<int> = do self.with_base |base| {
+            do base.node.with_imm_element |elt| {
+                match elt.get_attr("width") {
+                    Some(width) => {
+                        FromStr::from_str(width)
+                    }
+                    None => {
+                        None
+                    }
+                }
+            }
+        };
+
+        // TODO: Consult margins and borders?
+        let px_width = if attr_width.is_some() {
+            attr_width.unwrap()
+        } else {
+            image_box.image.get_size().unwrap_or_default(Size2D(0, 0)).width
+        };
+
+        Au::from_px(px_width)
+    }
+
+    // Calculate the height of an image, accounting for the height attribute
+    // TODO: This could probably go somewhere else
+    pub fn image_height(&self, image_box: @mut ImageRenderBox) -> Au {
+        let attr_height: Option<int> = do self.with_base |base| {
+            do base.node.with_imm_element |elt| {
+                match elt.get_attr("height") {
+                    Some(height) => {
+                        FromStr::from_str(height)
+                    }
+                    None => {
+                        None
+                    }
+                }
+            }
+        };
+
+        // TODO: Consult margins and borders?
+        let px_height = if attr_height.is_some() {
+            attr_height.unwrap()
+        } else {
+            image_box.image.get_size().unwrap_or_default(Size2D(0, 0)).height
+        };
+
+        Au::from_px(px_height)
+    }
+
     /// Returns the amount of left and right "fringe" used by this box. This is based on margins,
     /// borders, padding, and width.
-    fn get_used_width(&self) -> (Au, Au) {
+    pub fn get_used_width(&self) -> (Au, Au) {
         // TODO: This should actually do some computation! See CSS 2.1, Sections 10.3 and 10.4.
         (Au(0), Au(0))
     }
 
     /// Returns the amount of left and right "fringe" used by this box. This should be based on
     /// margins, borders, padding, and width.
-    fn get_used_height(&self) -> (Au, Au) {
+    pub fn get_used_height(&self) -> (Au, Au) {
         // TODO: This should actually do some computation! See CSS 2.1, Sections 10.5 and 10.6.
         (Au(0), Au(0))
     }
 
-    fn compute_padding(&self, cb_width: Au) {
+    pub fn compute_padding(&self, cb_width: Au) {
         do self.with_mut_base |base| {
             base.model.compute_padding(base.node.style(), cb_width);
         }
     }
 
-    fn get_noncontent_width(&self) -> Au {
+    pub fn get_noncontent_width(&self) -> Au {
         do self.with_base |base| {
             base.model.border.left + base.model.padding.left +
             base.model.border.right + base.model.padding.right
         }
     }
 
-    fn with_model<R>(&self, callback: &fn(&mut BoxModel) -> R) ->  R {
+    pub fn with_model<R>(&self, callback: &fn(&mut BoxModel) -> R) ->  R {
         do self.with_mut_base |base| {
             callback(&mut base.model)
         }
@@ -469,7 +557,7 @@ pub impl RenderBox {
 
     /// The box formed by the content edge as defined in CSS 2.1 § 8.1. Coordinates are relative to
     /// the owning flow.
-    fn content_box(&self) -> Rect<Au> {
+    pub fn content_box(&self) -> Rect<Au> {
         do self.with_base |base| {
             let origin = Point2D(base.position.origin.x +
                                  base.model.border.left +
@@ -483,26 +571,26 @@ pub impl RenderBox {
 
     /// The box formed by the border edge as defined in CSS 2.1 § 8.1. Coordinates are relative to
     /// the owning flow.
-    fn border_box(&self) -> Rect<Au> {
+    pub fn border_box(&self) -> Rect<Au> {
         // TODO: Actually compute the content box, padding, and border.
         self.content_box()
     }
 
     /// The box formed by the margin edge as defined in CSS 2.1 § 8.1. Coordinates are relative to
     /// the owning flow.
-    fn margin_box(&self) -> Rect<Au> {
+    pub fn margin_box(&self) -> Rect<Au> {
         // TODO: Actually compute the content_box, padding, border, and margin.
         self.content_box()
     }
 
     /// A convenience function to access the computed style of the DOM node that this render box
     /// represents.
-    fn style(&self) -> CompleteStyle {
+    pub fn style(&self) -> CompleteStyle {
         self.with_base(|base| base.node.style())
     }
 
     /// A convenience function to access the DOM node that this render box represents.
-    fn node(&self) -> AbstractNode<LayoutView> {
+    pub fn node(&self) -> AbstractNode<LayoutView> {
         self.with_base(|base| base.node)
     }
 
@@ -510,7 +598,7 @@ pub impl RenderBox {
     /// represents.
     ///
     /// If there is no ancestor-or-self `Element` node, fails.
-    fn nearest_ancestor_element(&self) -> AbstractNode<LayoutView> {
+    pub fn nearest_ancestor_element(&self) -> AbstractNode<LayoutView> {
         do self.with_base |base| {
             let mut node = base.node;
             while !node.is_element() {
@@ -541,7 +629,7 @@ pub impl RenderBox {
     /// representing the box's stacking context. When asked to construct its constituent display
     /// items, each box puts its display items into the correct stack layer according to CSS 2.1
     /// Appendix E. Finally, the builder flattens the list.
-    fn build_display_list<E:ExtraDisplayListData>(&self,
+    pub fn build_display_list<E:ExtraDisplayListData>(&self,
                                                   _: &DisplayListBuilder,
                                                   dirty: &Rect<Au>,
                                                   offset: &Point2D<Au>,
@@ -559,12 +647,13 @@ pub impl RenderBox {
             return;
         }
 
-        // Add the background to the list, if applicable.
-        self.paint_background_if_applicable(list, &absolute_box_bounds);
-
         match *self {
             UnscannedTextRenderBoxClass(*) => fail!(~"Shouldn't see unscanned boxes here."),
             TextRenderBoxClass(text_box) => {
+
+                // Add the background to the list, if applicable.
+                self.paint_background_if_applicable(list, &absolute_box_bounds);
+
                 let nearest_ancestor_element = self.nearest_ancestor_element();
                 let color = nearest_ancestor_element.style().color().to_gfx_color();
 
@@ -590,14 +679,18 @@ pub impl RenderBox {
                 // should have a real `SERVO_DEBUG` system.
                 debug!("%?", { 
                     // Compute the text box bounds and draw a border surrounding them.
+                    let debug_border = SideOffsets2D::new_all_same(Au::from_px(1));
+
                     do list.with_mut_ref |list| {
                         let border_display_item = ~BorderDisplayItem {
                             base: BaseDisplayItem {
                                 bounds: absolute_box_bounds,
                                 extra: ExtraDisplayListData::new(*self),
                             },
-                            width: Au::from_px(1),
-                            color: rgb(0, 0, 200).to_gfx_color(),
+                            border: debug_border,
+                            color: SideOffsets2D::new_all_same(rgb(0, 0, 200).to_gfx_color()),
+                            style: SideOffsets2D::new_all_same(CSSBorderStyleSolid)
+
                         };
                         list.append_item(BorderDisplayItemClass(border_display_item))
                     }
@@ -616,8 +709,10 @@ pub impl RenderBox {
                                 bounds: baseline,
                                 extra: ExtraDisplayListData::new(*self),
                             },
-                            width: Au::from_px(1),
-                            color: rgb(0, 200, 0).to_gfx_color(),
+                            border: debug_border,
+                            color: SideOffsets2D::new_all_same(rgb(0, 200, 0).to_gfx_color()),
+                            style: SideOffsets2D::new_all_same(CSSBorderStyleDashed)
+
                         };
                         list.append_item(BorderDisplayItemClass(border_display_item))
                     }
@@ -625,26 +720,39 @@ pub impl RenderBox {
                     ()
                 });
             },
-
             GenericRenderBoxClass(_) => {
-                // FIXME(pcwalton): This is somewhat of an abuse of the logging system.
-                debug!("%?", { 
-                    // Compute the text box bounds and draw a border surrounding them.
+
+                // Add the background to the list, if applicable.
+                self.paint_background_if_applicable(list, &absolute_box_bounds);
+
+                // FIXME(pcwalton): This is a bit of an abuse of the logging infrastructure. We
+                // should have a real `SERVO_DEBUG` system.
+                debug!("%?", {
+                    let debug_border = SideOffsets2D::new_all_same(Au::from_px(1));
+
                     do list.with_mut_ref |list| {
                         let border_display_item = ~BorderDisplayItem {
                             base: BaseDisplayItem {
-                                    bounds: absolute_box_bounds,
-                                    extra: ExtraDisplayListData::new(*self),
+                                bounds: absolute_box_bounds,
+                                extra: ExtraDisplayListData::new(*self),
                             },
-                            width: Au::from_px(1),
-                            color: rgb(0, 0, 0).to_gfx_color(),
+                            border: debug_border,
+                            color: SideOffsets2D::new_all_same(rgb(0, 0, 200).to_gfx_color()),
+                            style: SideOffsets2D::new_all_same(CSSBorderStyleSolid)
+
                         };
                         list.append_item(BorderDisplayItemClass(border_display_item))
                     }
+                    
+                    ()
                 });
-            }
 
+            },
             ImageRenderBoxClass(image_box) => {
+
+                // Add the background to the list, if applicable.
+                self.paint_background_if_applicable(list, &absolute_box_bounds);
+
                 match image_box.image.get_image() {
                     Some(image) => {
                         debug!("(building display list) building image box");
@@ -679,7 +787,7 @@ pub impl RenderBox {
 
     /// Adds the display items necessary to paint the background of this render box to the display
     /// list if necessary.
-    fn paint_background_if_applicable<E:ExtraDisplayListData>(&self,
+    pub fn paint_background_if_applicable<E:ExtraDisplayListData>(&self,
                                                               list: &Cell<DisplayList<E>>,
                                                               absolute_bounds: &Rect<Au>) {
         // FIXME: This causes a lot of background colors to be displayed when they are clearly not
@@ -704,14 +812,26 @@ pub impl RenderBox {
         }
     }
 
+    pub fn clear(&self) -> Option<ClearType> {
+        let style = self.style();
+        match style.clear() {
+            CSSClearNone => None,
+            CSSClearLeft => Some(ClearLeft),
+            CSSClearRight => Some(ClearRight),
+            CSSClearBoth => Some(ClearBoth)
+        }
+    }
+
     /// Converts this node's computed style to a font style used for rendering.
-    fn font_style(&self) -> FontStyle {
+    pub fn font_style(&self) -> FontStyle {
         let my_style = self.nearest_ancestor_element().style();
+
+        debug!("(font style) start: %?", self.nearest_ancestor_element().type_id());
 
         // FIXME: Too much allocation here.
         let font_families = do my_style.font_family().map |family| {
             match *family {
-                CSSFontFamilyFamilyName(ref family_str) => copy *family_str,
+                CSSFontFamilyFamilyName(ref family_str) => (*family_str).clone(),
                 CSSFontFamilyGenericFamily(Serif)       => ~"serif",
                 CSSFontFamilyGenericFamily(SansSerif)   => ~"sans-serif",
                 CSSFontFamilyGenericFamily(Cursive)     => ~"cursive",
@@ -719,16 +839,16 @@ pub impl RenderBox {
                 CSSFontFamilyGenericFamily(Monospace)   => ~"monospace",
             }
         };
-        let font_families = str::connect(font_families, ~", ");
+        let font_families = font_families.connect(", ");
         debug!("(font style) font families: `%s`", font_families);
 
         let font_size = match my_style.font_size() {
-            CSSFontSizeLength(Px(length)) |
-            CSSFontSizeLength(Pt(length)) |
-            CSSFontSizeLength(Em(length)) => length,
-            _ => 16.0
+            CSSFontSizeLength(Px(length)) => length,
+            // todo: this is based on a hard coded font size, should be the parent element's font size
+            CSSFontSizeLength(Em(length)) => length * 16f, 
+            _ => 16f // px units
         };
-        debug!("(font style) font size: `%f`", font_size);
+        debug!("(font style) font size: `%fpx`", font_size);
 
         let (italic, oblique) = match my_style.font_style() {
             CSSFontStyleNormal => (false, false),
@@ -747,12 +867,20 @@ pub impl RenderBox {
 
     /// Returns the text alignment of the computed style of the nearest ancestor-or-self `Element`
     /// node.
-    fn text_align(&self) -> CSSTextAlign {
+    pub fn text_align(&self) -> CSSTextAlign {
         self.nearest_ancestor_element().style().text_align()
     }
 
+    pub fn line_height(&self) -> CSSLineHeight {
+        self.nearest_ancestor_element().style().line_height()
+    }
+
+    pub fn vertical_align(&self) -> CSSVerticalAlign {
+        self.nearest_ancestor_element().style().vertical_align()
+    }
+
     /// Returns the text decoration of the computed style of the nearest `Element` node
-    fn text_decoration(&self) -> CSSTextDecoration {
+    pub fn text_decoration(&self) -> CSSTextDecoration {
         /// Computes the propagated value of text-decoration, as specified in CSS 2.1 § 16.3.1
         /// TODO: make sure this works with anonymous box generation.
         fn get_propagated_text_decoration(element: AbstractNode<LayoutView>) -> CSSTextDecoration {
@@ -799,11 +927,11 @@ pub impl RenderBox {
     /// Dumps a render box for debugging, with indentation.
     pub fn dump_indent(&self, indent: uint) {
         let mut string = ~"";
-        for uint::range(0u, indent) |_i| {
-            string += ~"    ";
+        for _ in range(0u, indent) {
+            string.push_str("    ");
         }
 
-        string += self.debug_str();
+        string.push_str(self.debug_str());
         debug!("%s", string);
     }
 
@@ -813,9 +941,8 @@ pub impl RenderBox {
             GenericRenderBoxClass(*) => ~"GenericRenderBox",
             ImageRenderBoxClass(*) => ~"ImageRenderBox",
             TextRenderBoxClass(text_box) => {
-                fmt!("TextRenderBox(text=%s)", str::substr(text_box.run.text,
-                                                           text_box.range.begin(),
-                                                           text_box.range.length()))
+                fmt!("TextRenderBox(text=%s)", text_box.run.text.slice_chars(text_box.range.begin(),
+                                                                             text_box.range.end()))
             }
             UnscannedTextRenderBoxClass(text_box) => {
                 fmt!("UnscannedTextRenderBox(%s)", text_box.text)
@@ -824,6 +951,48 @@ pub impl RenderBox {
 
         fmt!("box b%?: %s", self.id(), representation)
     }
+
+    //
+    // Painting
+    //
+
+    /// Adds the display items necessary to paint the borders of this render box to a display list
+    /// if necessary.
+    pub fn paint_borders_if_applicable<E:ExtraDisplayListData>(&self,
+                                                               list: &Cell<DisplayList<E>>,
+                                                               abs_bounds: &Rect<Au>) {
+        // Fast path.
+        let border = do self.with_base |base| {
+            base.model.border
+        };
+        if border.is_zero() {
+            return
+        }
+
+        let (top_color, right_color, bottom_color, left_color) = (self.style().border_top_color(), self.style().border_right_color(), self.style().border_bottom_color(), self.style().border_left_color());
+        let (top_style, right_style, bottom_style, left_style) = (self.style().border_top_style(), self.style().border_right_style(), self.style().border_bottom_style(), self.style().border_left_style());
+        // Append the border to the display list.
+        do list.with_mut_ref |list| {
+            let border_display_item = ~BorderDisplayItem {
+                base: BaseDisplayItem {
+                    bounds: *abs_bounds,
+                    extra: ExtraDisplayListData::new(*self),
+                },
+                border: SideOffsets2D::new(border.top,
+                                           border.right,
+                                           border.bottom,
+                                           border.left),
+                color: SideOffsets2D::new(top_color.to_gfx_color(),
+                                          right_color.to_gfx_color(),
+                                          bottom_color.to_gfx_color(),
+                                          left_color.to_gfx_color()),
+                style: SideOffsets2D::new(top_style,
+                                          right_style,
+                                          bottom_style,
+                                          left_style)
+            };
+
+            list.append_item(BorderDisplayItemClass(border_display_item))
+        }
+    }
 }
-
-

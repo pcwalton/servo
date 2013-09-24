@@ -2,163 +2,97 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use dom::bindings::element;
-use dom::bindings::text;
-use dom::bindings::utils;
-use dom::bindings::utils::{CacheableWrapper, WrapperCache, DerivedWrapper};
-use dom::node::{AbstractNode, Node, ElementNodeTypeId, TextNodeTypeId, CommentNodeTypeId};
+use dom::bindings::utils::{CacheableWrapper, WrapperCache, Traceable};
+use dom::element::*;
+use dom::types::*;
+use dom::node::{AbstractNode, ElementNodeTypeId, TextNodeTypeId, CommentNodeTypeId};
 use dom::node::{DoctypeNodeTypeId, ScriptView};
 
-use core::libc::c_uint;
-use core::ptr::null;
-use js::jsapi::bindgen::*;
-use js::jsapi::{JSContext, JSVal, JSObject, JSBool, JSPropertySpec};
-use js::jsapi::{JSPropertyOpWrapper, JSStrictPropertyOpWrapper};
-use js::jsval::{INT_TO_JSVAL};
-use js::rust::{Compartment, jsobj};
-use js::{JSPROP_ENUMERATE, JSPROP_SHARED, JSVAL_NULL};
-use js::{JS_THIS_OBJECT, JSPROP_NATIVE_ACCESSORS};
+use std::cast;
+use std::libc;
+use std::ptr;
+use js::jsapi::{JSContext, JSObject, JSTracer, JSTRACE_OBJECT, JS_CallTracer};
 use servo_util::tree::TreeNodeRef;
 
-pub fn init(compartment: @mut Compartment) {
-    let obj = utils::define_empty_prototype(~"Node", None, compartment);
+macro_rules! generate_element(
+    ($name: path) => ({
+        let node: @mut $name = unsafe { cast::transmute(node.raw_object()) };
+        node.wrap_object_shared(cx, ptr::null())
+    })
+)
 
-    let attrs = @~[
-        JSPropertySpec {
-         name: compartment.add_name(~"firstChild"),
-         tinyid: 0,
-         flags: (JSPROP_SHARED | JSPROP_ENUMERATE | JSPROP_NATIVE_ACCESSORS) as u8,
-         getter: JSPropertyOpWrapper {op: getFirstChild, info: null()},
-         setter: JSStrictPropertyOpWrapper {op: null(), info: null()}},
-
-        JSPropertySpec {
-         name: compartment.add_name(~"nextSibling"),
-         tinyid: 0,
-         flags: (JSPROP_SHARED | JSPROP_ENUMERATE | JSPROP_NATIVE_ACCESSORS) as u8,
-         getter: JSPropertyOpWrapper {op: getNextSibling, info: null()},
-         setter: JSStrictPropertyOpWrapper {op: null(), info: null()}},
-
-        JSPropertySpec {
-         name: compartment.add_name(~"nodeType"),
-         tinyid: 0,
-         flags: (JSPROP_SHARED | JSPROP_ENUMERATE | JSPROP_NATIVE_ACCESSORS) as u8,
-         getter: JSPropertyOpWrapper {op: getNodeType, info: null()},
-         setter: JSStrictPropertyOpWrapper {op: null(), info: null()}},
-        
-        JSPropertySpec {
-         name: null(),
-         tinyid: 0,
-         flags: (JSPROP_SHARED | JSPROP_ENUMERATE | JSPROP_NATIVE_ACCESSORS) as u8,
-         getter: JSPropertyOpWrapper {op: null(), info: null()},
-         setter: JSStrictPropertyOpWrapper {op: null(), info: null()}}];
-    vec::push(&mut compartment.global_props, attrs);
-    vec::as_imm_buf(*attrs, |specs, _len| {
-        JS_DefineProperties(compartment.cx.ptr, obj.ptr, specs);
-    });
-}
-
-#[allow(non_implicitly_copyable_typarams)]
-pub fn create(cx: *JSContext, node: &mut AbstractNode<ScriptView>) -> jsobj {
+pub fn create(cx: *JSContext, node: &mut AbstractNode<ScriptView>) -> *JSObject {
     match node.type_id() {
-        ElementNodeTypeId(_) => element::create(cx, node),
-        TextNodeTypeId |
-        CommentNodeTypeId |
-        DoctypeNodeTypeId => text::create(cx, node),
+        ElementNodeTypeId(HTMLElementTypeId) => generate_element!(HTMLElement),
+        ElementNodeTypeId(HTMLAnchorElementTypeId) => generate_element!(HTMLAnchorElement),
+        ElementNodeTypeId(HTMLAppletElementTypeId) => generate_element!(HTMLAppletElement),
+        ElementNodeTypeId(HTMLAreaElementTypeId) => generate_element!(HTMLAreaElement),
+        ElementNodeTypeId(HTMLAudioElementTypeId) => generate_element!(HTMLAudioElement),
+        ElementNodeTypeId(HTMLBaseElementTypeId) => generate_element!(HTMLBaseElement),
+        ElementNodeTypeId(HTMLBodyElementTypeId) => generate_element!(HTMLBodyElement),
+        ElementNodeTypeId(HTMLBRElementTypeId) => generate_element!(HTMLBRElement),
+        ElementNodeTypeId(HTMLButtonElementTypeId) => generate_element!(HTMLButtonElement),
+        ElementNodeTypeId(HTMLCanvasElementTypeId) => generate_element!(HTMLCanvasElement),
+        ElementNodeTypeId(HTMLDataElementTypeId) => generate_element!(HTMLDataElement),
+        ElementNodeTypeId(HTMLDataListElementTypeId) => generate_element!(HTMLDataListElement),
+        ElementNodeTypeId(HTMLDirectoryElementTypeId) => generate_element!(HTMLDirectoryElement),
+        ElementNodeTypeId(HTMLDListElementTypeId) => generate_element!(HTMLDListElement),
+        ElementNodeTypeId(HTMLDivElementTypeId) => generate_element!(HTMLDivElement),
+        ElementNodeTypeId(HTMLEmbedElementTypeId) => generate_element!(HTMLEmbedElement),
+        ElementNodeTypeId(HTMLFieldSetElementTypeId) => generate_element!(HTMLFieldSetElement),
+        ElementNodeTypeId(HTMLFontElementTypeId) => generate_element!(HTMLFontElement),
+        ElementNodeTypeId(HTMLFormElementTypeId) => generate_element!(HTMLFormElement),
+        ElementNodeTypeId(HTMLFrameElementTypeId) => generate_element!(HTMLFrameElement),
+        ElementNodeTypeId(HTMLFrameSetElementTypeId) => generate_element!(HTMLFrameSetElement),
+        ElementNodeTypeId(HTMLHeadElementTypeId) => generate_element!(HTMLHeadElement),
+        ElementNodeTypeId(HTMLHeadingElementTypeId) => generate_element!(HTMLHeadingElement),
+        ElementNodeTypeId(HTMLHRElementTypeId) => generate_element!(HTMLHRElement),
+        ElementNodeTypeId(HTMLHtmlElementTypeId) => generate_element!(HTMLHtmlElement),
+        ElementNodeTypeId(HTMLIframeElementTypeId) => generate_element!(HTMLIFrameElement),
+        ElementNodeTypeId(HTMLImageElementTypeId) => generate_element!(HTMLImageElement),
+        ElementNodeTypeId(HTMLInputElementTypeId) => generate_element!(HTMLInputElement),
+        ElementNodeTypeId(HTMLLabelElementTypeId) => generate_element!(HTMLLabelElement),
+        ElementNodeTypeId(HTMLLegendElementTypeId) => generate_element!(HTMLLegendElement),
+        ElementNodeTypeId(HTMLLIElementTypeId) => generate_element!(HTMLLIElement),
+        ElementNodeTypeId(HTMLLinkElementTypeId) => generate_element!(HTMLLinkElement),
+        ElementNodeTypeId(HTMLMapElementTypeId) => generate_element!(HTMLMapElement),
+        ElementNodeTypeId(HTMLMediaElementTypeId) => generate_element!(HTMLMediaElement),
+        ElementNodeTypeId(HTMLMetaElementTypeId) => generate_element!(HTMLMetaElement),
+        ElementNodeTypeId(HTMLMeterElementTypeId) => generate_element!(HTMLMeterElement),
+        ElementNodeTypeId(HTMLModElementTypeId) => generate_element!(HTMLModElement),
+        ElementNodeTypeId(HTMLObjectElementTypeId) => generate_element!(HTMLObjectElement),
+        ElementNodeTypeId(HTMLOListElementTypeId) => generate_element!(HTMLOListElement),
+        ElementNodeTypeId(HTMLOptGroupElementTypeId) => generate_element!(HTMLOptGroupElement),
+        ElementNodeTypeId(HTMLOptionElementTypeId) => generate_element!(HTMLOptionElement),
+        ElementNodeTypeId(HTMLOutputElementTypeId) => generate_element!(HTMLOutputElement),
+        ElementNodeTypeId(HTMLParagraphElementTypeId) => generate_element!(HTMLParagraphElement),
+        ElementNodeTypeId(HTMLParamElementTypeId) => generate_element!(HTMLParamElement),
+        ElementNodeTypeId(HTMLPreElementTypeId) => generate_element!(HTMLPreElement),
+        ElementNodeTypeId(HTMLProgressElementTypeId) => generate_element!(HTMLProgressElement),
+        ElementNodeTypeId(HTMLQuoteElementTypeId) => generate_element!(HTMLQuoteElement),
+        ElementNodeTypeId(HTMLScriptElementTypeId) => generate_element!(HTMLScriptElement),
+        ElementNodeTypeId(HTMLSelectElementTypeId) => generate_element!(HTMLSelectElement),
+        ElementNodeTypeId(HTMLSourceElementTypeId) => generate_element!(HTMLSourceElement),
+        ElementNodeTypeId(HTMLSpanElementTypeId) => generate_element!(HTMLSpanElement),
+        ElementNodeTypeId(HTMLStyleElementTypeId) => generate_element!(HTMLStyleElement),
+        ElementNodeTypeId(HTMLTableElementTypeId) => generate_element!(HTMLTableElement),
+        ElementNodeTypeId(HTMLTableCellElementTypeId) => generate_element!(HTMLTableCellElement),
+        ElementNodeTypeId(HTMLTableCaptionElementTypeId) => generate_element!(HTMLTableCaptionElement),
+        ElementNodeTypeId(HTMLTableColElementTypeId) => generate_element!(HTMLTableColElement),
+        ElementNodeTypeId(HTMLTableRowElementTypeId) => generate_element!(HTMLTableRowElement),
+        ElementNodeTypeId(HTMLTableSectionElementTypeId) => generate_element!(HTMLTableSectionElement),
+        ElementNodeTypeId(HTMLTemplateElementTypeId) => generate_element!(HTMLTemplateElement),
+        ElementNodeTypeId(HTMLTextAreaElementTypeId) => generate_element!(HTMLTextAreaElement),
+        ElementNodeTypeId(HTMLTimeElementTypeId) => generate_element!(HTMLTimeElement),
+        ElementNodeTypeId(HTMLTitleElementTypeId) => generate_element!(HTMLTitleElement),
+        ElementNodeTypeId(HTMLTrackElementTypeId) => generate_element!(HTMLTrackElement),
+        ElementNodeTypeId(HTMLUListElementTypeId) => generate_element!(HTMLUListElement),
+        ElementNodeTypeId(HTMLVideoElementTypeId) => generate_element!(HTMLVideoElement),
+        ElementNodeTypeId(HTMLUnknownElementTypeId) => generate_element!(HTMLUnknownElement),
+        CommentNodeTypeId => generate_element!(Comment),
+        DoctypeNodeTypeId => generate_element!(DocumentType<ScriptView>),
+        TextNodeTypeId => generate_element!(Text)
      }
-}
-
-pub unsafe fn unwrap(obj: *JSObject) -> AbstractNode<ScriptView> {
-    let raw = utils::unwrap::<*mut Node<ScriptView>>(obj);
-    AbstractNode::from_raw(raw)
-}
-
-#[allow(non_implicitly_copyable_typarams)]
-extern fn getFirstChild(cx: *JSContext, _argc: c_uint, vp: *mut JSVal) -> JSBool {
-    unsafe {
-        let obj = JS_THIS_OBJECT(cx, cast::transmute(vp));
-        if obj.is_null() {
-            return 0;
-        }
-
-        let node = unwrap(obj);
-        let rval = do node.with_mut_base |base| {
-            base.getFirstChild()
-        };
-        match rval {
-            Some(n) => {
-                n.wrap(cx, ptr::null(), vp); //XXXjdm pass a real scope
-            }
-            None => *vp = JSVAL_NULL
-        };
-    }
-    return 1;
-}
-
-#[allow(non_implicitly_copyable_typarams)]
-extern fn getNextSibling(cx: *JSContext, _argc: c_uint, vp: *mut JSVal) -> JSBool {
-    unsafe {
-        let obj = JS_THIS_OBJECT(cx, cast::transmute(vp));
-        if obj.is_null() {
-            return 0;
-        }
-
-        let node = unwrap(obj);
-        let rval = do node.with_mut_base |base| {
-            base.getNextSibling()
-        };
-        match rval {
-            Some(n) => {
-                n.wrap(cx, ptr::null(), vp); //XXXjdm pass a real scope
-            }
-            None => *vp = JSVAL_NULL
-        };
-    }
-    return 1;
-}
-
-impl Node<ScriptView> {
-    fn getNodeType(&self) -> i32 {
-        match self.type_id {
-            ElementNodeTypeId(_) => 1,
-            TextNodeTypeId       => 3,
-            CommentNodeTypeId    => 8,
-            DoctypeNodeTypeId    => 10
-        }
-    }
-
-    fn getNextSibling(&mut self) -> Option<&mut AbstractNode<ScriptView>> {
-        match self.next_sibling {
-            // transmute because the compiler can't deduce that the reference
-            // is safe outside of with_mut_base blocks.
-            Some(ref mut n) => Some(unsafe { cast::transmute(n) }),
-            None => None
-        }
-    }
-
-    fn getFirstChild(&mut self) -> Option<&mut AbstractNode<ScriptView>> {
-        match self.first_child {
-            // transmute because the compiler can't deduce that the reference
-            // is safe outside of with_mut_base blocks.
-            Some(ref mut n) => Some(unsafe { cast::transmute(n) }),
-            None => None
-        }
-    }
- }
-
-extern fn getNodeType(cx: *JSContext, _argc: c_uint, vp: *mut JSVal) -> JSBool {
-    unsafe {
-        let obj = JS_THIS_OBJECT(cx, cast::transmute(vp));
-        if obj.is_null() {
-            return 0;
-        }
-
-        let node = unwrap(obj);
-        let rval = do node.with_base |base| {
-            base.getNodeType()
-        };
-        *vp = INT_TO_JSVAL(rval);
-    }
-    return 1;
 }
 
 impl CacheableWrapper for AbstractNode<ScriptView> {
@@ -172,5 +106,35 @@ impl CacheableWrapper for AbstractNode<ScriptView> {
 
     fn wrap_object_shared(@mut self, _cx: *JSContext, _scope: *JSObject) -> *JSObject {
         fail!(~"need to implement wrapping");
+    }
+}
+
+impl Traceable for Node<ScriptView> {
+    fn trace(&self, tracer: *mut JSTracer) {
+        #[fixed_stack_segment]
+        fn trace_node(tracer: *mut JSTracer, node: Option<AbstractNode<ScriptView>>, name: &str) {
+            if node.is_none() {
+                return;
+            }
+            debug!("tracing %s", name);
+            let mut node = node.unwrap();
+            let cache = node.get_wrappercache();
+            let wrapper = cache.get_wrapper();
+            assert!(wrapper.is_not_null());
+            unsafe {
+                (*tracer).debugPrinter = ptr::null();
+                (*tracer).debugPrintIndex = -1;
+                do name.to_c_str().with_ref |name| {
+                    (*tracer).debugPrintArg = name as *libc::c_void;
+                    JS_CallTracer(cast::transmute(tracer), wrapper, JSTRACE_OBJECT as u32);
+                }
+            }
+        }
+        debug!("tracing %p?:", self.wrapper.get_wrapper());
+        trace_node(tracer, self.parent_node, "parent");
+        trace_node(tracer, self.first_child, "first child");
+        trace_node(tracer, self.last_child, "last child");
+        trace_node(tracer, self.next_sibling, "next sibling");
+        trace_node(tracer, self.prev_sibling, "prev sibling");
     }
 }

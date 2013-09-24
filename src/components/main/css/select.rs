@@ -2,9 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use std::net::url::Url;
-use url_from_str = std::net::url::from_str;
-use core::cell::Cell;
+use extra::url::Url;
+use std::cell::Cell;
 use newcss::stylesheet::Stylesheet;
 use newcss::select::SelectCtx;
 use newcss::types::OriginUA;
@@ -28,11 +27,11 @@ fn servo_default_style() -> Stylesheet {
 }
 
 fn default_url(name: &str) -> Url {
-    result::unwrap(url_from_str(fmt!("http://%s", name)))
+    FromStr::from_str(fmt!("http://%s", name)).unwrap()
 }
 
 fn style_stream(style: &str) -> DataStream {
-    let style = Cell(str::to_bytes(style));
+    let style = Cell::new(style.as_bytes().to_owned());
     let d: DataStream = || if !style.is_empty() {
         Some(style.take())
     } else {

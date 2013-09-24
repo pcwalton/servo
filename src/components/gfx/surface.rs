@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+use std::vec;
 use geom::size::Size2D;
 
 #[deriving(Eq)]
@@ -27,7 +28,7 @@ pub struct ImageSurface {
 impl ImageSurface {
     pub fn new(size: Size2D<int>, format: format) -> ImageSurface {
         ImageSurface {
-            size: copy size,
+            size: size.clone(),
             format: format,
             buffer: vec::from_elem((size.area() as uint) * format.bpp(), 0u8)
         }

@@ -2,9 +2,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use std::net::url;
-use std::net::url::Url;
-use core::hashmap::HashMap;
+use extra::url;
+use extra::url::Url;
+use std::hashmap::HashMap;
+use std::os;
 
 /**
 Create a URL object from a string. Does various helpful browsery things like
@@ -15,46 +16,59 @@ Create a URL object from a string. Does various helpful browsery things like
   is based off the current url
 
 */
-#[allow(non_implicitly_copyable_typarams)]
+// TODO: about:failure->
 pub fn make_url(str_url: ~str, current_url: Option<Url>) -> Url {
     let schm = url::get_scheme(str_url);
-    let str_url = if result::is_err(&schm) {
-        if current_url.is_none() {
-            // Assume we've been given a file path. If it's absolute just return
-            // it, otherwise make it absolute with the cwd.
-            if str_url.starts_with("/") {
-                ~"file://" + str_url
-            } else {
-                ~"file://" + os::getcwd().push(str_url).to_str()
-            }
-        } else {
-            let current_url = current_url.get();
-            debug!("make_url: current_url: %?", current_url);
-            if str_url.starts_with("//") {
-                current_url.scheme + ":" + str_url
-            } else if current_url.path.is_empty() ||
-                      str_url.starts_with("/") {
-                current_url.scheme + "://" +
-                current_url.host + "/" +
-                str_url.trim_left_chars([ '/' ])
-            } else {
-                let mut path = ~[];
-                for str::each_split_char(current_url.path, '/') |p| {
-                    path.push(p.to_str());
+    let str_url = match schm {
+        Err(_) => {
+            if current_url.is_none() {
+                // Assume we've been given a file path. If it's absolute just return
+                // it, otherwise make it absolute with the cwd.
+                if str_url.starts_with("/") {
+                    ~"file://" + str_url
+                } else {
+                    ~"file://" + os::getcwd().push(str_url).to_str()
                 }
-                let path = path; // FIXME: borrow checker workaround
-                let path = path.init();
-                let path = str::connect(path.map(|x| copy *x) + ~[str_url], "/");
-
-                current_url.scheme + "://" + current_url.host + path
+            } else {
+                let current_url = current_url.unwrap();
+                debug!("make_url: current_url: %?", current_url);
+                if str_url.starts_with("//") {
+                    current_url.scheme + ":" + str_url
+                } else if current_url.path.is_empty() ||
+                    str_url.starts_with("/") {
+                    current_url.scheme + "://" +
+                        current_url.host + "/" +
+                        str_url.trim_left_chars(&'/')
+                } else {
+                    let mut path = ~[];
+                    for p in current_url.path.split_iter('/') {
+                        path.push(p.to_str());
+                    }
+                    let path = path.init();
+                    let mut path = path.iter().map(|x| (*x).clone()).collect::<~[~str]>();
+                    path.push(str_url);
+                    let path = path.connect("/");
+                    
+                    current_url.scheme + "://" + current_url.host + path
+                }
+            }
+        },
+        Ok((scheme, page)) => {
+            match scheme {
+                ~"about" => {
+                    match page {
+                        ~"failure" => ~"file://" + os::getcwd().push("../src/test/html/failure.html").to_str(),
+                        // TODO: handle the rest of the about: pages
+                        _ => str_url
+                    }
+                },
+                _ => str_url
             }
         }
-    } else {
-        str_url
     };
 
     // FIXME: Need to handle errors
-    url::from_str(str_url).get()
+    url::from_str(str_url).unwrap()
 }
 
 mod make_url_tests {
@@ -116,6 +130,6 @@ mod make_url_tests {
 
 pub type UrlMap<T> = @mut HashMap<Url, T>;
 
-pub fn url_map<T: Copy>() -> UrlMap<T> {
+pub fn url_map<T: Clone + 'static>() -> UrlMap<T> {
     @mut HashMap::new()
 }

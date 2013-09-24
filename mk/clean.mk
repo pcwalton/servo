@@ -18,24 +18,34 @@ DEPS_CLEAN_TARGETS_FAST = $(addprefix clean-,$(filter-out $(SLOW_BUILDS),$(DEPS_
 .PHONY:	clean $(DEPS_CLEAN_TARGETS_ALL)
 
 clean: $(DEPS_CLEAN_TARGETS_ALL) clean-servo
-	$(Q)echo "Cleaning targets:"
-	$(Q)echo "$(DEPS_CLEAN_ALL)"
+	@$(call E, "cleaning:")
+	@$(call E, "    $(DEPS_CLEAN_ALL)")
 
 clean-fast: $(DEPS_CLEAN_TARGETS_FAST) clean-servo
-	$(Q)echo "Cleaning targets:"
-	$(Q)echo "$(filter-out $(SLOW_BUILDS),$(DEPS_CLEAN_ALL))"
+	@$(call E, "cleaning:")
+	@$(call E, "    $(filter-out $(SLOW_BUILDS),$(DEPS_CLEAN_ALL))")
 
 clean-util:
-	cd $(B)/src/components/util/ && rm -rf libservo_util*.dylib $(DONE_servo_util)
+	@$(call E, "cleaning util")
+	$(Q)cd $(B)/src/components/util/ && rm -rf libutil*.dylib libutil*.dSYM libutil*.so $(DONE_util)
+
+clean-msg:
+	@$(call E, "cleaning msg")
+	$(Q)cd $(B)/src/components/msg/ && rm -rf libmsg*.dylib libmsg*.dSYM libmsg*.so $(DONE_msg)
 
 clean-net:
-	cd $(B)/src/components/net/ && rm -rf libservo_net*.dylib $(DONE_servo_net)
+	@$(call E, "cleaning net")
+	$(Q)cd $(B)/src/components/net/ && rm -rf libnet*.dylib libnet*.dSYM libnet*.so $(DONE_net)
 
 clean-gfx:
-	cd $(B)/src/components/gfx/ && rm -rf libservo_gfx*.dylib $(DONE_servo_gfx)
+	@$(call E, "cleaning gfx")
+	$(Q)cd $(B)/src/components/gfx/ && rm -rf libgfx*.dylib libgfx*.dSYM libgfx*.so $(DONE_gfx)
 
 clean-script:
-	cd $(B)/src/components/script/ && rm -rf libservo_script*.dylib $(DONE_servo_script)
+	@$(call E, "cleaning script")
+	$(Q)cd $(B)/src/components/script/ && rm -rf libscript*.dylib libscript*.dSYM libscript*.so $(DONE_script)
 
-clean-servo: clean-gfx clean-util clean-net clean-script
-	rm -f servo servo-test
+clean-servo: clean-gfx clean-util clean-net clean-script clean-msg
+	@$(call E, "cleaning servo")
+	$(Q)rm -f servo servo-test libservo*.so
+	$(Q)cd $(BINDINGS_SRC) && rm -f *.pkl

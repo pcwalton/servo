@@ -7,15 +7,14 @@
 /// from layout.
 
 use dom::node::{AbstractNode, ScriptView, LayoutView};
-use script_task::ScriptMsg;
-
-use core::comm::{Chan, SharedChan};
+use script_task::{ScriptChan};
+use std::comm::{Chan, SharedChan};
 use geom::rect::Rect;
 use geom::size::Size2D;
 use geom::point::Point2D;
 use gfx::geometry::Au;
 use newcss::stylesheet::Stylesheet;
-use std::net::url::Url;
+use extra::url::Url;
 
 /// Asynchronous messages that script can send to layout.
 ///
@@ -30,7 +29,7 @@ pub enum Msg {
     /// Performs a synchronous layout request.
     ///
     /// FIXME(pcwalton): As noted below, this isn't very type safe.
-    QueryMsg(LayoutQuery, Chan<Result<LayoutResponse,()>>),
+    QueryMsg(LayoutQuery),
 
     /// Requests that the layout task shut down and exit.
     ExitMsg,
@@ -39,25 +38,16 @@ pub enum Msg {
 /// Synchronous messages that script can send to layout.
 pub enum LayoutQuery {
     /// Requests the dimensions of the content box, as in the `getBoundingClientRect()` call.
-    ContentBoxQuery(AbstractNode<ScriptView>),
+    ContentBoxQuery(AbstractNode<ScriptView>, Chan<ContentBoxResponse>),
     /// Requests the dimensions of all the content boxes, as in the `getClientRects()` call.
-    ContentBoxesQuery(AbstractNode<ScriptView>),
+    ContentBoxesQuery(AbstractNode<ScriptView>, Chan<ContentBoxesResponse>),
     /// Requests the node containing the point of interest
-    HitTestQuery(AbstractNode<ScriptView>, Point2D<f32>),
+    HitTestQuery(AbstractNode<ScriptView>, Point2D<f32>, Chan<Result<HitTestResponse, ()>>),
 }
 
-/// The reply of a synchronous message from script to layout.
-///
-/// FIXME(pcwalton): This isn't very type safe. Maybe `LayoutQuery` objects should include
-/// response channels?
-pub enum LayoutResponse {
-    /// A response to the `ContentBoxQuery` message.
-    ContentBoxResponse(Rect<Au>),
-    /// A response to the `ContentBoxesQuery` message.
-    ContentBoxesResponse(~[Rect<Au>]),
-    /// A response to the `HitTestQuery` message.
-    HitTestResponse(AbstractNode<LayoutView>),
-}
+pub struct ContentBoxResponse(Rect<Au>);
+pub struct ContentBoxesResponse(~[Rect<Au>]);
+pub struct HitTestResponse(AbstractNode<LayoutView>);
 
 /// Determines which part of the 
 pub enum DocumentDamageLevel {
@@ -72,7 +62,7 @@ impl DocumentDamageLevel {
     ///
     /// FIXME(pcwalton): This could be refactored to use `max` and the `Ord` trait, and this
     /// function removed.
-    fn add(&mut self, new_damage: DocumentDamageLevel) {
+    pub fn add(&mut self, new_damage: DocumentDamageLevel) {
         match (*self, new_damage) {
             (ReflowDocumentDamage, new_damage) => *self = new_damage,
             (MatchSelectorsDocumentDamage, _) => *self = MatchSelectorsDocumentDamage,
@@ -110,16 +100,20 @@ pub struct Reflow {
     /// The URL of the page.
     url: Url,
     /// The channel through which messages can be sent back to the script task.
-    script_chan: SharedChan<ScriptMsg>,
+    script_chan: ScriptChan,
     /// The current window size.
     window_size: Size2D<uint>,
     /// The channel that we send a notification to.
     script_join_chan: Chan<()>,
+    /// Unique identifier
+    id: uint
 }
 
 /// Encapsulates a channel to the layout task.
 #[deriving(Clone)]
-pub struct LayoutTask {
-    chan: SharedChan<Msg>,
+pub struct LayoutChan(SharedChan<Msg>);
+impl LayoutChan {
+    pub fn new(chan: Chan<Msg>) -> LayoutChan {
+        LayoutChan(SharedChan::new(chan))
+    }
 }
-
