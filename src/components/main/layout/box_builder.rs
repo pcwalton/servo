@@ -6,9 +6,9 @@
 
 use layout::block::BlockFlowData;
 use layout::float::FloatFlowData;
-use layout::box::{GenericRenderBoxClass, ImageRenderBox, ImageRenderBoxClass, RenderBox};
-use layout::box::{RenderBoxBase, RenderBoxType, RenderBox_Generic, RenderBox_Image};
-use layout::box::{RenderBox_Text, UnscannedTextRenderBox, UnscannedTextRenderBoxClass};
+use layout::box::{GenericRenderBox, GenericRenderBoxClass, ImageRenderBox, ImageRenderBoxClass};
+use layout::box::{RenderBox, RenderBoxBase, RenderBoxClass, TextRenderBoxClass};
+use layout::box::{UnscannedTextRenderBox, UnscannedTextRenderBoxClass};
 use layout::context::LayoutContext;
 use layout::flow::{AbsoluteFlow, BlockFlow, FloatFlow, Flow_Absolute, Flow_Block, Flow_Float};
 use layout::flow::{Flow_Inline, Flow_InlineBlock, Flow_Root, Flow_Table, FlowContext};
@@ -85,7 +85,7 @@ impl<'self> BoxGenerator<'self> {
     fn make_inline_spacer_for_node_side(_: &LayoutContext,
                                         _: AbstractNode<LayoutView>,
                                         _: InlineSpacerSide)
-                                        -> Option<RenderBox> {
+                                        -> Option<@mut RenderBox> {
         None
     }
 
@@ -126,7 +126,7 @@ impl<'self> BoxGenerator<'self> {
 
                 debug!("BoxGenerator[f%d]: attaching box[b%d] to block flow (node: %s)",
                        block.common.id,
-                       new_box.id(),
+                       new_box.base().id(),
                        node.debug_str());
 
                 assert!(block.box.is_none());
@@ -139,7 +139,7 @@ impl<'self> BoxGenerator<'self> {
 
                 debug!("BoxGenerator[f%d]: attaching box[b%d] to float flow (node: %s)",
                         float.common.id,
-                        new_box.id(),
+                        new_box.base().id(),
                         node.debug_str());
 
                 assert!(float.box.is_none() && float.index.is_none());
@@ -186,15 +186,17 @@ impl<'self> BoxGenerator<'self> {
     /// Disambiguate between different methods here instead of inlining, since each case has very
     /// different complexity.
     fn make_box(layout_ctx: &LayoutContext,
-                ty: RenderBoxType,
+                ty: RenderBoxClass,
                 node: AbstractNode<LayoutView>,
                 builder: &mut LayoutTreeBuilder)
-                -> RenderBox {
+                -> @mut RenderBox {
         let base = RenderBoxBase::new(node, builder.next_box_id());
         let result = match ty {
-            RenderBox_Generic => GenericRenderBoxClass(@mut base),
-            RenderBox_Text => UnscannedTextRenderBoxClass(@mut UnscannedTextRenderBox::new(base)),
-            RenderBox_Image => BoxGenerator::make_image_box(layout_ctx, node, base),
+            GenericRenderBoxClass => @mut GenericRenderBox::new(base) as @mut RenderBox,
+            TextRenderBoxClass | UnscannedTextRenderBoxClass => {
+                @mut UnscannedTextRenderBox::new(base) as @mut RenderBox
+            }
+            ImageRenderBoxClass => BoxGenerator::make_image_box(layout_ctx, node, base),
         };
         debug!("BoxGenerator: created box: %s", result.debug_str());
         result
@@ -203,36 +205,36 @@ impl<'self> BoxGenerator<'self> {
     fn make_image_box(layout_ctx: &LayoutContext,
                       node: AbstractNode<LayoutView>,
                       base: RenderBoxBase)
-                      -> RenderBox {
+                      -> @mut RenderBox {
         assert!(node.is_image_element());
 
         do node.with_imm_image_element |image_element| {
             if image_element.image.is_some() {
                 // FIXME(pcwalton): Don't copy URLs.
                 let url = (*image_element.image.get_ref()).clone();
-                ImageRenderBoxClass(@mut ImageRenderBox::new(base, url, layout_ctx.image_cache))
+                @mut ImageRenderBox::new(base, url, layout_ctx.image_cache) as @mut RenderBox
             } else {
                 info!("Tried to make image box, but couldn't find image. Made generic box \
                        instead.");
-                GenericRenderBoxClass(@mut base)
+                @mut GenericRenderBox::new(base) as @mut RenderBox
             }
         }
     }
 
-    fn decide_box_type(&self, node: AbstractNode<LayoutView>) -> RenderBoxType {
+    fn decide_box_type(&self, node: AbstractNode<LayoutView>) -> RenderBoxClass {
         if node.is_text() {
-            RenderBox_Text
+            TextRenderBoxClass
         } else if node.is_image_element() {
             do node.with_imm_image_element |image_element| {
                 match image_element.image {
-                    Some(_) => RenderBox_Image,
-                    None => RenderBox_Generic,
+                    Some(_) => ImageRenderBoxClass,
+                    None => GenericRenderBoxClass,
                 }
             }
         } else if node.is_element() {
-            RenderBox_Generic
+            GenericRenderBoxClass
         } else {
-            fail!(~"Hey, doctypes and comments shouldn't get here! They are display:none!")
+            fail!("Hey, doctypes and comments shouldn't get here! They are display:none!")
         }
     }
 
@@ -265,13 +267,14 @@ impl LayoutTreeBuilder {
 
     /// Creates necessary box(es) and flow context(s) for the current DOM node,
     /// and recurses on its children.
-    pub fn construct_recursively<'a>(&mut self,
-                                     layout_ctx: &LayoutContext,
-                                     cur_node: AbstractNode<LayoutView>,
-                                     mut grandparent_generator: Option<BoxGenerator<'a>>,
-                                     mut parent_generator: BoxGenerator<'a>,
-                                     mut prev_sibling_generator: Option<BoxGenerator<'a>>)
-                                     -> BoxConstructResult<'a> {
+    pub fn construct_recursively<'a>(
+                                 &mut self,
+                                 layout_ctx: &LayoutContext,
+                                 cur_node: AbstractNode<LayoutView>,
+                                 mut grandparent_generator: Option<BoxGenerator<'a>>,
+                                 mut parent_generator: BoxGenerator<'a>,
+                                 mut prev_sibling_generator: Option<BoxGenerator<'a>>)
+                                 -> BoxConstructResult<'a> {
         debug!("Considering node: %s", cur_node.debug_str());
         let box_gen_result = {
             let grandparent_gen_ref = match grandparent_generator {
@@ -289,32 +292,29 @@ impl LayoutTreeBuilder {
 
         debug!("result from generator_for_node: %?", &box_gen_result);
         // Skip over nodes that don't belong in the flow tree
-        let (this_generator, next_generator) = 
-            match box_gen_result {
-                NoGenerator => return Normal(prev_sibling_generator),
+        let (this_generator, next_generator) = match box_gen_result {
+            NoGenerator => return Normal(prev_sibling_generator),
+            ParentGenerator => {
+                do parent_generator.with_clone |clone| {
+                    (clone, None)
+                }
+            }
+            SiblingGenerator => (prev_sibling_generator.take_unwrap(), None),
+            NewGenerator(gen) => (gen, None),
+            ReparentingGenerator(gen) => {
+                reparent = true;
+                (gen, None)
+            }
+            Mixed(gen, next_gen) => (gen, Some(match *next_gen {
                 ParentGenerator => {
                     do parent_generator.with_clone |clone| {
-                        (clone, None)
+                        clone
                     }
                 }
-                SiblingGenerator => (prev_sibling_generator.take_unwrap(), None),
-                NewGenerator(gen) => (gen, None),
-                ReparentingGenerator(gen) => {
-                    reparent = true;
-                    (gen, None)
-                }
-                Mixed(gen, next_gen) => (gen, Some(match *next_gen {
-                    ParentGenerator => {
-                        do parent_generator.with_clone |clone| {
-                            clone
-                        }
-                    }
-                    SiblingGenerator => prev_sibling_generator.take_unwrap(),
-                    _ => fail!("Unexpect BoxGenResult")
-                }))
-            };
-
-
+                SiblingGenerator => prev_sibling_generator.take_unwrap(),
+                _ => fail!("Unexpect BoxGenResult")
+            }))
+        };
 
         let mut this_generator = this_generator;
 
@@ -367,13 +367,13 @@ impl LayoutTreeBuilder {
 
     
 
-    pub fn box_generator_for_node<'a>(&mut self,
-                                      node: AbstractNode<LayoutView>,
-                                      grandparent_generator: Option<&mut BoxGenerator<'a>>,
-                                      parent_generator: &mut BoxGenerator<'a>,
-                                      mut sibling_generator: Option<&mut BoxGenerator<'a>>)
-                                      -> BoxGenResult<'a> {
-
+    pub fn box_generator_for_node<'a>(
+                                  &mut self,
+                                  node: AbstractNode<LayoutView>,
+                                  grandparent_generator: Option<&mut BoxGenerator<'a>>,
+                                  parent_generator: &mut BoxGenerator<'a>,
+                                  mut sibling_generator: Option<&mut BoxGenerator<'a>>)
+                                  -> BoxGenResult<'a> {
         let display = if node.is_element() {
             match node.style().display(node.is_root()) {
                 CSSDisplayNone => return NoGenerator, // tree ends here if 'display: none'
@@ -552,12 +552,15 @@ impl LayoutTreeBuilder {
                             // FIXME: workaround for rust#6393
                             {
                                 let boxes = &first_flow.imm_inline().boxes;
-                                if boxes.len() == 1 && boxes[0].is_whitespace_only() {
-                                    debug!("LayoutTreeBuilder: pruning whitespace-only first child \
-                                            flow f%d from parent f%d", 
-                                            first_flow.id(),
-                                            p_id);
-                                    do_remove = true;
+                                if boxes.len() == 1 {
+                                    let first_box = boxes[0];   // FIXME(pcwalton): Rust bug
+                                    if first_box.is_whitespace_only() {
+                                        debug!("LayoutTreeBuilder: pruning whitespace-only first \
+                                                child flow f%d from parent f%d", 
+                                               first_flow.id(),
+                                               p_id);
+                                        do_remove = true;
+                                    }
                                 }
                             }
                         }
@@ -577,11 +580,14 @@ impl LayoutTreeBuilder {
                             {
                                 let boxes = &last_flow.imm_inline().boxes;
                                 if boxes.len() == 1 && boxes.last().is_whitespace_only() {
-                                    debug!("LayoutTreeBuilder: pruning whitespace-only last child \
-                                            flow f%d from parent f%d", 
-                                            last_flow.id(),
-                                            p_id);
-                                    do_remove = true;
+                                    let last_box = boxes.last();    // FIXME(pcwalton): Rust bug
+                                    if last_box.is_whitespace_only() {
+                                        debug!("LayoutTreeBuilder: pruning whitespace-only last \
+                                                child flow f%d from parent f%d", 
+                                               last_flow.id(),
+                                               p_id);
+                                        do_remove = true;
+                                    }
                                 }
                             }
                         }
@@ -616,9 +622,7 @@ impl LayoutTreeBuilder {
     pub fn construct_trees(&mut self, layout_ctx: &LayoutContext, root: AbstractNode<LayoutView>)
                        -> Result<FlowContext, ()> {
         debug!("Constructing flow tree for DOM: ");
-        if cfg!(debug) {
-            root.dump();
-        }
+        debug!("%?", root.dump());
 
         let mut new_flow = self.make_flow(Flow_Root, root);
         {

@@ -8,52 +8,78 @@ use geom::size::Size2D;
 
 use std::num::{NumCast, One, Zero};
 
-#[deriving(Clone,Eq)]
+#[deriving(Clone)]
 pub struct Au(i32);
 
+impl Eq for Au {
+    #[inline]
+    fn eq(&self, other: &Au) -> bool {
+        **self == **other
+    }
+    #[inline]
+    fn ne(&self, other: &Au) -> bool {
+        **self != **other
+    }
+}
+
 impl Add<Au,Au> for Au {
+    #[inline]
     fn add(&self, other: &Au) -> Au { Au(**self + **other) }
 }
 
 impl Sub<Au,Au> for Au {
+    #[inline]
     fn sub(&self, other: &Au) -> Au { Au(**self - **other) }
 }
 
 impl Mul<Au,Au> for Au {
+    #[inline]
     fn mul(&self, other: &Au) -> Au { Au(**self * **other) }
 }
 
 impl Div<Au,Au> for Au {
+    #[inline]
     fn div(&self, other: &Au) -> Au { Au(**self / **other) }
 }
 
 impl Rem<Au,Au> for Au {
+    #[inline]
     fn rem(&self, other: &Au) -> Au { Au(**self % **other) }
 }
 
 impl Neg<Au> for Au {
+    #[inline]
     fn neg(&self) -> Au { Au(-**self) }
 }
 
 impl Ord for Au {
+    #[inline]
     fn lt(&self, other: &Au) -> bool { **self <  **other }
+    #[inline]
     fn le(&self, other: &Au) -> bool { **self <= **other }
+    #[inline]
     fn ge(&self, other: &Au) -> bool { **self >= **other }
+    #[inline]
     fn gt(&self, other: &Au) -> bool { **self >  **other }
 }
 
 impl One for Au {
+    #[inline]
     fn one() -> Au { Au(1) }
 }
 
 impl Zero for Au {
+    #[inline]
     fn zero() -> Au { Au(0) }
+    #[inline]
     fn is_zero(&self) -> bool { **self == 0 }
 }
 
 impl Num for Au {}
 
+#[inline]
 pub fn min(x: Au, y: Au) -> Au { if x < y { x } else { y } }
+#[inline]
 pub fn max(x: Au, y: Au) -> Au { if x > y { x } else { y } }
 
 impl NumCast for Au {
@@ -81,42 +107,58 @@ pub fn box<T:Clone + Ord + Add<T,T> + Sub<T,T>>(x: T, y: T, w: T, h: T) -> Rect<
 }
 
 impl Au {
+    /// FIXME(pcwalton): Workaround for lack of cross crate inlining of newtype structs!
+    #[inline]
+    pub fn new(value: i32) -> Au {
+        Au(value)
+    }
+
+    #[inline]
     pub fn scale_by(self, factor: float) -> Au {
         Au(((*self as float) * factor).round() as i32)
     }
 
+    #[inline]
     pub fn from_px(px: int) -> Au {
         NumCast::from(px * 60)
     }
 
+    #[inline]
     pub fn to_nearest_px(&self) -> int {
         ((**self as float) / 60f).round() as int
     }
 
+    #[inline]
     pub fn to_snapped(&self) -> Au {
         let res = **self % 60i32;
         return if res >= 30i32 { return Au(**self - res + 60i32) }
                        else { return Au(**self - res) };
     }
 
+    #[inline]
     pub fn zero_point() -> Point2D<Au> {
         Point2D(Au(0), Au(0))
     }
 
+    #[inline]
     pub fn zero_rect() -> Rect<Au> {
         let z = Au(0);
         Rect(Point2D(z, z), Size2D(z, z))
     }
 
+    #[inline]
     pub fn from_pt(pt: float) -> Au {
         from_px(pt_to_px(pt) as int)
     }
 
+    #[inline]
     pub fn from_frac_px(px: float) -> Au {
         Au((px * 60f) as i32)
     }
 
+    #[inline]
     pub fn min(x: Au, y: Au) -> Au { if *x < *y { x } else { y } }
+    #[inline]
     pub fn max(x: Au, y: Au) -> Au { if *x > *y { x } else { y } }
 }
 

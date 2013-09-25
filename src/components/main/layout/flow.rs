@@ -56,6 +56,39 @@ pub enum FlowContext {
     TableFlow(~FlowData),
 }
 
+/// A top-down traversal.
+pub trait PreorderFlowTraversal {
+    /// The operation to perform. Return true to continue or false to stop.
+    fn process(&mut self, flow: &mut FlowContext) -> bool;
+
+    /// Returns true if this node should be pruned. If this returns true, we skip the operation
+    /// entirely and do not process any descendant nodes. This is called *before* child nodes are
+    /// visited. The default implementation never prunes any nodes.
+    fn should_prune(&mut self, flow: &mut FlowContext) -> bool {
+        false
+    }
+}
+
+/// A bottom-up traversal, with a optional in-order pass.
+pub trait PostorderFlowTraversal {
+    /// The operation to perform. Return true to continue or false to stop.
+    fn process(&mut self, flow: &mut FlowContext) -> bool;
+
+    /// Returns false if this node must be processed in-order. If this returns false, we skip the
+    /// operation for this node, but continue processing the descendants. This is called *after*
+    /// child nodes are visited.
+    fn should_process(&mut self, flow: &mut FlowContext) -> bool {
+        true
+    }
+
+    /// Returns true if this node should be pruned. If this returns true, we skip the operation
+    /// entirely and do not process any descendant nodes. This is called *before* child nodes are
+    /// visited. The default implementation never prunes any nodes.
+    fn should_prune(&mut self, flow: &mut FlowContext) -> bool {
+        false
+    }
+}
+
 pub enum FlowContextType {
     Flow_Absolute, 
     Flow_Block,
@@ -67,65 +100,40 @@ pub enum FlowContextType {
 }
 
 impl FlowContext {
-    pub fn each_bu_sub_inorder (&mut self, callback: &fn(&mut FlowContext) -> bool) -> bool {
-        for kid in self.child_iter() {
-            // FIXME: Work around rust#2202. We should be able to pass the callback directly.
-            if !kid.each_bu_sub_inorder(|a| callback(a)) {
-                return false;
-            }
+    pub fn traverse_preorder<T:PreorderFlowTraversal>(&mut self, traversal: &mut T) -> bool {
+        if traversal.should_prune(self) {
+            return true
         }
 
-        if !self.is_inorder() {
-            callback(self)
-        } else {
-            true
-        }
-    }
-
-    pub fn each_preorder_prune(&mut self, prune: &fn(&mut FlowContext) -> bool, 
-                               callback: &fn(&mut FlowContext) -> bool) 
-                               -> bool {
-        if prune(self) {
-            return true;
-        }
-
-        if !callback(self) {
-            return false;
+        if !traversal.process(self) {
+            return false
         }
 
         for kid in self.child_iter() {
-            // FIXME: Work around rust#2202. We should be able to pass the callback directly.
-            if !kid.each_preorder_prune(|a| prune(a), |a| callback(a)) {
-                return false;
+            if !kid.traverse_preorder(traversal) {
+                return false
             }
         }
 
         true
     }
 
-    pub fn each_postorder_prune(&mut self, prune: &fn(&mut FlowContext) -> bool, 
-                                callback: &fn(&mut FlowContext) -> bool) 
-                                -> bool {
-        if prune(self) {
-            return true;
+    pub fn traverse_postorder<T:PostorderFlowTraversal>(&mut self, traversal: &mut T) -> bool {
+        if traversal.should_prune(self) {
+            return true
         }
 
         for kid in self.child_iter() {
-            // FIXME: Work around rust#2202. We should be able to pass the callback directly.
-            if !kid.each_postorder_prune(|a| prune(a), |a| callback(a)) {
-                return false;
+            if !kid.traverse_postorder(traversal) {
+                return false
             }
         }
 
-        callback(self)
-    }
+        if !traversal.should_process(self) {
+            return true
+        }
 
-    pub fn each_preorder(&mut self, callback: &fn(&mut FlowContext) -> bool) -> bool {
-        self.each_preorder_prune(|_| false, callback)
-    }
-
-    pub fn each_postorder(&mut self, callback: &fn(&mut FlowContext) -> bool) -> bool {
-        self.each_postorder_prune(|_| false, callback)
+        traversal.process(self)
     }
 }
 
@@ -256,11 +264,12 @@ pub struct FlowData {
 }
 
 pub struct BoxIterator {
-    priv boxes: ~[RenderBox],
+    priv boxes: ~[@mut RenderBox],
     priv index: uint,
 }
-impl Iterator<RenderBox> for BoxIterator {
-    fn next(&mut self) -> Option<RenderBox> {
+
+impl Iterator<@mut RenderBox> for BoxIterator {
+    fn next(&mut self) -> Option<@mut RenderBox> {
         if self.index >= self.boxes.len() {
             None
         } else {
@@ -280,13 +289,13 @@ impl FlowData {
 
             id: id,
 
-            min_width: Au(0),
-            pref_width: Au(0),
+            min_width: Au::new(0),
+            pref_width: Au::new(0),
             position: Au::zero_rect(),
             floats_in: Invalid,
             floats_out: Invalid,
             num_floats: 0,
-            abs_position: Point2D(Au(0), Au(0)),
+            abs_position: Point2D(Au::new(0), Au::new(0)),
             is_inorder: false
         }
     }
@@ -373,6 +382,7 @@ impl<'self> FlowContext {
         }
     }
 
+    #[inline]
     pub fn assign_height(&mut self, ctx: &mut LayoutContext) {
 
         debug!("FlowContext: assigning height for f%?", self.id());
@@ -420,9 +430,12 @@ impl<'self> FlowContext {
         }
     }
 
-
     // Actual methods that do not require much flow-specific logic
-    pub fn foldl_all_boxes<B:Clone>(&mut self, seed: B, cb: &fn(a: B, b: RenderBox) -> B) -> B {
+    pub fn foldl_all_boxes<B:Clone>(
+                           &mut self,
+                           seed: B,
+                           cb: &fn(a: B, b: @mut RenderBox) -> B)
+                           -> B {
         match *self {
             BlockFlow(ref mut block) => {
                 do block.box.map_default(seed.clone()) |box| {
@@ -441,10 +454,10 @@ impl<'self> FlowContext {
     pub fn foldl_boxes_for_node<B:Clone>(&mut self,
                                         node: AbstractNode<LayoutView>,
                                         seed: B,
-                                        callback: &fn(a: B, RenderBox) -> B)
+                                        callback: &fn(a: B, @mut RenderBox) -> B)
                                         -> B {
         do self.foldl_all_boxes(seed) |acc, box| {
-            if box.node() == node {
+            if box.base().node == node {
                 callback(acc, box)
             } else {
                 acc
@@ -488,20 +501,20 @@ impl<'self> FlowContext {
         let repr = match *self {
             InlineFlow(ref inline) => {
                 let mut s = inline.boxes.iter().fold(~"InlineFlow(children=", |s, box| {
-                    fmt!("%s b%d", s, box.id())
+                    fmt!("%s %s", s, box.debug_str())
                 });
                 s.push_str(")");
                 s
             },
             BlockFlow(ref block) => {
                 match block.box {
-                    Some(box) => fmt!("BlockFlow(box=b%d)", box.id()),
+                    Some(box) => fmt!("BlockFlow(box=b%s)", box.debug_str()),
                     None => ~"BlockFlow",
                 }
             },
             FloatFlow(ref float) => {
                 match float.box {
-                    Some(box) => fmt!("FloatFlow(box=b%d)", box.id()),
+                    Some(box) => fmt!("FloatFlow(box=b%s)", box.debug_str()),
                     None => ~"FloatFlow",
                 }
             },

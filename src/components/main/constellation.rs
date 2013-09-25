@@ -25,7 +25,7 @@ use servo_util::url::make_url;
 use std::hashmap::{HashMap, HashSet};
 use std::util::replace;
 use extra::url::Url;
-use extra::future::{Future, from_value};
+use extra::future::Future;
 
 /// Maintains the pipelines and navigation context and grants permission to composite
 pub struct Constellation {
@@ -377,7 +377,7 @@ impl Constellation {
                                              self.opts.clone(),
                                              {
                                                 let size = self.compositor_chan.get_size();
-                                                from_value(Size2D(size.width as uint, size.height as uint))
+                                                Future::from_value(Size2D(size.width as uint, size.height as uint))
                                              });
         let failure = ~"about:failure";
         let url = make_url(failure, None);
@@ -402,7 +402,7 @@ impl Constellation {
                                              self.opts.clone(),
                                              {
                                                  let size = self.compositor_chan.get_size();
-                                                 from_value(Size2D(size.width as uint, size.height as uint))
+                                                 Future::from_value(Size2D(size.width as uint, size.height as uint))
                                              });
         if url.path.ends_with(".js") {
             pipeline.script_chan.send(ExecuteMsg(pipeline.id, url));

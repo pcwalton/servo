@@ -152,7 +152,7 @@ pub unsafe fn get_dom_class(obj: *JSObject) -> Result<DOMClass, ()> {
 
 pub fn unwrap_object<T>(obj: *JSObject, proto_id: PrototypeList::id::ID, proto_depth: uint) -> Result<T, ()> {
     unsafe {
-        do get_dom_class(obj).chain |dom_class| {
+        do get_dom_class(obj).and_then |dom_class| {
             if dom_class.interface_chain[proto_depth] == proto_id {
                 debug!("good prototype");
                 Ok(unwrap(obj))

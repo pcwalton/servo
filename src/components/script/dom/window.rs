@@ -53,7 +53,7 @@ pub struct Window {
 
 #[unsafe_destructor]
 impl Drop for Window {
-    fn drop(&self) {
+    fn drop(&mut self) {
         self.timer_chan.send(TimerMessage_Close);
     }
 }

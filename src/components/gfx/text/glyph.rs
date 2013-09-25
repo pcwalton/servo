@@ -13,7 +13,7 @@ use std::num::NumCast;
 use std::u16;
 use std::vec;
 use std::util;
-use std::iterator;
+use std::iter;
 use geom::point::Point2D;
 use extra::sort;
 
@@ -679,8 +679,8 @@ impl<'self> GlyphStore {
 pub struct GlyphIterator<'self> {
     priv store:       &'self GlyphStore,
     priv char_index:  uint,
-    priv char_range:  iterator::Range<uint>,
-    priv glyph_range: Option<iterator::Range<uint>>,
+    priv char_range:  iter::Range<uint>,
+    priv glyph_range: Option<iter::Range<uint>>,
 }
 
 impl<'self> Iterator<(uint, GlyphInfo<'self>)> for GlyphIterator<'self> {

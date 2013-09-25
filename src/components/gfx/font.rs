@@ -399,7 +399,7 @@ impl Font {
         for (glyphs, _offset, slice_range) in run.iter_slices_for_range(range) {
             for (_i, glyph) in glyphs.iter_glyphs_for_char_range(&slice_range) {
                 let glyph_advance = glyph.advance();
-                let glyph_offset = glyph.offset().unwrap_or_default(Au::zero_point());
+                let glyph_offset = glyph.offset().unwrap_or(Au::zero_point());
 
                 let azglyph = struct__AzGlyph {
                     mIndex: glyph.index() as uint32_t,

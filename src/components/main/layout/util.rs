@@ -6,7 +6,7 @@ use layout::box::{RenderBox};
 use script::dom::node::{AbstractNode, LayoutView};
 use servo_util::range::Range;
 
-use std::iterator::Enumerate;
+use std::iter::Enumerate;
 use std::vec::VecIterator;
 
 pub struct NodeRange {
@@ -46,7 +46,9 @@ impl ElementMapping {
         self.entries.iter().enumerate()
     }
 
-    pub fn repair_for_box_changes(&mut self, old_boxes: &[RenderBox], new_boxes: &[RenderBox]) {
+    pub fn repair_for_box_changes(&mut self,
+                                  old_boxes: &[@mut RenderBox],
+                                  new_boxes: &[@mut RenderBox]) {
         let entries = &mut self.entries;
 
         debug!("--- Old boxes: ---");
@@ -91,12 +93,7 @@ impl ElementMapping {
                 // XXX: the following loop form causes segfaults; assigning to locals doesn't.
                 // while new_j < new_boxes.len() && old_boxes[old_i].d().node != new_boxes[new_j].d().node {
                 while new_j < new_boxes.len() {
-                    let should_leave = do old_boxes[old_i].with_base |old_box_base| {
-                        do new_boxes[new_j].with_base |new_box_base| {
-                            old_box_base.node != new_box_base.node
-                        }
-                    };
-                    if should_leave {
+                    if old_boxes[old_i].base().node != new_boxes[new_j].base().node {
                         break
                     }
 

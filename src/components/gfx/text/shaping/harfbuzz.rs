@@ -145,7 +145,7 @@ pub struct Shaper {
 #[unsafe_destructor]
 impl Drop for Shaper {
     #[fixed_stack_segment]
-    fn drop(&self) {
+    fn drop(&mut self) {
         unsafe {
             assert!(self.hb_face.is_not_null());
             hb_face_destroy(self.hb_face);

@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use layout::box::{RenderBox};
+use layout::box::{RenderBox, RenderBoxUtils};
 use layout::context::LayoutContext;
 use layout::display_list_builder::{DisplayListBuilder, ExtraDisplayListData};
 use layout::flow::{FlowData};
@@ -21,7 +21,7 @@ pub struct FloatFlowData {
     common: FlowData,
 
     /// The associated render box.
-    box: Option<RenderBox>,
+    box: Option<@mut RenderBox>,
 
     containing_width: Au,
 
@@ -82,13 +82,15 @@ impl FloatFlowData {
 
 
         self.box.map(|&box| {
-            let style = box.style();
-            do box.with_model |model| {
-                model.compute_borders(style)
+            {
+                let base = box.mut_base();
+                let style = base.style();
+                base.model.compute_borders(style);
             }
 
-            min_width = min_width.add(&box.get_min_width(ctx));
-            pref_width = pref_width.add(&box.get_pref_width(ctx));
+            let (this_minimum_width, this_preferred_width) = box.minimum_and_preferred_widths();
+            min_width = min_width + this_minimum_width;
+            pref_width = pref_width + this_preferred_width;
         });
 
         self.common.min_width = min_width;
@@ -107,54 +109,53 @@ impl FloatFlowData {
         self.common.is_inorder = false;
 
         for &box in self.box.iter() {
-            let style = box.style();
-            do box.with_model |model| {
-                // Can compute padding here since we know containing block width.
-                model.compute_padding(style, remaining_width);
+            let base = box.mut_base();
+            let style = base.style();
+            let model = &mut base.model;
 
-                // Margins for floats are 0 if auto.
-                let margin_top = MaybeAuto::from_margin(style.margin_top(),
-                                                        remaining_width,
-                                                        style.font_size()).specified_or_zero();
-                let margin_bottom = MaybeAuto::from_margin(style.margin_bottom(),
-                                                           remaining_width,
-                                                           style.font_size()).specified_or_zero();
-                let margin_left = MaybeAuto::from_margin(style.margin_left(),
-                                                         remaining_width,
-                                                         style.font_size()).specified_or_zero();
-                let margin_right = MaybeAuto::from_margin(style.margin_right(),
-                                                          remaining_width,
-                                                          style.font_size()).specified_or_zero();
+            // Can compute padding here since we know containing block width.
+            model.compute_padding(style, remaining_width);
 
-
-
-                let shrink_to_fit = geometry::min(self.common.pref_width, 
-                                                  geometry::max(self.common.min_width, 
-                                                                remaining_width));
+            // Margins for floats are 0 if auto.
+            let margin_top = MaybeAuto::from_margin(style.margin_top(),
+                                                    remaining_width,
+                                                    style.font_size()).specified_or_zero();
+            let margin_bottom = MaybeAuto::from_margin(style.margin_bottom(),
+                                                       remaining_width,
+                                                       style.font_size()).specified_or_zero();
+            let margin_left = MaybeAuto::from_margin(style.margin_left(),
+                                                     remaining_width,
+                                                     style.font_size()).specified_or_zero();
+            let margin_right = MaybeAuto::from_margin(style.margin_right(),
+                                                      remaining_width,
+                                                      style.font_size()).specified_or_zero();
 
 
-                let width = MaybeAuto::from_width(style.width(), 
-                                                  remaining_width,
-                                                  style.font_size()).specified_or_default(shrink_to_fit);
-                debug!("assign_widths_float -- width: %?", width);
 
-                model.margin.top = margin_top;
-                model.margin.right = margin_right;
-                model.margin.bottom = margin_bottom;
-                model.margin.left = margin_left;
+            let shrink_to_fit = geometry::min(self.common.pref_width, 
+                                              geometry::max(self.common.min_width, 
+                                                            remaining_width));
 
-                x_offset = model.offset();
-                remaining_width = width;
-            }
 
-            do box.with_mut_base |base| {
-                //The associated box is the border box of this flow
-                base.position.origin.x = base.model.margin.left;
+            let width = MaybeAuto::from_width(style.width(), 
+                                              remaining_width,
+                                              style.font_size()).specified_or_default(shrink_to_fit);
+            debug!("assign_widths_float -- width: %?", width);
 
-                let pb = base.model.padding.left + base.model.padding.right +
-                    base.model.border.left + base.model.border.right;
-                base.position.size.width = remaining_width + pb;
-            }
+            model.margin.top = margin_top;
+            model.margin.right = margin_right;
+            model.margin.bottom = margin_bottom;
+            model.margin.left = margin_left;
+
+            x_offset = model.offset();
+            remaining_width = width;
+
+            // The associated box is the border box of this flow.
+            base.position.origin.x = model.margin.left;
+
+            let pb = model.padding.left + model.padding.right + model.border.left +
+                model.border.right;
+            base.position.size.width = remaining_width + pb;
         }
 
         self.common.position.size.width = remaining_width;
@@ -186,23 +187,21 @@ impl FloatFlowData {
         let mut margin_height = Au(0);
 
         self.box.map(|&box| {
-            height = do box.with_base |base| {
-                base.position.size.height
-            };
-            clearance = match box.clear() {
+            let base = box.mut_base();
+            height = base.position.size.height;
+            clearance = match base.clear() {
                 None => Au(0),
                 Some(clear) => {
                     self.common.floats_in.clearance(clear)
                 }
             };
 
-            do box.with_base |base| {
-                let noncontent_width = base.model.padding.left + base.model.padding.right +
-                    base.model.border.left + base.model.border.right;
+            let noncontent_width = base.model.padding.left + base.model.padding.right +
+                base.model.border.left + base.model.border.right;
 
-                full_noncontent_width = noncontent_width + base.model.margin.left + base.model.margin.right;
-                margin_height = base.model.margin.top + base.model.margin.bottom;
-            }
+            full_noncontent_width = noncontent_width + base.model.margin.left +
+                base.model.margin.right;
+            margin_height = base.model.margin.top + base.model.margin.bottom;
 
         });
 
@@ -240,10 +239,10 @@ impl FloatFlowData {
         let mut top_offset = Au(0);
 
         for &box in self.box.iter() {
-            do box.with_model |model| {
-                top_offset = model.margin.top + model.border.top + model.padding.top;
-                cur_y = cur_y + top_offset;
-            }
+            let base = box.mut_base();
+            let model = &mut base.model;
+            top_offset = model.margin.top + model.border.top + model.padding.top;
+            cur_y = cur_y + top_offset;
         }
 
         for kid in self.common.child_iter() {
@@ -258,32 +257,29 @@ impl FloatFlowData {
         let mut noncontent_width = Au(0);
         let mut noncontent_height = Au(0);
         self.box.map(|&box| {
-            do box.with_mut_base |base| {
-                //The associated box is the border box of this flow
-                base.position.origin.y = base.model.margin.top;
+            let base = box.mut_base();
+            // The associated box is the border box of this flow.
+            base.position.origin.y = base.model.margin.top;
 
-                noncontent_width = base.model.padding.left + base.model.padding.right +
-                    base.model.border.left + base.model.border.right;
-                noncontent_height = base.model.padding.top + base.model.padding.bottom +
-                    base.model.border.top + base.model.border.bottom;
-                base.position.size.height = height + noncontent_height;
-
-            }
+            noncontent_width = base.model.padding.left + base.model.padding.right +
+                base.model.border.left + base.model.border.right;
+            noncontent_height = base.model.padding.top + base.model.padding.bottom +
+                base.model.border.top + base.model.border.bottom;
+            base.position.size.height = height + noncontent_height;
         });
 
         
         //TODO(eatkinson): compute heights properly using the 'height' property.
         for &box in self.box.iter() {
-            let height_prop = 
-                MaybeAuto::from_height(box.style().height(),
-                                       Au(0),
-                                       box.style().font_size()).specified_or_zero();
+            let base = box.mut_base();
+            let height_prop = MaybeAuto::from_height(base.style().height(),
+                                                     Au(0),
+                                                     base.style().font_size()).specified_or_zero();
 
             height = geometry::max(height, height_prop) + noncontent_height;
             debug!("assign_height_float -- height: %?", height);
-            do box.with_mut_base |base| {
-                base.position.size.height = height;
-            }
+
+            base.position.size.height = height;
         }
     }
 

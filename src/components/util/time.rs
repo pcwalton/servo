@@ -4,11 +4,13 @@
 
 // Timing functions.
 use extra::sort::tim_sort;
+use extra::sort::tim_sort;
 use extra::time::precise_time_ns;
+use extra::treemap::TreeMap;
 use extra::treemap::TreeMap;
 use std::cell::Cell;
 use std::comm::{Port, SendDeferred, SharedChan};
-use std::iterator::AdditiveIterator;
+use std::iter::AdditiveIterator;
 use std::rt::io::timer::Timer;
 use std::task::spawn_with;
 

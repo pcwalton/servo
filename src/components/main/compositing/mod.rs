@@ -37,7 +37,7 @@ use servo_util::{time, url};
 use servo_util::time::profile;
 use servo_util::time::ProfilerChan;
 
-use extra::future::from_value;
+use extra::future::Future;
 use extra::time::precise_time_s;
 
 use constellation::SendableFrameTree;
@@ -374,7 +374,7 @@ impl CompositorTask {
                     match constellation_chan {
                         Some(ref chan) => chan.send(LoadUrlMsg(root_pipeline_id,
                                                                url::make_url(url_string.to_str(), None),
-                                                               from_value(window_size))),
+                                                               Future::from_value(window_size))),
                         None => error!("Compositor: Recieved loadurl event without initialized layout chan"),
                     }
                 }

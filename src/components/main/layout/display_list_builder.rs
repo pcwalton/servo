@@ -16,27 +16,27 @@ use newcss;
 /// that nodes in this view shoud not really be touched. The idea is to
 /// store the nodes in the display list and have layout transmute them.
 pub trait ExtraDisplayListData {
-    fn new(box: RenderBox) -> Self;
+    fn new(box: @mut RenderBox) -> Self;
 }
 
 pub type Nothing = ();
 
 impl ExtraDisplayListData for AbstractNode<()> {
-    fn new (box: RenderBox) -> AbstractNode<()> {
+    fn new(box: @mut RenderBox) -> AbstractNode<()> {
         unsafe { 
-            transmute(box.node())
+            transmute(box.base().node)
         }
     }
 }
 
 impl ExtraDisplayListData for Nothing {
-    fn new(_: RenderBox) -> Nothing {
+    fn new(_: @mut RenderBox) -> Nothing {
         ()
     }
 }
 
-impl ExtraDisplayListData for RenderBox {
-    fn new(box: RenderBox) -> RenderBox {
+impl ExtraDisplayListData for @mut RenderBox {
+    fn new(box: @mut RenderBox) -> @mut RenderBox {
         box
     }
 }

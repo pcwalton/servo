@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use std::iterator::Iterator;
+use std::iter::Iterator;
 use std::ascii::StrAsciiExt;
 use cssparser::*;
 use style::selectors;

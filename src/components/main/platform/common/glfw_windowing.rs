@@ -33,7 +33,7 @@ impl ApplicationMethods for Application {
 }
 
 impl Drop for Application {
-    fn drop(&self) {
+    fn drop(&mut self) {
         glfw::terminate();
         drop_local_window();
     }

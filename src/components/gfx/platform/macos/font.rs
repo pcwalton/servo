@@ -37,7 +37,7 @@ pub struct FontTable {
 
 // Noncopyable.
 impl Drop for FontTable {
-    fn drop(&self) {}
+    fn drop(&mut self) {}
 }
 
 impl FontTable {
@@ -188,7 +188,7 @@ impl FontHandleMethods for FontHandle {
 
     fn get_table_for_tag(&self, tag: FontTableTag) -> Option<FontTable> {
         let result: Option<CFData> = self.ctfont.get_font_table(tag);
-        result.chain(|data| {
+        result.and_then(|data| {
             Some(FontTable::wrap(data))
         })
     }
