@@ -7,7 +7,7 @@
 use layout::block::BlockFlowData;
 use layout::float::FloatFlowData;
 use layout::box::{GenericRenderBox, GenericRenderBoxClass, ImageRenderBox, ImageRenderBoxClass};
-use layout::box::{RenderBox, RenderBoxBase, RenderBoxClass, TextRenderBoxClass};
+use layout::box::{RenderBox, RenderBoxBase, RenderBoxClass, RenderBoxUtils, TextRenderBoxClass};
 use layout::box::{UnscannedTextRenderBox, UnscannedTextRenderBoxClass};
 use layout::context::LayoutContext;
 use layout::flow::{AbsoluteFlow, BlockFlow, FloatFlow, Flow_Absolute, Flow_Block, Flow_Float};

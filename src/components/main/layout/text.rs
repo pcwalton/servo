@@ -8,7 +8,7 @@ use std::vec;
 
 use gfx::text::text_run::TextRun;
 use gfx::text::util::{CompressWhitespaceNewline, transform_text};
-use layout::box::{RenderBox, RenderBoxBase, TextRenderBox};
+use layout::box::{RenderBox, RenderBoxBase, RenderBoxUtils, TextRenderBox};
 use layout::box::{TextRenderBoxClass, UnscannedTextRenderBoxClass};
 use layout::context::LayoutContext;
 use layout::flow::FlowContext;

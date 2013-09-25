@@ -52,6 +52,7 @@ impl MaybeAuto {
         }
     }
 
+    #[inline]
     pub fn from_width(width: CSSWidth, containing_width: Au, font_size: CSSFontSize) -> MaybeAuto {
         match width {
             CSSWidthAuto => Auto,
@@ -60,6 +61,7 @@ impl MaybeAuto {
         }
     }
 
+    #[inline]
     pub fn from_height(height: CSSHeight, cb_height: Au, font_size: CSSFontSize) -> MaybeAuto {
         match height {
             CSSHeightAuto => Auto,
@@ -68,6 +70,7 @@ impl MaybeAuto {
         }
     }
 
+    #[inline]
     pub fn specified_or_default(&self, default: Au) -> Au {
         match *self {
             Auto => default,
@@ -75,6 +78,7 @@ impl MaybeAuto {
         }
     }
 
+    #[inline]
     pub fn specified_or_zero(&self) -> Au {
         self.specified_or_default(Au::new(0))
     }

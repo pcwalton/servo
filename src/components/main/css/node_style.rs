@@ -19,7 +19,8 @@ pub trait StyledNode {
 impl StyledNode for AbstractNode<LayoutView> {
     #[inline(always)]
     fn style(&self) -> CompleteStyle {
-        assert!(self.is_element()); // Only elements can have styles
+        // FIXME(pcwalton): Is this assertion needed for memory safety? It's slow.
+        //debug_assert!(self.is_element()); // Only elements can have styles
         let results = self.get_css_select_results();
         results.computed_style()
     }

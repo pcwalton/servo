@@ -4,7 +4,7 @@
 
 //! Constructs display lists from render boxes.
 
-use layout::box::RenderBox;
+use layout::box::{RenderBox, RenderBoxUtils};
 use layout::context::LayoutContext;
 use std::cast::transmute;
 use script::dom::node::AbstractNode;

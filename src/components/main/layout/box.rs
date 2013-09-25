@@ -62,12 +62,6 @@ use extra::url::Url;
 /// content such as images are resized differently from tables, text, or other content. Different
 /// types of boxes may also contain custom data; for example, text boxes contain text.
 pub trait RenderBox {
-    /// Returns the `RenderBoxBase` struct.
-    fn base<'a>(&'a self) -> &'a RenderBoxBase;
-
-    /// Returns the `RenderBoxBase` struct.
-    fn mut_base<'a>(&'a mut self) -> &'a mut RenderBoxBase;
-
     /// Returns the class of render box that this is.
     fn class(&self) -> RenderBoxClass;
 
@@ -128,7 +122,31 @@ impl Clone for @mut RenderBox {
     }
 }
 
+// FIXME(pcwalton): These are botches and can be removed once Rust gets trait fields.
+
+/*struct BorrowedBase<'self> {
+    ptr: &'self RenderBoxBase,
+    kung_fu_death_grip: @mut RenderBox,
+}
+
+impl<'self> Drop for BorrowedBase<'self> {
+    fn drop(&mut self) {}
+}
+
+struct MutableBorrowedBase<'self> {
+    ptr: &'self mut RenderBoxBase,
+    kung_fu_death_grip: @mut RenderBox,
+}
+
+impl<'self> Drop for MutableBorrowedBase<'self> {
+    fn drop(&mut self) {}
+}*/
+
 pub trait RenderBoxUtils {
+    fn base(self) -> @mut RenderBoxBase;
+
+    fn mut_base(self) -> @mut RenderBoxBase;
+
     /// Returns true if this element is replaced content. This is true for images, form elements,
     /// and so on.
     fn is_replaced(self) -> bool;
@@ -194,14 +212,6 @@ impl GenericRenderBox {
 }
 
 impl RenderBox for GenericRenderBox {
-    fn base<'a>(&'a self) -> &'a RenderBoxBase {
-        &self.base
-    }
-
-    fn mut_base<'a>(&'a mut self) -> &'a mut RenderBoxBase {
-        &mut self.base
-    }
-
     fn class(&self) -> RenderBoxClass {
         GenericRenderBoxClass
     }
@@ -299,14 +309,6 @@ impl ImageRenderBox {
 }
 
 impl RenderBox for ImageRenderBox {
-    fn base<'a>(&'a self) -> &'a RenderBoxBase {
-        &self.base
-    }
-
-    fn mut_base<'a>(&'a mut self) -> &'a mut RenderBoxBase {
-        &mut self.base
-    }
-
     fn class(&self) -> RenderBoxClass {
         ImageRenderBoxClass
     }
@@ -354,7 +356,7 @@ pub struct TextRenderBox {
 
 impl TextRenderBox {
     fn calculate_line_height(&self, font_size: Au) -> Au { 
-        match self.base().line_height() {
+        match self.base.line_height() {
             CSSLineHeightNormal => font_size.scale_by(1.14f),
             CSSLineHeightNumber(l) => font_size.scale_by(l),
             CSSLineHeightLength(Em(l)) => font_size.scale_by(l),
@@ -365,14 +367,6 @@ impl TextRenderBox {
 }
 
 impl RenderBox for TextRenderBox {
-    fn base<'a>(&'a self) -> &'a RenderBoxBase {
-        &self.base
-    }
-
-    fn mut_base<'a>(&'a mut self) -> &'a mut RenderBoxBase {
-        &mut self.base
-    }
-
     fn class(&self) -> RenderBoxClass {
         TextRenderBoxClass
     }
@@ -538,14 +532,6 @@ impl UnscannedTextRenderBox {
 }
 
 impl RenderBox for UnscannedTextRenderBox {
-    fn base<'a>(&'a self) -> &'a RenderBoxBase {
-        &self.base
-    }
-
-    fn mut_base<'a>(&'a mut self) -> &'a mut RenderBoxBase {
-        &mut self.base
-    }
-
     fn class(&self) -> RenderBoxClass {
         UnscannedTextRenderBoxClass
     }
@@ -556,7 +542,7 @@ impl RenderBox for UnscannedTextRenderBox {
 
     fn can_merge_with_box(&self, other: @mut RenderBox) -> bool {
         if other.class() == UnscannedTextRenderBoxClass {
-            let this_base = self.base();
+            let this_base = &self.base;
             let other_base = other.base();
             return this_base.font_style() == other_base.font_style() &&
                 this_base.text_decoration() == other_base.text_decoration()
@@ -659,13 +645,9 @@ impl RenderBoxBase {
         let padding_right = self.model.compute_padding_length(style.padding_right(),
                                                               Au(0),
                                                               font_size);
-        let border_left = self.model.compute_border_width(style.border_left_width(),
-                                                          font_size);
-        let border_right = self.model.compute_border_width(style.border_right_width(),
-                                                           font_size);
 
         width + margin_left + margin_right + padding_left + padding_right + 
-            border_left + border_right
+            self.model.border.left + self.model.border.right
     }
 
     pub fn compute_padding(&mut self, containing_block_width: Au) {
@@ -718,7 +700,8 @@ impl RenderBoxBase {
         node
     }
 
-    #[inline]
+    // Always inline for SCCP.
+    #[inline(always)]
     pub fn clear(&self) -> Option<ClearType> {
         let style = self.node.style();
         match style.clear() {
@@ -772,6 +755,7 @@ impl RenderBoxBase {
         }
     }
 
+    #[inline(always)]
     pub fn style(&self) -> CompleteStyle {
         self.node.style()
     }
@@ -833,6 +817,22 @@ impl RenderBoxBase {
 }
 
 impl RenderBoxUtils for @mut RenderBox {
+    #[inline(always)]
+    fn base(self) -> @mut RenderBoxBase {
+        unsafe {
+            let (_, ptr): (uint, @mut RenderBoxBase) = cast::transmute(self);
+            ptr
+        }
+    }
+
+    #[inline(always)]
+    fn mut_base(self) -> @mut RenderBoxBase {
+        unsafe {
+            let (_, ptr): (uint, @mut RenderBoxBase) = cast::transmute(self);
+            ptr
+        }
+    }
+
     fn is_replaced(self) -> bool {
         self.class() == ImageRenderBoxClass
     }

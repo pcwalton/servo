@@ -27,7 +27,7 @@
 
 use layout::block::BlockFlowData;
 use layout::float::FloatFlowData;
-use layout::box::RenderBox;
+use layout::box::{RenderBox, RenderBoxUtils};
 use layout::context::LayoutContext;
 use layout::display_list_builder::{DisplayListBuilder, ExtraDisplayListData};
 use layout::inline::{InlineFlowData};

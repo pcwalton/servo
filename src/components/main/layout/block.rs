@@ -107,6 +107,13 @@ impl BlockFlowData {
         /* if not an anonymous block context, add in block box's widths.
            these widths will not include child elements, just padding etc. */
         self.box.map(|&box| {
+            {
+                // Can compute border width here since it doesn't depend on anything.
+                let base = box.mut_base();
+                let style = base.style();
+                base.model.compute_borders(style)
+            }
+
             let (this_minimum_width, this_preferred_width) = box.minimum_and_preferred_widths();
             min_width = min_width + this_minimum_width;
             pref_width = pref_width + this_preferred_width;
@@ -189,11 +196,9 @@ impl BlockFlowData {
 
         for &box in self.box.iter() {
             let base = box.mut_base();
+            let base = &mut *base;
             let style = base.style();
             let model = &mut base.model;
-
-            //Can compute border width here since it doesn't depend on anything
-            model.compute_borders(style);
 
             // Can compute padding here since we know containing block width.
             model.compute_padding(style, remaining_width);
