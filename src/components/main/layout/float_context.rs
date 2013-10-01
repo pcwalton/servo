@@ -11,7 +11,7 @@ use std::vec;
 use std::i32::max_value;
 
 #[deriving(Clone)]
-pub enum FloatType{
+pub enum FloatType {
     FloatLeft,
     FloatRight
 }

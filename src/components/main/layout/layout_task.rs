@@ -11,7 +11,9 @@ use layout::aux::LayoutAuxMethods;
 use layout::box_builder::LayoutTreeBuilder;
 use layout::context::LayoutContext;
 use layout::display_list_builder::{DisplayListBuilder};
-use layout::flow::{FlowContext, PreorderFlowTraversal, PostorderFlowTraversal};
+use layout::flow::{FlowContext, ImmutableFlowUtils, MutableFlowUtils, PreorderFlowTraversal};
+use layout::flow::{PostorderFlowTraversal};
+use layout::flow;
 use layout::incremental::{RestyleDamage, BubbleWidths};
 
 use std::cast::transmute;
@@ -73,17 +75,11 @@ struct ComputeDamageTraversal;
 impl PostorderFlowTraversal for ComputeDamageTraversal {
     #[inline]
     fn process(&mut self, flow: &mut FlowContext) -> bool {
-        let mut damage = do flow.with_base |base| {
-            base.restyle_damage
-        };
-        for child in flow.child_iter() {
-            do child.with_base |child_base| {
-                damage.union_in_place(child_base.restyle_damage);
-            }
+        let mut damage = flow::base(flow).restyle_damage;
+        for child in flow::child_iter(flow) {
+            damage.union_in_place(flow::base(*child).restyle_damage)
         }
-        do flow.with_mut_base |base| {
-            base.restyle_damage = damage;
-        }
+        flow::mut_base(flow).restyle_damage = damage;
         true
     }
 }
@@ -100,17 +96,13 @@ impl PreorderFlowTraversal for PropagateDamageTraversal {
     fn process(&mut self, flow: &mut FlowContext) -> bool {
         // Also set any damage implied by resize.
         if self.resized {
-            do flow.with_mut_base |base| {
-                base.restyle_damage.union_in_place(RestyleDamage::for_resize());
-            }
+            flow::mut_base(flow).restyle_damage.union_in_place(RestyleDamage::for_resize())
         }
 
-        let prop = flow.with_base(|base| base.restyle_damage.propagate_down());
+        let prop = flow::base(flow).restyle_damage.propagate_down();
         if prop.is_nonempty() {
-            for kid_ctx in flow.child_iter() {
-                do kid_ctx.with_mut_base |kid| {
-                    kid.restyle_damage.union_in_place(prop);
-                }
+            for kid_ctx in flow::child_iter(flow) {
+                flow::mut_base(*kid_ctx).restyle_damage.union_in_place(prop)
             }
         }
         true
@@ -130,7 +122,7 @@ impl<'self> PostorderFlowTraversal for BubbleWidthsTraversal<'self> {
 
     #[inline]
     fn should_prune(&mut self, flow: &mut FlowContext) -> bool {
-        flow.restyle_damage().lacks(BubbleWidths)
+        flow::mut_base(flow).restyle_damage.lacks(BubbleWidths)
     }
 }
 
@@ -159,9 +151,7 @@ impl<'self> PostorderFlowTraversal for AssignHeightsTraversal<'self> {
 
     #[inline]
     fn should_process(&mut self, flow: &mut FlowContext) -> bool {
-        do flow.with_base |base| {
-            !base.is_inorder
-        }
+        !flow::base(flow).is_inorder
     }
 }
 
@@ -343,10 +333,10 @@ impl LayoutTask {
         }
 
         // Construct the flow tree.
-        let mut layout_root: FlowContext = do profile(time::LayoutTreeBuilderCategory,
-                                                  self.profiler_chan.clone()) {
+        let mut layout_root: ~FlowContext: = do profile(time::LayoutTreeBuilderCategory,
+                                                   self.profiler_chan.clone()) {
             let mut builder = LayoutTreeBuilder::new();
-            let layout_root: FlowContext = match builder.construct_trees(&layout_ctx, *node) {
+            let layout_root: ~FlowContext: = match builder.construct_trees(&layout_ctx, *node) {
                 Ok(root) => root,
                 Err(*) => fail!(~"Root flow should always exist")
             };
@@ -384,20 +374,18 @@ impl LayoutTask {
             do profile(time::LayoutDispListBuildCategory, self.profiler_chan.clone()) {
                 // TODO: Set options on the builder before building.
                 // TODO: Be smarter about what needs painting.
-                let root_pos = &layout_root.position().clone();
+                let root_pos = &flow::base(layout_root).position.clone();
                 let mut traversal = DisplayListBuildingTraversal {
                     builder: DisplayListBuilder {
                         ctx: &layout_ctx,
                     },
-                    root_pos: layout_root.position().clone(),
+                    root_pos: flow::base(layout_root).position.clone(),
                     display_list: ~Cell::new(DisplayList::<AbstractNode<()>>::new()),
                 };
 
                 let _ = layout_root.traverse_preorder(&mut traversal);
 
-                let root_size = do layout_root.with_base |base| {
-                    base.position.size
-                };
+                let root_size = flow::base(layout_root).position.size;
 
                 let display_list = Arc::new(traversal.display_list.take());
 

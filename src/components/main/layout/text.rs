@@ -53,7 +53,7 @@ impl TextRunScanner {
 
     pub fn scan_for_runs(&mut self, ctx: &LayoutContext, flow: &mut FlowContext) {
         {
-            let inline = flow.imm_inline();
+            let inline = flow.as_immutable_inline();
             // FIXME: this assertion fails on wikipedia, but doesn't seem
             // to cause problems.
             // assert!(inline.boxes.len() > 0);
@@ -62,9 +62,12 @@ impl TextRunScanner {
 
         let mut last_whitespace = true;
         let mut out_boxes = ~[];
-        for box_i in range(0, flow.imm_inline().boxes.len()) {
-            debug!("TextRunScanner: considering box: %?", flow.imm_inline().boxes[box_i].debug_str());
-            if box_i > 0 && !can_coalesce_text_nodes(flow.imm_inline().boxes, box_i-1, box_i) {
+        for box_i in range(0, flow.as_immutable_inline().boxes.len()) {
+            debug!("TextRunScanner: considering box: %?",
+                   flow.as_immutable_inline().boxes[box_i].debug_str());
+            if box_i > 0 && !can_coalesce_text_nodes(flow.as_immutable_inline().boxes,
+                                                     box_i - 1,
+                                                     box_i) {
                 last_whitespace = self.flush_clump_to_list(ctx, flow, last_whitespace, &mut out_boxes);
             }
             self.clump.extend_by(1);
@@ -77,7 +80,7 @@ impl TextRunScanner {
         debug!("TextRunScanner: swapping out boxes.");
 
         // Swap out the old and new box list of the flow.
-        flow.inline().boxes = out_boxes;
+        flow.as_inline().boxes = out_boxes;
 
         // A helper function.
         fn can_coalesce_text_nodes(boxes: &[@mut RenderBox], left_i: uint, right_i: uint) -> bool {
@@ -111,7 +114,7 @@ impl TextRunScanner {
                                last_whitespace: bool,
                                out_boxes: &mut ~[@mut RenderBox])
                                -> bool {
-        let inline = flow.inline();
+        let inline = flow.as_inline();
         let in_boxes = &inline.boxes;
 
         assert!(self.clump.length() > 0);
