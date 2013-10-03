@@ -14,31 +14,6 @@ use layout::context::LayoutContext;
 use layout::flow::FlowContext;
 use servo_util::range::Range;
 
-
-/// Creates a TextRenderBox from a range and a text run.
-pub fn adapt_textbox_with_range(base: &mut RenderBoxBase, run: @TextRun, range: Range)
-                                -> TextRenderBox {
-    debug!("Creating textbox with span: (strlen=%u, off=%u, len=%u) of textrun (%s) (len=%u)",
-           run.char_len(),
-           range.begin(),
-           range.length(),
-           run.text,
-           run.char_len());
-
-    assert!(range.begin() < run.char_len());
-    assert!(range.end() <= run.char_len());
-    assert!(range.length() > 0);
-
-    let metrics = run.metrics_for_range(&range);
-    base.position.size = metrics.bounding_box.size;
-
-    TextRenderBox {
-        base: *base,
-        run: run,
-        range: range,
-    }
-}
-
 /// A stack-allocated object for scanning an inline flow into `TextRun`-containing `TextBox`es.
 struct TextRunScanner {
     clump: Range,
@@ -63,8 +38,7 @@ impl TextRunScanner {
         let mut last_whitespace = true;
         let mut out_boxes = ~[];
         for box_i in range(0, flow.as_immutable_inline().boxes.len()) {
-            debug!("TextRunScanner: considering box: %?",
-                   flow.as_immutable_inline().boxes[box_i].debug_str());
+            debug!("TextRunScanner: considering box: %u", box_i);
             if box_i > 0 && !can_coalesce_text_nodes(flow.as_immutable_inline().boxes,
                                                      box_i - 1,
                                                      box_i) {
@@ -155,7 +129,7 @@ impl TextRunScanner {
 
                     debug!("TextRunScanner: pushing single text box in range: %? (%?)", self.clump, text);
                     let range = Range::new(0, run.char_len());
-                    let new_box = @mut adapt_textbox_with_range(old_box.mut_base(), run, range);
+                    let new_box = @mut TextRenderBox::new(*old_box.mut_base(), run, range);
 
                     out_boxes.push(new_box as @mut RenderBox);
                 }
@@ -222,9 +196,9 @@ impl TextRunScanner {
                         loop
                     }
 
-                    let new_box = @mut adapt_textbox_with_range(in_boxes[i].mut_base(),
-                                                                run.unwrap(),
-                                                                range);
+                    let new_box = @mut TextRenderBox::new(*in_boxes[i].mut_base(),
+                                                          run.unwrap(),
+                                                          range);
                     out_boxes.push(new_box as @mut RenderBox);
                 }
             }

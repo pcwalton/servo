@@ -355,6 +355,31 @@ pub struct TextRenderBox {
 }
 
 impl TextRenderBox {
+    /// Creates a TextRenderBox from a base render box, a range, and a text run. The size of the
+    /// the base render box is ignored and becomes the size of the text run.
+    ///
+    /// FIXME(pcwalton): This API is confusing.
+    pub fn new(mut base: RenderBoxBase, run: @TextRun, range: Range) -> TextRenderBox {
+        debug!("Creating textbox with span: (strlen=%u, off=%u, len=%u) of textrun (%s) (len=%u)",
+               run.char_len(),
+               range.begin(),
+               range.length(),
+               run.text,
+               run.char_len());
+
+        assert!(range.begin() < run.char_len());
+        assert!(range.end() <= run.char_len());
+        assert!(range.length() > 0);
+
+        let metrics = run.metrics_for_range(&range);
+        base.position.size = metrics.bounding_box.size;
+
+        TextRenderBox {
+            base: base,
+            run: run,
+            range: range,
+        }
+    }
 }
 
 impl RenderBox for TextRenderBox {
@@ -468,18 +493,14 @@ impl RenderBox for TextRenderBox {
         }
 
         let left_box = if left_range.length() > 0 {
-            let new_text_box = @mut text::adapt_textbox_with_range(&mut self.base,
-                                                                   self.run,
-                                                                   left_range);
+            let new_text_box = @mut TextRenderBox::new(self.base, self.run, left_range);
             Some(new_text_box as @mut RenderBox)
         } else {
             None
         };
 
         let right_box = do right_range.map_default(None) |range: &Range| {
-            let new_text_box = @mut text::adapt_textbox_with_range(&mut self.base,
-                                                                   self.run,
-                                                                   *range);
+            let new_text_box = @mut TextRenderBox::new(self.base, self.run, *range);
             Some(new_text_box as @mut RenderBox)
         };
 
