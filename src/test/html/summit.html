@@ -3,18 +3,18 @@
     <title>Summit demo page</title>
   </head>
 <body>
-  <iframe sandbox="allow-scripts" src="filmstrip.html" style="display:block; border: 1px solid black; width: 200px; height: 200px"
-          frameborder="yes" scrolling="yes"></iframe>
+  <iframe sandbox="allow-scripts allow-same-origin" src="filmstrip.html" style="display:block; border: 1px solid black; width: 200px; height: 200px"
+          frameborder="yes" scrolling="no"></iframe>
 
-  <iframe sandbox="allow-scripts" src="longcat.html" style="display:block; border: 1px solid black; width: 600px; height: 600px"
-          frameborder="yes" scrolling="yes"></iframe>
+  <iframe sandbox="allow-scripts allow-same-origin" src="longcat.html" style="display:block; border: 1px solid black; width: 600px; height: 600px"
+          frameborder="yes" scrolling="no"></iframe>
 
-  <iframe sandbox="allow-scripts" src="test_sandboxed_iframe.html"
+  <iframe sandbox="allow-scripts allow-same-origin" src="test_sandboxed_iframe.html"
           style="display:block; border: 1px solid black; width: 300px; height: 300px">
   </iframe>
 
   <iframe src="summit-link.html" style="display:block; border: 1px solid black; width: 300px; height: 300px"
-          frameborder="yes" scrolling="yes">
+          frameborder="yes" scrolling="no">
   </iframe>
 </body>
 </html>
