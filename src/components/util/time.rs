@@ -17,18 +17,20 @@ use std::task::spawn_with;
 // front-end representation of the profiler used to communicate with the profiler
 #[deriving(Clone)]
 pub struct ProfilerChan(SharedChan<ProfilerMsg>);
+
 impl ProfilerChan {
     pub fn new(chan: Chan<ProfilerMsg>) -> ProfilerChan {
         ProfilerChan(SharedChan::new(chan))
     }
+
     pub fn send_deferred(&self, msg: ProfilerMsg) {
-        self.chan.send_deferred(msg);
+        (**self).send_deferred(msg);
     }
 }
 
 pub enum ProfilerMsg {
     // Normal message used for reporting time
-    TimeMsg(ProfilerCategory, float),
+    TimeMsg(ProfilerCategory, f64),
     // Message used to force print the profiling metrics
     PrintMsg,
 }
@@ -90,7 +92,7 @@ impl ProfilerCategory {
     }
 }
 
-type ProfilerBuckets = TreeMap<ProfilerCategory, ~[float]>;
+type ProfilerBuckets = TreeMap<ProfilerCategory, ~[f64]>;
 
 // back end of the profiler that handles data aggregation and performance metrics
 pub struct Profiler {
@@ -100,10 +102,10 @@ pub struct Profiler {
 }
 
 impl Profiler {
-    pub fn create(port: Port<ProfilerMsg>, chan: ProfilerChan, period: Option<float>) {
+    pub fn create(port: Port<ProfilerMsg>, chan: ProfilerChan, period: Option<f64>) {
         match period {
             Some(period) => {
-                let period = (period * 1000f) as u64;
+                let period = (period * 1000.0) as u64;
                 do spawn {
                     let mut timer = Timer::new().unwrap();
                     loop {
@@ -169,7 +171,7 @@ impl Profiler {
             let data_len = data.len();
             if data_len > 0 {
                 let (mean, median, &min, &max) =
-                    (data.iter().map(|&x|x).sum() / (data_len as float),
+                    (data.iter().map(|&x|x).sum() / (data_len as f64),
                      data[data_len / 2],
                      data.iter().min().unwrap(),
                      data.iter().max().unwrap());
@@ -189,7 +191,7 @@ pub fn profile<T>(category: ProfilerCategory,
     let start_time = precise_time_ns();
     let val = callback();
     let end_time = precise_time_ns();
-    let ms = ((end_time - start_time) as float / 1000000f);
+    let ms = ((end_time - start_time) as f64 / 1000000.0);
     profiler_chan.send_deferred(TimeMsg(category, ms));
     return val;
 }
@@ -198,8 +200,8 @@ pub fn time<T>(msg: &str, callback: &fn() -> T) -> T{
     let start_time = precise_time_ns();
     let val = callback();
     let end_time = precise_time_ns();
-    let ms = ((end_time - start_time) as float / 1000000f);
-    if ms >= 5f {
+    let ms = ((end_time - start_time) as f64 / 1000000.0);
+    if ms >= 5.0 {
         debug!("%s took %? ms", msg, ms);
     }
     return val;

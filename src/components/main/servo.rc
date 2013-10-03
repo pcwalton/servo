@@ -103,7 +103,7 @@ pub mod util;
 
 #[cfg(not(test))]
 #[start]
-fn start(argc: int, argv: **u8, crate_map: *u8) -> int {
+fn start(argc: int, argv: **u8) -> int {
     #[cfg(target_os="linux")]
     #[cfg(target_os="macos")]
     fn getopts() -> Opts {
@@ -120,7 +120,7 @@ fn start(argc: int, argv: **u8, crate_map: *u8) -> int {
         }
         opts::from_cmdline_args(args)
     }
-    do std::rt::start_on_main_thread(argc, argv, crate_map) {
+    do std::rt::start_on_main_thread(argc, argv) {
         run(getopts())
     }
 }

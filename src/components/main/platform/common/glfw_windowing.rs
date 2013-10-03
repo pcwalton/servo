@@ -228,7 +228,7 @@ impl Window {
     /// Helper function to handle a click
     fn handle_mouse(&self, button: c_int, action: c_int, x: c_int, y: c_int) {
         // FIXME(tkuehn): max pixel dist should be based on pixel density
-        let max_pixel_dist = 10f;
+        let max_pixel_dist = 10.0;
         let event = match action {
             glfw::PRESS => {
                 *self.mouse_down_point = Point2D(x, y);
@@ -239,7 +239,7 @@ impl Window {
                 if *self.mouse_down_button == button {
                     let pixel_dist = *self.mouse_down_point - Point2D(x, y);
                     let pixel_dist = ((pixel_dist.x * pixel_dist.x +
-                                       pixel_dist.y * pixel_dist.y) as float).sqrt();
+                                       pixel_dist.y * pixel_dist.y) as f64).sqrt();
                     if pixel_dist < max_pixel_dist {
                         let click_event = MouseWindowClickEvent(button as uint,
                                                            Point2D(x as f32, y as f32));

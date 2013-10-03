@@ -41,7 +41,7 @@ pub fn spawn_css_parser(provenance: StylesheetProvenance,
     return result_port;
 }
 
-fn data_stream(provenance: StylesheetProvenance, resource_task: ResourceTask) -> DataStream {
+fn data_stream(provenance: StylesheetProvenance, resource_task: ResourceTask) -> @mut DataStream {
     match provenance {
         UrlProvenance(url) => {
             debug!("cssparse: loading style sheet at %s", url.to_str());
@@ -55,34 +55,47 @@ fn data_stream(provenance: StylesheetProvenance, resource_task: ResourceTask) ->
     }
 }
 
-fn resource_port_to_data_stream(input_port: Port<ProgressMsg>) -> DataStream {
-    return || {
-        // Can't just 'return' the value since we're inside a lambda
-        let mut result = None;
+struct ResourcePort {
+    input_port: Port<ProgressMsg>,
+}
+
+impl DataStream for ResourcePort {
+    fn read(&mut self) -> Option<~[u8]> {
         loop {
-            match input_port.recv() {
+            match self.input_port.recv() {
                 UrlChange(*) => (),  // don't care that URL changed
-                Payload(data) => {
-                    result = Some(data);
-                    break;
-                }
+                Payload(data) => return Some(data),
                 Done(*) => break
             }
         }
-        result
+        None
     }
 }
 
-fn data_to_data_stream(data: ~str) -> DataStream {
-    let data_cell = Cell::new(data);
-    return || {
-        if data_cell.is_empty() {
+fn resource_port_to_data_stream(input_port: Port<ProgressMsg>) -> @mut DataStream {
+    @mut ResourcePort {
+        input_port: input_port,
+    } as @mut DataStream
+}
+
+struct Data {
+    data: Option<~str>,
+}
+
+impl DataStream for Data {
+    fn read(&mut self) -> Option<~[u8]> {
+        if self.data.is_none() {
             None
         } else {
-            // FIXME: Blech, a copy.
-            let data = data_cell.take();
+            let data = self.data.take_unwrap();
             Some(data.as_bytes().to_owned())
         }
     }
+}
+
+fn data_to_data_stream(data: ~str) -> @mut DataStream {
+    @mut Data {
+        data: Some(data),
+    } as @mut DataStream
 }
 

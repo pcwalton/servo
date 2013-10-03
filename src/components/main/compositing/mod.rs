@@ -200,7 +200,7 @@ impl CompositorTask {
         // Keeps track of the current zoom factor
         let mut world_zoom = 1f32;
         let mut zoom_action = false;
-        let mut zoom_time = 0f;
+        let mut zoom_time = 0.0;
 
         // The root CompositorLayer
         let mut compositor_layer: Option<CompositorLayer> = None;

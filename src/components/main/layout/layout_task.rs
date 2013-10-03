@@ -43,7 +43,7 @@ use script::layout_interface::{ReflowForDisplay, ReflowMsg};
 use script::script_task::{ReflowCompleteMsg, ScriptChan, SendEventMsg};
 use servo_msg::constellation_msg::{ConstellationChan, PipelineId};
 use servo_net::image_cache_task::{ImageCacheTask, ImageResponseMsg};
-use servo_net::local_image_cache::LocalImageCache;
+use servo_net::local_image_cache::{ImageResponder, LocalImageCache};
 use servo_util::tree::TreeNodeRef;
 use servo_util::time::{ProfilerChan, profile};
 use servo_util::time;
@@ -172,6 +172,22 @@ impl<'self> PreorderFlowTraversal for DisplayListBuildingTraversal<'self> {
     #[inline]
     fn should_prune(&mut self, flow: &mut FlowContext) -> bool {
         flow.build_display_list(&self.builder, &self.root_pos, self.display_list)
+    }
+}
+
+struct LayoutImageResponder {
+    id: PipelineId,
+    script_chan: ScriptChan,
+}
+
+impl ImageResponder for LayoutImageResponder {
+    fn respond(&self) -> ~fn(ImageResponseMsg) {
+        let id = self.id.clone();
+        let script_chan = self.script_chan.clone();
+        let f: ~fn(ImageResponseMsg) = |_| {
+            script_chan.send(SendEventMsg(id.clone(), ReflowEvent))
+        };
+        f
     }
 }
 
@@ -516,8 +532,8 @@ impl LayoutTask {
                     match self.display_list {
                         Some(ref list) => {
                             let display_list = list.get();
-                            let (x, y) = (Au::from_frac_px(point.x as float),
-                                    Au::from_frac_px(point.y as float));
+                            let (x, y) = (Au::from_frac_px(point.x as f64),
+                                          Au::from_frac_px(point.y as f64));
                             let mut resp = Err(());
                             // iterate in reverse to ensure we have the most recently painted render box
                             for display_item in display_list.list.rev_iter() {
@@ -553,21 +569,15 @@ impl LayoutTask {
     // to the script task, and ultimately cause the image to be
     // re-requested. We probably don't need to go all the way back to
     // the script task for this.
-    fn make_on_image_available_cb(&self, script_chan: ScriptChan)
-                                  -> @fn() -> ~fn(ImageResponseMsg) {
+    fn make_on_image_available_cb(&self, script_chan: ScriptChan) -> @ImageResponder {
         // This has a crazy signature because the image cache needs to
         // make multiple copies of the callback, and the dom event
         // channel is not a copyable type, so this is actually a
         // little factory to produce callbacks
-        let id = self.id.clone();
-        let f: @fn() -> ~fn(ImageResponseMsg) = || {
-            let script_chan = script_chan.clone();
-            let f: ~fn(ImageResponseMsg) = |_| {
-                script_chan.send(SendEventMsg(id.clone(), ReflowEvent))
-            };
-            f
-        };
-        return f;
+        @LayoutImageResponder {
+            id: self.id.clone(),
+            script_chan: self.script_chan.clone(),
+        } as @ImageResponder
     }
 }
 

@@ -120,7 +120,7 @@ impl LineboxScanner {
     fn reset_linebox(&mut self) {
         self.pending_line.range.reset(0,0);
         self.pending_line.bounds = Rect(Point2D(Au::new(0), self.cur_y), Size2D(Au::new(0), Au::new(0)));
-        self.pending_line.green_zone = Size2D(Au::new(0), Au::new(0))     
+        self.pending_line.green_zone = Size2D(Au::new(0), Au::new(0))
     }
 
     pub fn scan_for_lines(&mut self, flow: &mut InlineFlow) {
@@ -138,7 +138,7 @@ impl LineboxScanner {
                 debug!("LineboxScanner: Working with box from box list: b%d", box.base().id());
                 box
             } else {
-                    let box = self.work_list.pop_front().unwrap();
+                let box = self.work_list.pop_front().unwrap();
                 debug!("LineboxScanner: Working with box from work list: b%d", box.base().id());
                 box
             };
@@ -158,7 +158,6 @@ impl LineboxScanner {
                     self.lines.len());
             self.flush_current_line();
         }
-
 
         flow.elems.repair_for_box_changes(flow.boxes, self.new_boxes);
 
@@ -315,6 +314,8 @@ impl LineboxScanner {
 
         let new_height = self.new_height_for_line(in_box);
         if new_height > green_zone.height {
+            debug!("LineboxScanner: entering float collision avoider!");
+
             // Uh-oh. Adding this box is going to increase the height,
             // and because of that we will collide with some floats.
 
@@ -544,7 +545,8 @@ impl FlowContext for InlineFlow {
 
             for box in this.boxes.iter() {
                 debug!("FlowContext[%d]: measuring %s", self.base.id, box.debug_str());
-            let (this_minimum_width, this_preferred_width) = box.minimum_and_preferred_widths();
+                let (this_minimum_width, this_preferred_width) =
+                    box.minimum_and_preferred_widths();
                 min_width = Au::max(min_width, this_minimum_width);
                 pref_width = Au::max(pref_width, this_preferred_width);
             }
@@ -593,8 +595,6 @@ impl FlowContext for InlineFlow {
     }
 
     fn assign_height(&mut self, _: &mut LayoutContext) {
-
-        /*
         debug!("assign_height_inline: assigning height for flow %?", self.base.id);
 
         // Divide the boxes into lines
@@ -606,7 +606,7 @@ impl FlowContext for InlineFlow {
         debug!("assign_height_inline: floats_in: %?", self.base.floats_in);
 
         // Create the linebox scanner if necessary.
-        do local_data::get_mut(local_linebox_scanner) |maybe_scanner| {
+        /*do local_data::get_mut(local_linebox_scanner) |maybe_scanner| {
             let scanner_floats = self.base.floats_in.clone();
             match maybe_scanner {
                 None => {
@@ -615,11 +615,14 @@ impl FlowContext for InlineFlow {
                 }
                 Some(scanner) => scanner.reinitialize(scanner_floats),
             };
-        }
+        }*/
+
+        let scanner_floats = self.base.floats_in.clone();
+        let mut scanner = LineboxScanner::new(scanner_floats);
 
         // Access the linebox scanner.
-        do local_data::get_mut(local_linebox_scanner) |maybe_scanner| {
-            let mut scanner = maybe_scanner.unwrap();
+        //do local_data::get_mut(local_linebox_scanner) |maybe_scanner| {
+            //let mut scanner = maybe_scanner.unwrap();
             scanner.scan_for_lines(self);
 
             let mut line_height_offset = Au::new(0);
@@ -636,14 +639,13 @@ impl FlowContext for InlineFlow {
                 // Get the text alignment.
                 // TODO(Issue #222): use 'text-align' property from InlineFlow's
                 // block container, not from the style of the first box child.
-                let linebox_align;
-                if line.range.begin() < self.boxes.len() {
+                let linebox_align = if line.range.begin() < self.boxes.len() {
                     let first_box = self.boxes[line.range.begin()];
-                    linebox_align = first_box.text_align();
+                    first_box.base().nearest_ancestor_element().style().text_align()
                 } else {
                     // Nothing to lay out, so assume left alignment.
-                    linebox_align = CSSTextAlignLeft;
-                }
+                    CSSTextAlignLeft
+                };
 
                 // Set the box x positions
                 let mut offset_x = line.bounds.origin.x;
@@ -652,28 +654,25 @@ impl FlowContext for InlineFlow {
                     // TODO(Issue #213): implement `text-align: justify`
                     CSSTextAlignLeft | CSSTextAlignJustify => {
                         for i in line.range.eachi() {
-                            do self.boxes[i].with_mut_base |base| {
-                                base.position.origin.x = offset_x;
-                                offset_x = offset_x + base.position.size.width;
-                            }
+                            let box = self.boxes[i].mut_base();
+                            box.position.origin.x = offset_x;
+                            offset_x = offset_x + box.position.size.width;
                         }
                     }
                     CSSTextAlignCenter => {
-                        offset_x = offset_x + slack_width.scale_by(0.5f);
+                        offset_x = offset_x + slack_width.scale_by(0.5);
                         for i in line.range.eachi() {
-                            do self.boxes[i].with_mut_base |base| {
-                                base.position.origin.x = offset_x;
-                                offset_x = offset_x + base.position.size.width;
-                            }
+                            let box = self.boxes[i].mut_base();
+                            box.position.origin.x = offset_x;
+                            offset_x = offset_x + box.position.size.width;
                         }
                     }
                     CSSTextAlignRight => {
                         offset_x = offset_x + slack_width;
                         for i in line.range.eachi() {
-                            do self.boxes[i].with_mut_base |base| {
-                                base.position.origin.x = offset_x;
-                                offset_x = offset_x + base.position.size.width;
-                            }
+                            let box = self.boxes[i].mut_base();
+                            box.position.origin.x = offset_x;
+                            offset_x = offset_x + box.position.size.width;
                         }
                     }
                 };
@@ -695,18 +694,22 @@ impl FlowContext for InlineFlow {
                 for box_i in line.range.eachi() {
                     let cur_box = self.boxes[box_i];
 
-                    let (top_from_base, bottom_from_base, ascent) = match cur_box {
-                        ImageRenderBoxClass(image_box) => {
-                            let mut height = cur_box.image_height(image_box);
+                    let (top_from_base, bottom_from_base, ascent) = match cur_box.class() {
+                        ImageRenderBoxClass => {
+                            let image_box = cur_box.as_image_render_box();
+                            let mut height = image_box.image_height();
 
                             // TODO: margin, border, padding's top and bottom should be calculated in advance,
                             // since baseline of image is bottom margin edge.
                             let mut top = Au::new(0);
                             let mut bottom = Au::new(0);
-                            do cur_box.with_model |model| {
+                            {
+                                let model = &image_box.base.model;
                                 top = model.border.top + model.padding.top + model.margin.top;
-                                bottom = model.border.bottom + model.padding.bottom + model.margin.bottom;
+                                bottom = model.border.bottom + model.padding.bottom +
+                                    model.margin.bottom;
                             }
+
                             let noncontent_height = top + bottom;
                             height = height + noncontent_height;
                             image_box.base.position.size.height = height;
@@ -715,27 +718,29 @@ impl FlowContext for InlineFlow {
                             let ascent = height + bottom;
                             (height, Au::new(0), ascent)
                         },
-                        TextRenderBoxClass(text_box) => {
+                        TextRenderBoxClass => {
+                            let text_box = cur_box.as_text_render_box();
                             let range = &text_box.range;
                             let run = &text_box.run;
                             
                             // Compute the height based on the line-height and font size
                             let text_bounds = run.metrics_for_range(range).bounding_box;
                             let em_size = text_bounds.size.height;
-                            let line_height = scanner.calculate_line_height(cur_box, em_size);
+                            let line_height = text_box.base.calculate_line_height(em_size);
 
                             // Find the top and bottom of the content area.
                             // Those are used in text-top and text-bottom value of 'vertical-align'
                             let text_ascent = text_box.run.font.metrics.ascent;
                            
                             // Offset from the top of the box is 1/2 of the leading + ascent
-                            let text_offset = text_ascent + (line_height - em_size).scale_by(0.5f);
+                            let text_offset = text_ascent + (line_height - em_size).scale_by(0.5);
                             text_bounds.translate(&Point2D(text_box.base.position.origin.x, Au::new(0)));
 
                             (text_offset, line_height - text_offset, text_ascent)
                         },
-                        GenericRenderBoxClass(generic_box) => {
-                            (generic_box.position.size.height, Au::new(0), generic_box.position.size.height)
+                        GenericRenderBoxClass => {
+                            let base = cur_box.base();
+                            (base.position.size.height, Au::new(0), base.position.size.height)
                         },
                         // FIXME(pcwalton): This isn't very type safe!
                         _ => {
@@ -758,31 +763,34 @@ impl FlowContext for InlineFlow {
                     // It should calculate the distance from baseline to the bottom of parent's content area.
                     // But, it is assumed now as 0.
                     let parent_text_bottom  = Au::new(0);
-                    do cur_box.with_mut_base |base| {
-                        // Get parent node
-                        let parent = base.node.parent_node().map_default(base.node, |parent| *parent);
-                        // TODO: When the calculation of font-size style is supported, it should be updated.
-                        let font_size = match parent.style().font_size() {
-                            CSSFontSizeLength(Px(length)) => length,
-                            // todo: this is based on a hard coded font size, should be the parent element's font size
-                            CSSFontSizeLength(Em(length)) => length * 16f, 
-                            _ => 16f // px units
-                        };
-                        parent_text_top = Au::from_frac_px(font_size);
-                    }
+                    let cur_box_base = cur_box.mut_base();
+                    // Get parent node
+                    let parent = cur_box_base.node
+                                             .parent_node()
+                                             .map_default(cur_box_base.node, |parent| *parent);
+                    // TODO: When the calculation of font-size style is supported, it should be
+                    // updated.
+                    let font_size = match parent.style().font_size() {
+                        CSSFontSizeLength(Px(length)) => length,
+                        // todo: this is based on a hard coded font size, should be the parent
+                        // element's font size
+                        CSSFontSizeLength(Em(length)) => length * 16.0,
+                        _ => 16.0 // px units
+                    };
+                    parent_text_top = Au::from_frac_px(font_size);
 
                     // This flag decides whether topmost and bottommost are updated or not.
                     // That is, if the box has top or bottom value, no_update_flag becomes true.
                     let mut no_update_flag = false;
                     // Calculate a relative offset from baseline.
-                    let offset = match cur_box.vertical_align() {
+                    let offset = match cur_box_base.vertical_align() {
                         CSSVerticalAlignBaseline => {
                             -ascent
                         },
                         CSSVerticalAlignMiddle => {
                             // TODO: x-height value should be used from font info.
                             let xheight = Au::new(0);
-                            -(xheight + scanner.box_height(cur_box)).scale_by(0.5)
+                            -(xheight + cur_box.box_height()).scale_by(0.5)
                         },
                         CSSVerticalAlignSub => {
                             // TODO: The proper position for subscripts should be used.
@@ -828,15 +836,16 @@ impl FlowContext for InlineFlow {
                         },
                         CSSVerticalAlignLength(length) => {
                             let length_offset = match length {
-                                Em(l) => Au::from_frac_px(cur_box.font_style().pt_size * l),
+                                Em(l) => Au::from_frac_px(cur_box.base().font_style().pt_size * l),
                                 Px(l) => Au::from_frac_px(l),
                             };
                             -(length_offset + ascent)
                         },
                         CSSVerticalAlignPercentage(p) => {
-                            let pt_size = cur_box.font_style().pt_size; 
-                            let line_height = scanner.calculate_line_height(cur_box, Au::from_pt(pt_size));
-                            let percent_offset = line_height.scale_by(p / 100.0f);
+                            let pt_size = cur_box.base().font_style().pt_size; 
+                            let line_height = cur_box.base()
+                                                     .calculate_line_height(Au::from_pt(pt_size));
+                            let percent_offset = line_height.scale_by(p / 100.0);
                             -(percent_offset + ascent)
                         }
                     };
@@ -850,9 +859,8 @@ impl FlowContext for InlineFlow {
                         bottommost = bottom_from_base;
                     }
 
-                    do cur_box.with_mut_base |base| {
-                        base.position.origin.y = line.bounds.origin.y + offset;
-                    }
+                    let cur_box_base = cur_box.mut_base();
+                    cur_box_base.position.origin.y = line.bounds.origin.y + offset;
                 }
 
                 // Calculate the distance from baseline to the top of the biggest box with 'bottom' value.
@@ -875,21 +883,15 @@ impl FlowContext for InlineFlow {
                 // All boxes' y position is updated following the new baseline offset.
                 for box_i in line.range.eachi() {
                     let cur_box = self.boxes[box_i];
-                    let adjust_offset = match cur_box.vertical_align() {
-                        CSSVerticalAlignTop => {
-                            Au::new(0)
-                        },
-                        CSSVerticalAlignBottom => {
-                            baseline_offset + bottommost
-                        },
-                        _ => {
-                            baseline_offset
-                        }
+                    let cur_box_base = cur_box.mut_base();
+                    let adjust_offset = match cur_box_base.vertical_align() {
+                        CSSVerticalAlignTop => Au::new(0),
+                        CSSVerticalAlignBottom => baseline_offset + bottommost,
+                        _ => baseline_offset,
                     };
 
-                    do cur_box.with_mut_base |base| {
-                        base.position.origin.y = base.position.origin.y + adjust_offset;
-                    }
+                    cur_box_base.position.origin.y = cur_box_base.position.origin.y +
+                        adjust_offset;
                 }
 
                 // This is used to set the top y position of the next linebox in the next loop.
@@ -904,10 +906,10 @@ impl FlowContext for InlineFlow {
                     Au::new(0)
                 };
 
-            self.base.floats_out = scanner.floats_out().translate(Point2D(Au::new(0), 
-                                                                    -self.base.position.size.height));
-        }
-        */
+            self.base.floats_out = scanner.floats_out()
+                                          .translate(Point2D(Au::new(0),
+                                                             -self.base.position.size.height));
+        //}
     }
 
     fn collapse_margins(&mut self,

@@ -20,7 +20,7 @@ use std::hashmap::HashMap;
 pub fn dummy_style() -> FontStyle {
     use font::FontWeight300;
     return FontStyle {
-        pt_size: 20f,
+        pt_size: 20.0,
         weight: FontWeight300,
         italic: false,
         oblique: false,

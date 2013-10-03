@@ -198,11 +198,11 @@ impl Shaper {
         }
     }
 
-    fn float_to_fixed(f: float) -> i32 {
+    fn float_to_fixed(f: f64) -> i32 {
         float_to_fixed(16, f)
     }
 
-    fn fixed_to_float(i: hb_position_t) -> float {
+    fn fixed_to_float(i: hb_position_t) -> f64 {
         fixed_to_float(16, i)
     }
 

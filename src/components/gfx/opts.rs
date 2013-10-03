@@ -9,7 +9,6 @@ use azure::azure_hl::{BackendType, CairoBackend, CoreGraphicsBackend};
 use azure::azure_hl::{CoreGraphicsAcceleratedBackend, Direct2DBackend, SkiaBackend};
 
 use extra::getopts;
-use std::float;
 use std::result;
 use std::uint;
 
@@ -36,7 +35,7 @@ pub struct Opts {
 
     /// `None` to disable the profiler or `Some` with an interval in seconds to enable it and cause
     /// it to produce output on that interval (`-p`).
-    profiler_period: Option<float>,
+    profiler_period: Option<f64>,
 
     /// True to exit after the page load (`-x`).
     exit_after_load: bool,

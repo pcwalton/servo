@@ -99,7 +99,6 @@ impl NumCast for Au {
 
     fn to_f32(&self) -> f32     { (**self).to_f32() }
     fn to_f64(&self) -> f64     { (**self).to_f64() }
-    fn to_float(&self) -> float { (**self).to_float() }
 }
 
 pub fn box<T:Clone + Ord + Add<T,T> + Sub<T,T>>(x: T, y: T, w: T, h: T) -> Rect<T> {
@@ -114,8 +113,8 @@ impl Au {
     }
 
     #[inline]
-    pub fn scale_by(self, factor: float) -> Au {
-        Au(((*self as float) * factor).round() as i32)
+    pub fn scale_by(self, factor: f64) -> Au {
+        Au(((*self as f64) * factor).round() as i32)
     }
 
     #[inline]
@@ -125,7 +124,7 @@ impl Au {
 
     #[inline]
     pub fn to_nearest_px(&self) -> int {
-        ((**self as float) / 60f).round() as int
+        ((**self as f64) / 60.0).round() as int
     }
 
     #[inline]
@@ -147,13 +146,13 @@ impl Au {
     }
 
     #[inline]
-    pub fn from_pt(pt: float) -> Au {
+    pub fn from_pt(pt: f64) -> Au {
         from_px(pt_to_px(pt) as int)
     }
 
     #[inline]
-    pub fn from_frac_px(px: float) -> Au {
-        Au((px * 60f) as i32)
+    pub fn from_frac_px(px: f64) -> Au {
+        Au((px * 60.0) as i32)
     }
 
     #[inline]
@@ -163,13 +162,13 @@ impl Au {
 }
 
 // assumes 72 points per inch, and 96 px per inch
-pub fn pt_to_px(pt: float) -> float {
-    pt / 72f * 96f
+pub fn pt_to_px(pt: f64) -> f64 {
+    pt / 72.0 * 96.0
 }
 
 // assumes 72 points per inch, and 96 px per inch
-pub fn px_to_pt(px: float) -> float {
-    px / 96f * 72f
+pub fn px_to_pt(px: f64) -> f64 {
+    px / 96.0 * 72.0
 }
 
 pub fn zero_rect() -> Rect<Au> {
@@ -185,8 +184,8 @@ pub fn zero_size() -> Size2D<Au> {
     Size2D(Au(0), Au(0))
 }
 
-pub fn from_frac_px(px: float) -> Au {
-    Au((px * 60f) as i32)
+pub fn from_frac_px(px: f64) -> Au {
+    Au((px * 60.0) as i32)
 }
 
 pub fn from_px(px: int) -> Au {
@@ -197,11 +196,11 @@ pub fn to_px(au: Au) -> int {
     (*au / 60) as int
 }
 
-pub fn to_frac_px(au: Au) -> float {
-    (*au as float) / 60f
+pub fn to_frac_px(au: Au) -> f64 {
+    (*au as f64) / 60.0
 }
 
 // assumes 72 points per inch, and 96 px per inch
-pub fn from_pt(pt: float) -> Au {
-    from_px((pt / 72f * 96f) as int)
+pub fn from_pt(pt: f64) -> Au {
+    from_px((pt / 72.0 * 96.0) as int)
 }

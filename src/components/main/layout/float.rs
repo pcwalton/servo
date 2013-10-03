@@ -100,6 +100,10 @@ impl FlowContext for FloatFlow {
         FloatFlowClass
     }
 
+    fn as_float<'a>(&'a mut self) -> &'a mut FloatFlow {
+        self
+    }
+
     fn bubble_widths(&mut self, ctx: &mut LayoutContext) {
         let mut min_width = Au(0);
         let mut pref_width = Au(0);
@@ -147,6 +151,7 @@ impl FlowContext for FloatFlow {
 
         for &box in self.box.iter() {
             let base = box.mut_base();
+            let base = &mut *base;
             let style = base.style();
             let model = &mut base.model;
 

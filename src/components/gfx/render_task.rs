@@ -97,7 +97,7 @@ enum GraphicsContext {
     GpuGraphicsContext(AzGLContext),
 }
 
-struct RenderTask<C,T> {
+pub struct RenderTask<C,T> {
     id: PipelineId,
     port: Port<Msg<T>>,
     compositor: C,

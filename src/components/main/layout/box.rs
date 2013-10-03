@@ -355,20 +355,15 @@ pub struct TextRenderBox {
 }
 
 impl TextRenderBox {
-    fn calculate_line_height(&self, font_size: Au) -> Au { 
-        match self.base.line_height() {
-            CSSLineHeightNormal => font_size.scale_by(1.14f),
-            CSSLineHeightNumber(l) => font_size.scale_by(l),
-            CSSLineHeightLength(Em(l)) => font_size.scale_by(l),
-            CSSLineHeightLength(Px(l)) => Au::from_frac_px(l),
-            CSSLineHeightPercentage(p) => font_size.scale_by(p / 100.0f)
-        }
-    }
 }
 
 impl RenderBox for TextRenderBox {
     fn class(&self) -> RenderBoxClass {
         TextRenderBoxClass
+    }
+
+    fn as_text_render_box(@mut self) -> @mut TextRenderBox {
+        self
     }
 
     fn teardown(&self) {
@@ -395,7 +390,7 @@ impl RenderBox for TextRenderBox {
         // Compute the height based on the line-height and font size
         let text_bounds = run.metrics_for_range(range).bounding_box;
         let em_size = text_bounds.size.height;
-        let line_height = self.calculate_line_height(em_size);
+        let line_height = self.base.calculate_line_height(em_size);
 
         line_height
     }
@@ -628,6 +623,10 @@ impl RenderBoxBase {
     }
 
     fn guess_width(&self) -> Au {
+        if !self.node.is_element() {
+            return Au(0)
+        }
+
         let style = self.style();
         let font_size = style.font_size();
         let width = MaybeAuto::from_width(style.width(),
@@ -648,6 +647,16 @@ impl RenderBoxBase {
 
         width + margin_left + margin_right + padding_left + padding_right + 
             self.model.border.left + self.model.border.right
+    }
+
+    pub fn calculate_line_height(&self, font_size: Au) -> Au { 
+        match self.line_height() {
+            CSSLineHeightNormal => font_size.scale_by(1.14),
+            CSSLineHeightNumber(l) => font_size.scale_by(l),
+            CSSLineHeightLength(Em(l)) => font_size.scale_by(l),
+            CSSLineHeightLength(Px(l)) => Au::from_frac_px(l),
+            CSSLineHeightPercentage(p) => font_size.scale_by(p / 100.0)
+        }
     }
 
     pub fn compute_padding(&mut self, containing_block_width: Au) {
@@ -735,8 +744,8 @@ impl RenderBoxBase {
         let font_size = match my_style.font_size() {
             CSSFontSizeLength(Px(length)) => length,
             // todo: this is based on a hard coded font size, should be the parent element's font size
-            CSSFontSizeLength(Em(length)) => length * 16f, 
-            _ => 16f // px units
+            CSSFontSizeLength(Em(length)) => length * 16.0,
+            _ => 16.0 // px units
         };
         debug!("(font style) font size: `%fpx`", font_size);
 
@@ -1094,266 +1103,5 @@ impl RenderBoxUtils for @mut RenderBox {
         // TODO: Outlines.
         self.paint_borders_if_applicable(list, &absolute_box_bounds);
     }
-<<<<<<< HEAD
-
-    /// Adds the display items necessary to paint the background of this render box to the display
-    /// list if necessary.
-    pub fn paint_background_if_applicable<E:ExtraDisplayListData>(&self,
-                                                              list: &Cell<DisplayList<E>>,
-                                                              absolute_bounds: &Rect<Au>) {
-        // FIXME: This causes a lot of background colors to be displayed when they are clearly not
-        // needed. We could use display list optimization to clean this up, but it still seems
-        // inefficient. What we really want is something like "nearest ancestor element that
-        // doesn't have a render box".
-        let nearest_ancestor_element = self.nearest_ancestor_element();
-
-        let background_color = nearest_ancestor_element.style().background_color();
-        if !background_color.alpha.approx_eq(&0.0) {
-            do list.with_mut_ref |list| {
-                let solid_color_display_item = ~SolidColorDisplayItem {
-                    base: BaseDisplayItem {
-                        bounds: *absolute_bounds,
-                        extra: ExtraDisplayListData::new(*self),
-                    },
-                    color: background_color.to_gfx_color(),
-                };
-
-                list.append_item(SolidColorDisplayItemClass(solid_color_display_item))
-            }
-        }
-    }
-
-    pub fn clear(&self) -> Option<ClearType> {
-        let style = self.style();
-        match style.clear() {
-            CSSClearNone => None,
-            CSSClearLeft => Some(ClearLeft),
-            CSSClearRight => Some(ClearRight),
-            CSSClearBoth => Some(ClearBoth)
-        }
-    }
-
-    /// Converts this node's computed style to a font style used for rendering.
-    pub fn font_style(&self) -> FontStyle {
-        fn get_font_style(element: AbstractNode<LayoutView>) -> FontStyle {
-            let my_style = element.style();
-
-            debug!("(font style) start: %?", element.type_id());
-
-            // FIXME: Too much allocation here.
-            let font_families = do my_style.font_family().map |family| {
-                match *family {
-                    CSSFontFamilyFamilyName(ref family_str) => (*family_str).clone(),
-                    CSSFontFamilyGenericFamily(Serif)       => ~"serif",
-                    CSSFontFamilyGenericFamily(SansSerif)   => ~"sans-serif",
-                    CSSFontFamilyGenericFamily(Cursive)     => ~"cursive",
-                    CSSFontFamilyGenericFamily(Fantasy)     => ~"fantasy",
-                    CSSFontFamilyGenericFamily(Monospace)   => ~"monospace",
-                }
-            };
-            let font_families = font_families.connect(", ");
-            debug!("(font style) font families: `%s`", font_families);
-
-            let font_size = match my_style.font_size() {
-                CSSFontSizeLength(Px(length)) => length,
-                // todo: this is based on a hard coded font size, should be the parent element's font size
-                CSSFontSizeLength(Em(length)) => length * 16f,
-                _ => 16f // px units
-            };
-            debug!("(font style) font size: `%fpx`", font_size);
-
-            let (italic, oblique) = match my_style.font_style() {
-                CSSFontStyleNormal => (false, false),
-                CSSFontStyleItalic => (true, false),
-                CSSFontStyleOblique => (false, true),
-            };
-
-            FontStyle {
-                pt_size: font_size,
-                weight: FontWeight300,
-                italic: italic,
-                oblique: oblique,
-                families: font_families,
-            }
-        }
-
-        let font_style_cached = match *self {
-            UnscannedTextRenderBoxClass(ref box) => {
-                match box.font_style {
-                    Some(ref style) => Some(style.clone()),
-                    None => None
-                }
-            }
-            _ => None
-        };
-
-        if font_style_cached.is_some() {
-            return font_style_cached.unwrap();
-        } else {
-            let font_style = get_font_style(self.nearest_ancestor_element());
-            match *self {
-                UnscannedTextRenderBoxClass(ref box) => {
-                    box.font_style = Some(font_style.clone());
-                }
-                _ => ()
-            }
-            return font_style;
-        }
-    }
-
-    /// Returns the text alignment of the computed style of the nearest ancestor-or-self `Element`
-    /// node.
-    pub fn text_align(&self) -> CSSTextAlign {
-        self.nearest_ancestor_element().style().text_align()
-    }
-
-    pub fn line_height(&self) -> CSSLineHeight {
-        self.nearest_ancestor_element().style().line_height()
-    }
-
-    pub fn vertical_align(&self) -> CSSVerticalAlign {
-        self.nearest_ancestor_element().style().vertical_align()
-    }
-
-    /// Returns the text decoration of the computed style of the nearest `Element` node
-    pub fn text_decoration(&self) -> CSSTextDecoration {
-        /// Computes the propagated value of text-decoration, as specified in CSS 2.1 § 16.3.1
-        /// TODO: make sure this works with anonymous box generation.
-        fn get_propagated_text_decoration(element: AbstractNode<LayoutView>) -> CSSTextDecoration {
-            //Skip over non-element nodes in the DOM
-            if(!element.is_element()){
-                return match element.parent_node() {
-                    None => CSSTextDecorationNone,
-                    Some(parent) => get_propagated_text_decoration(parent),
-                };
-            }
-
-            //FIXME: is the root param on display() important?
-            let display_in_flow = match element.style().display(false) {
-                CSSDisplayInlineTable | CSSDisplayInlineBlock => false,
-                _ => true,
-            };
-
-            let position = element.style().position();
-            let float = element.style().float();
-
-            let in_flow = (position == CSSPositionStatic) && (float == CSSFloatNone) &&
-                display_in_flow;
-
-            let text_decoration = element.style().text_decoration();
-
-            if(text_decoration == CSSTextDecorationNone && in_flow){
-                match element.parent_node() {
-                    None => CSSTextDecorationNone,
-                    Some(parent) => get_propagated_text_decoration(parent),
-                }
-            }
-            else {
-                text_decoration
-            }
-        }
-
-        let text_decoration_cached = match *self {
-            UnscannedTextRenderBoxClass(ref box) => {
-                match box.text_decoration {
-                    Some(ref decoration) => Some(decoration.clone()),
-                    None => None
-                }
-            }
-            _ => None
-        };
-
-        if text_decoration_cached.is_some() {
-            return text_decoration_cached.unwrap();
-        } else {
-            let text_decoration = get_propagated_text_decoration(self.nearest_ancestor_element());
-            match *self {
-                UnscannedTextRenderBoxClass(ref box) => {
-                    box.text_decoration = Some(text_decoration.clone());
-                }
-                _ => ()
-            }
-            return text_decoration;
-        }
-    }
-
-    /// Dumps this node, for debugging.
-    pub fn dump(&self) {
-        self.dump_indent(0);
-    }
-
-    /// Dumps a render box for debugging, with indentation.
-    pub fn dump_indent(&self, indent: uint) {
-        let mut string = ~"";
-        for _ in range(0u, indent) {
-            string.push_str("    ");
-        }
-
-        string.push_str(self.debug_str());
-        debug!("%s", string);
-    }
-
-    /// Returns a debugging string describing this box.
-    pub fn debug_str(&self) -> ~str {
-        let representation = match *self {
-            GenericRenderBoxClass(*) => ~"GenericRenderBox",
-            ImageRenderBoxClass(*) => ~"ImageRenderBox",
-            TextRenderBoxClass(text_box) => {
-                fmt!("TextRenderBox(text=%s)", text_box.run.text.slice_chars(text_box.range.begin(),
-                                                                             text_box.range.end()))
-            }
-            UnscannedTextRenderBoxClass(text_box) => {
-                fmt!("UnscannedTextRenderBox(%s)", text_box.text)
-            }
-        };
-
-        fmt!("box b%?: %s", self.id(), representation)
-    }
-
-    //
-    // Painting
-    //
-
-    /// Adds the display items necessary to paint the borders of this render box to a display list
-    /// if necessary.
-    pub fn paint_borders_if_applicable<E:ExtraDisplayListData>(&self,
-                                                               list: &Cell<DisplayList<E>>,
-                                                               abs_bounds: &Rect<Au>) {
-        // Fast path.
-        let border = do self.with_base |base| {
-            base.model.border
-        };
-        if border.is_zero() {
-            return
-        }
-
-        let (top_color, right_color, bottom_color, left_color) = (self.style().border_top_color(), self.style().border_right_color(), self.style().border_bottom_color(), self.style().border_left_color());
-        let (top_style, right_style, bottom_style, left_style) = (self.style().border_top_style(), self.style().border_right_style(), self.style().border_bottom_style(), self.style().border_left_style());
-        // Append the border to the display list.
-        do list.with_mut_ref |list| {
-            let border_display_item = ~BorderDisplayItem {
-                base: BaseDisplayItem {
-                    bounds: *abs_bounds,
-                    extra: ExtraDisplayListData::new(*self),
-                },
-                border: SideOffsets2D::new(border.top,
-                                           border.right,
-                                           border.bottom,
-                                           border.left),
-                color: SideOffsets2D::new(top_color.to_gfx_color(),
-                                          right_color.to_gfx_color(),
-                                          bottom_color.to_gfx_color(),
-                                          left_color.to_gfx_color()),
-                style: SideOffsets2D::new(top_style,
-                                          right_style,
-                                          bottom_style,
-                                          left_style)
-            };
-
-            list.append_item(BorderDisplayItemClass(border_display_item))
-        }
-    }
-=======
->>>>>>> wip
 }
 
