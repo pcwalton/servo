@@ -304,7 +304,11 @@ impl Ord for DetailedGlyphRecord {
 // usage pattern of setting/appending all the detailed glyphs, and
 // then querying without setting.
 struct DetailedGlyphStore {
+    // TODO(pcwalton): Allocation of this buffer is expensive. Consider a small-vector
+    // optimization.
     detail_buffer: ~[DetailedGlyph],
+    // TODO(pcwalton): Allocation of this buffer is expensive. Consider a small-vector
+    // optimization.
     detail_lookup: ~[DetailedGlyphRecord],
     lookup_is_sorted: bool,
 }
@@ -507,8 +511,12 @@ impl<'self> GlyphInfo<'self> {
 
 // Public data structure and API for storing and retrieving glyph data
 pub struct GlyphStore {
+    // TODO(pcwalton): Allocation of this buffer is expensive. Consider a small-vector
+    // optimization.
     entry_buffer: ~[GlyphEntry],
+
     detail_store: DetailedGlyphStore,
+
     is_whitespace: bool,
 }
 

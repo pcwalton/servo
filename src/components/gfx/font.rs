@@ -456,13 +456,11 @@ impl Font {
     }
 
     pub fn shape_text(@mut self, text: ~str, is_whitespace: bool) -> Arc<GlyphStore> {
-        do profile(time::LayoutShapingCategory, self.profiler_chan.clone()) {
-            let shaper = self.get_shaper();
-            do self.shape_cache.find_or_create(&text) |txt| {
-                let mut glyphs = GlyphStore::new(text.char_len(), is_whitespace);
-                shaper.shape_text(*txt, &mut glyphs);
-                Arc::new(glyphs)
-            }
+        let shaper = self.get_shaper();
+        do self.shape_cache.find_or_create(&text) |txt| {
+            let mut glyphs = GlyphStore::new(text.char_len(), is_whitespace);
+            shaper.shape_text(*txt, &mut glyphs);
+            Arc::new(glyphs)
         }
     }
 
