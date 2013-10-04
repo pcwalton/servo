@@ -611,6 +611,7 @@ impl<'self> GlyphStore {
         self.iter_glyphs_for_char_range(&Range::new(i, 1))
     }
 
+    #[inline]
     pub fn iter_glyphs_for_char_range(&'self self, rang: &Range) -> GlyphIterator<'self> {
         if rang.begin() >= self.entry_buffer.len() {
             fail!("iter_glyphs_for_range: range.begin beyond length!");
@@ -691,23 +692,44 @@ pub struct GlyphIterator<'self> {
     priv glyph_range: Option<iter::Range<uint>>,
 }
 
+impl<'self> GlyphIterator<'self> {
+    // Slow path when there is a glyph range.
+    #[inline(never)]
+    fn next_glyph_range(&mut self) -> Option<(uint, GlyphInfo<'self>)> {
+        match self.glyph_range.get_mut_ref().next() {
+            Some(j) => Some((self.char_index,
+                DetailGlyphInfo(self.store, self.char_index, j as u16))),
+            None => {
+                // No more glyphs for current character.  Try to get another.
+                self.glyph_range = None;
+                self.next()
+            }
+        }
+    }
+
+    // Slow path when there is a complex glyph.
+    #[inline(never)]
+    fn next_complex_glyph(&mut self, entry: &GlyphEntry, i: uint)
+                          -> Option<(uint, GlyphInfo<'self>)> {
+        let glyphs = self.store.detail_store.get_detailed_glyphs_for_entry(i, entry.glyph_count());
+        self.glyph_range = Some(range(0, glyphs.len()));
+        self.next()
+    }
+}
+
 impl<'self> Iterator<(uint, GlyphInfo<'self>)> for GlyphIterator<'self> {
     // I tried to start with something simpler and apply FlatMap, but the
     // inability to store free variables in the FlatMap struct was problematic.
-
+    //
+    // This function consists of the fast path and is designed to be inlined into its caller. The
+    // slow paths, which should not be inlined, are `next_glyph_range()` and
+    // `next_complex_glyph()`.
+    #[inline(always)]
     fn next(&mut self) -> Option<(uint, GlyphInfo<'self>)> {
         // Would use 'match' here but it borrows contents in a way that
         // interferes with mutation.
         if self.glyph_range.is_some() {
-            match self.glyph_range.get_mut_ref().next() {
-                Some(j) => Some((self.char_index,
-                    DetailGlyphInfo(self.store, self.char_index, j as u16))),
-                None => {
-                    // No more glyphs for current character.  Try to get another.
-                    self.glyph_range = None;
-                    self.next()
-                }
-            }
+            self.next_glyph_range()
         } else {
             // No glyph range.  Look at next character.
             match self.char_range.next() {
@@ -718,10 +740,8 @@ impl<'self> Iterator<(uint, GlyphInfo<'self>)> for GlyphIterator<'self> {
                     if entry.is_simple() {
                         Some((self.char_index, SimpleGlyphInfo(self.store, i)))
                     } else {
-                        let glyphs = self.store.detail_store
-                                     .get_detailed_glyphs_for_entry(i, entry.glyph_count());
-                        self.glyph_range = Some(range(0, glyphs.len()));
-                        self.next()
+                        // Fall back to the slow path.
+                        self.next_complex_glyph(entry, i)
                     }
                 },
                 None => None

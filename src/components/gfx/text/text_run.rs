@@ -51,6 +51,8 @@ pub struct SliceIterator<'self> {
 }
 
 impl<'self> Iterator<(&'self GlyphStore, uint, Range)> for SliceIterator<'self> {
+    // inline(always) due to the inefficient rt failures messing up inline heuristics, I think.
+    #[inline(always)]
     fn next(&mut self) -> Option<(&'self GlyphStore, uint, Range)> {
         loop {
             let slice_glyphs = self.glyph_iter.next();
