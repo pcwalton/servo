@@ -117,6 +117,8 @@ DEPS_rust-azure += \
 
 DEPS_rust-io-surface += \
 	rust-core-foundation \
+	rust-geom \
+	rust-opengles \
 	rust \
 	$(NULL)
 

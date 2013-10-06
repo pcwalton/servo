@@ -14,5 +14,16 @@ extern mod geom;
 extern mod layers;
 extern mod std;
 
+// macos
+extern mod core_foundation;
+extern mod io_surface;
+
 pub mod compositor_msg;
 pub mod constellation_msg;
+
+pub mod platform {
+    pub mod macos {
+        pub mod surface;
+    }
+}
+

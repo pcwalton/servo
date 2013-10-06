@@ -17,6 +17,7 @@ use layers::texturegl::{Texture, TextureImageData};
 use servo_msg::compositor_msg::{LayerBufferSet, Epoch};
 use servo_msg::compositor_msg::{RenderListener, IdleRenderState, RenderingRenderState, LayerBuffer};
 use servo_msg::constellation_msg::{ConstellationChan, PipelineId, RendererReadyMsg};
+use servo_msg::platform::macos::surface::{NativeSurface, NativeSurfaceMethods};
 use servo_util::time::{ProfilerChan, profile};
 use servo_util::time;
 
@@ -113,12 +114,16 @@ pub struct RenderTask<C,T> {
 
     /// The layer to be rendered
     render_layer: Option<RenderLayer<T>>,
+
     /// Permission to send paint messages to the compositor
     paint_permission: bool,
+
     /// Cached copy of last layers rendered
     last_paint_msg: Option<~LayerBufferSet>,
+
     /// A counter for epoch messages
     epoch: Epoch,
+
     /// A data structure to store unused LayerBuffers
     buffer_map: BufferMap<~LayerBuffer>,
 }
@@ -266,7 +271,10 @@ impl<C: RenderListener + Send,T:Send+Freeze> RenderTask<C,T> {
                         CpuGraphicsContext(ref context) => context.make_current(),
                         GpuGraphicsContext(_) => draw_target.make_current(),
                     }
-                    
+
+                    // FIXME(pcwalton): This might be wrong
+                    let texture = Texture::new();
+
                     let mut buffer = match self.buffer_map.find(tile.screen_rect.size) {
                         Some(buffer) => {
                             let mut buffer = buffer;
@@ -279,8 +287,11 @@ impl<C: RenderListener + Send,T:Send+Freeze> RenderTask<C,T> {
                             // Create an empty texture to use as a placeholder.
                             //
                             // FIXME(pcwalton): This is wasteful if GPU rendering is being used!
+                            let native_surface: NativeSurface =
+                                NativeSurfaceMethods::new(Size2D(width as i32, height as i32),
+                                                          width as i32 * 4);
                             ~LayerBuffer {
-                                texture: Arc::new(Texture::new()),
+                                native_surface: native_surface,
                                 rect: tile.page_rect,
                                 screen_pos: tile.screen_rect,
                                 resolution: scale,
@@ -322,18 +333,16 @@ impl<C: RenderListener + Send,T:Send+Freeze> RenderTask<C,T> {
                         CpuGraphicsContext(ref context) => {
                             context.make_current();
                             do draw_target.snapshot().get_data_surface().with_data |data| {
-                                buffer.texture.get().upload_image(&TextureImageData {
-                                    size: Size2D(width as uint, height as uint),
-                                    stride: width,
-                                    format: ARGB32Format,
-                                    data: data,
-                                })
+                                buffer.native_surface.upload(data);
+                                debug!("RENDERER uploading to native surface %d",
+                                       buffer.native_surface.get_id() as int);
                             }
                         }
                         GpuGraphicsContext(_) => {
                             draw_target.make_current();
                             let texture_id = draw_target.steal_texture_id().unwrap();
-                            buffer.texture = Arc::new(Texture::adopt_native_texture(texture_id));
+                            // TODO(pcwalton)
+                            //buffer.texture = Arc::new(Texture::adopt_native_texture(texture_id));
                         }
                     }
                     

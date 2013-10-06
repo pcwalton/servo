@@ -7,24 +7,27 @@ use azure::azure::AzGLContext;
 use extra::arc::Arc;
 use geom::rect::Rect;
 use geom::size::Size2D;
-use layers::texturegl::Texture;
+use platform::macos::surface::{NativeSurface, NativeSurfaceMethods};
 
 use constellation_msg::PipelineId;
 
 #[deriving(Clone)]
 pub struct LayerBuffer {
-    texture: Arc<Texture>,
+    /// The native surface which can be shared between processes. On Mac this is an `IOSurface`;
+    /// on Linux this is an X Pixmap; on Android this is an `EGLImageKHR`. This must be atomically
+    /// reference countable.
+    native_surface: NativeSurface,
 
-    // The rect in the containing RenderLayer that this represents.
+    /// The rect in the containing RenderLayer that this represents.
     rect: Rect<f32>,
 
-    // The rect in pixels that will be drawn to the screen.
+    /// The rect in pixels that will be drawn to the screen.
     screen_pos: Rect<uint>,
 
-    // The scale at which this tile is rendered
+    /// The scale at which this tile is rendered
     resolution: f32,
 
-    // NB: stride is in pixels, like OpenGL GL_UNPACK_ROW_LENGTH.
+    /// NB: stride is in pixels, like OpenGL GL_UNPACK_ROW_LENGTH.
     stride: uint,
 }
 

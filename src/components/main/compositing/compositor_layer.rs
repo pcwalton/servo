@@ -4,6 +4,7 @@
 
 use compositing::quadtree::{Quadtree, Normal, Invalid, Hidden};
 use constellation::{SendableChildFrameTree, SendableFrameTree};
+use extra::arc::Arc;
 use geom::matrix::identity;
 use geom::point::Point2D;
 use geom::rect::Rect;
@@ -11,11 +12,13 @@ use geom::size::Size2D;
 use gfx::render_task::{ReRenderMsg, UnusedBufferMsg};
 use layers::layers::{ContainerLayerKind, ContainerLayer, NoFlip, TextureLayerKind, TextureLayer};
 use layers::layers::{TextureManager, VerticalFlip};
+use layers::texturegl::Texture;
 use pipeline::Pipeline;
 use script::dom::event::{ClickEvent, MouseDownEvent, MouseUpEvent};
 use script::script_task::SendEventMsg;
 use servo_msg::compositor_msg::{LayerBuffer, LayerBufferSet, Epoch};
 use servo_msg::constellation_msg::PipelineId;
+use servo_msg::platform::macos::surface::{NativeSurface, NativeSurfaceMethods};
 use std::cell::Cell;
 use windowing::{MouseWindowEvent, MouseWindowClickEvent, MouseWindowMouseDownEvent, MouseWindowMouseUpEvent};
 
@@ -423,6 +426,9 @@ impl CompositorLayer {
         for buffer in all_tiles.iter() {
             debug!("osmain: compositing buffer rect %?", &buffer.rect);
 
+            let size = Size2D(buffer.screen_pos.size.width as int,
+                              buffer.screen_pos.size.height as int);
+
             // Find or create a texture layer.
             let texture_layer;
             current_layer_child = match current_layer_child {
@@ -433,7 +439,13 @@ impl CompositorLayer {
                     } else {
                         VerticalFlip
                     };
-                    texture_layer = @mut TextureLayer::new(buffer.texture.clone(),
+
+                    // Make a new texture and bind the layer buffer's surface to it.
+                    let texture = Texture::new();
+                    debug!("COMPOSITOR binding to native surface %d",
+                           buffer.native_surface.get_id() as int);
+                    buffer.native_surface.bind_to_texture(&texture, size);
+                    texture_layer = @mut TextureLayer::new(Arc::new(texture),
                                                            buffer.screen_pos.size,
                                                            flip);
                     self.root_layer.add_child_end(TextureLayerKind(texture_layer));
@@ -441,8 +453,8 @@ impl CompositorLayer {
                 }
                 Some(TextureLayerKind(existing_texture_layer)) => {
                     texture_layer = existing_texture_layer;
-                    texture_layer.texture = buffer.texture.clone();
-                    
+                    buffer.native_surface.bind_to_texture(texture_layer.texture.get(), size);
+
                     // Move on to the next sibling.
                     do current_layer_child.unwrap().with_common |common| {
                         common.next_sibling
@@ -450,7 +462,6 @@ impl CompositorLayer {
                 }
                 Some(_) => fail!(~"found unexpected layer kind"),
             };
-            
 
             let rect = buffer.rect;
             // Set the layer's transform.
