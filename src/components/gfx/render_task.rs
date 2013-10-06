@@ -86,15 +86,9 @@ impl<T: Send> GenericSmartChan<Msg<T>> for RenderChan<T> {
     }
 }
 
-// This is subtle. Depending on whether we're doing CPU rendering or not, this stores two different
-// values:
-//
-// * In CPU rendering mode, this will be a `GLContext` that is safe to use on this thread.
-//
-// * In GPU rendering mode, this will be an `AzGLContext` that is *not* safe to use on this thread.
-//   Instead draw targets must be created from it and then rendered into.
+/// If we're using GPU rendering, this shares the GL context with the main thread.
 enum GraphicsContext {
-    CpuGraphicsContext(GLContext),
+    CpuGraphicsContext,
     GpuGraphicsContext(AzGLContext),
 }
 
@@ -155,7 +149,7 @@ impl<C: RenderListener + Send,T:Send+Freeze> RenderTask<C,T> {
                 profiler_chan: profiler_chan,
 
                 graphics_context: if cpu_painting {
-                    CpuGraphicsContext(GLContext::new_with_shared_context(share_gl_context))
+                    CpuGraphicsContext
                 } else {
                     GpuGraphicsContext(share_gl_context)
                 },
@@ -255,7 +249,7 @@ impl<C: RenderListener + Send,T:Send+Freeze> RenderTask<C,T> {
                     // FIXME(pcwalton): Cache draw targets; don't recreate them all the time.
                     let size = Size2D(width as i32, height as i32);
                     let draw_target = match self.graphics_context {
-                        CpuGraphicsContext(_) => {
+                        CpuGraphicsContext => {
                             DrawTarget::new(self.opts.render_backend, size, B8G8R8A8)
                         }
                         GpuGraphicsContext(share_gl_context) => {
@@ -268,12 +262,9 @@ impl<C: RenderListener + Send,T:Send+Freeze> RenderTask<C,T> {
 
                     // Make the appropriate context current.
                     match self.graphics_context {
-                        CpuGraphicsContext(ref context) => context.make_current(),
+                        CpuGraphicsContext => {}
                         GpuGraphicsContext(_) => draw_target.make_current(),
                     }
-
-                    // FIXME(pcwalton): This might be wrong
-                    let texture = Texture::new();
 
                     let mut buffer = match self.buffer_map.find(tile.screen_rect.size) {
                         Some(buffer) => {
@@ -330,8 +321,7 @@ impl<C: RenderListener + Send,T:Send+Freeze> RenderTask<C,T> {
                     // Extract the texture from the draw target and place it into its slot in the
                     // buffer. If using CPU rendering, upload it first.
                     match self.graphics_context {
-                        CpuGraphicsContext(ref context) => {
-                            context.make_current();
+                        CpuGraphicsContext => {
                             do draw_target.snapshot().get_data_surface().with_data |data| {
                                 buffer.native_surface.upload(data);
                                 debug!("RENDERER uploading to native surface %d",
