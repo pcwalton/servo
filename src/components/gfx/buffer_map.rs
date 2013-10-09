@@ -15,7 +15,7 @@ pub struct BufferMap<T> {
     map: HashMap<BufferKey, BufferValue<T>>,
     /// The current amount of memory stored by the BufferMap's buffers.
     mem: uint,
-    /// The maximum allowed memory. Unused buffers willl be deleted
+    /// The maximum allowed memory. Unused buffers will be deleted
     /// when this threshold is exceeded.
     max_mem: uint,
     /// A monotonically increasing counter to track how recently tile sizes were used.

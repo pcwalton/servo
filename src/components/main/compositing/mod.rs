@@ -8,7 +8,8 @@ pub use windowing;
 use windowing::{ApplicationMethods, WindowEvent, WindowMethods};
 use windowing::{IdleWindowEvent, ResizeWindowEvent, LoadUrlWindowEvent, MouseWindowEventClass};
 use windowing::{ScrollWindowEvent, ZoomWindowEvent, NavigationWindowEvent, FinishedWindowEvent};
-use windowing::{QuitWindowEvent, MouseWindowClickEvent, MouseWindowMouseDownEvent, MouseWindowMouseUpEvent};
+use windowing::{QuitWindowEvent, MouseWindowClickEvent, MouseWindowMouseDownEvent};
+use windowing::{MouseWindowMouseUpEvent};
 
 use servo_msg::compositor_msg::{RenderListener, LayerBufferSet, RenderState};
 use servo_msg::compositor_msg::{ReadyState, ScriptListener, Epoch};
@@ -17,7 +18,8 @@ use servo_msg::constellation_msg;
 use gfx::opts::Opts;
 
 use azure::azure_hl::{DataSourceSurface, DrawTarget, SourceSurfaceMethods, current_gl_context};
-use azure::azure::AzGLContext;
+use azure::azure_hl::{gl_context_pixel_format};
+use azure::azure::AzGLPixelFormatRef;
 use std::comm;
 use std::comm::{Chan, SharedChan, Port};
 use std::num::Orderable;
@@ -74,10 +76,9 @@ impl ScriptListener for CompositorChan {
 
 /// Implementation of the abstract `RenderListener` interface.
 impl RenderListener for CompositorChan {
-
-    fn get_gl_context(&self) -> AzGLContext {
+    fn get_gl_pixel_format(&self) -> AzGLPixelFormatRef {
         let (port, chan) = comm::stream();
-        self.chan.send(GetGLContext(chan));
+        self.chan.send(GetGLPixelFormat(chan));
         port.recv()
     }
 
@@ -135,8 +136,8 @@ pub enum Msg {
     Exit,
     /// Requests the window size
     GetSize(Chan<Size2D<int>>),
-    /// Requests the compositors GL context.
-    GetGLContext(Chan<AzGLContext>),
+    /// Requests the compositors GL pixel format.
+    GetGLPixelFormat(Chan<AzGLPixelFormatRef>),
 
     /// Alerts the compositor that there is a new layer to be rendered.
     NewLayer(PipelineId, Size2D<f32>),
@@ -240,7 +241,7 @@ impl CompositorTask {
 
                         let layer = CompositorLayer::from_frame_tree(frame_tree,
                                                                      self.opts.tile_size,
-                                                                     Some(10000000u),
+                                                                     Some(5000000),
                                                                      self.opts.cpu_painting);
                         root_layer.add_child_start(ContainerLayerKind(layer.root_layer));
                         compositor_layer = Some(layer);
@@ -253,7 +254,9 @@ impl CompositorTask {
                         chan.send(Size2D(size.width as int, size.height as int));
                     }
 
-                    GetGLContext(chan) => chan.send(current_gl_context()),
+                    GetGLPixelFormat(chan) => {
+                        chan.send(gl_context_pixel_format(current_gl_context()))
+                    }
 
                     NewLayer(_id, new_size) => {
                         // FIXME: This should create an additional layer instead of replacing the
@@ -268,7 +271,7 @@ impl CompositorTask {
                         let new_layer = CompositorLayer::new(p,
                                                              Some(page_size),
                                                              self.opts.tile_size,
-                                                             Some(10000000u),
+                                                             Some(10000000),
                                                              self.opts.cpu_painting);
                         
                         let current_child = root_layer.first_child;

@@ -4,21 +4,22 @@
 
 use compositing::quadtree::{Quadtree, Normal, Invalid, Hidden};
 use constellation::{SendableChildFrameTree, SendableFrameTree};
-use extra::arc::Arc;
 use geom::matrix::identity;
 use geom::point::Point2D;
 use geom::rect::Rect;
 use geom::size::Size2D;
 use gfx::render_task::{ReRenderMsg, UnusedBufferMsg};
-use layers::layers::{ContainerLayerKind, ContainerLayer, NoFlip, TextureLayerKind, TextureLayer};
-use layers::layers::{TextureManager, VerticalFlip};
-use layers::texturegl::Texture;
+use layers::layers::{ContainerLayerKind, ContainerLayer, NoFlip, SurfaceLayerKind, SurfaceLayer};
+use layers::layers::{VerticalFlip};
+use layers::platform::macos::surface::NativeSurfaceMethods;
+use layers::surfacetexture::SurfaceTexture;
+use layers::texturegl::{Texture, TextureTargetRectangle};
 use pipeline::Pipeline;
 use script::dom::event::{ClickEvent, MouseDownEvent, MouseUpEvent};
 use script::script_task::SendEventMsg;
 use servo_msg::compositor_msg::{LayerBuffer, LayerBufferSet, Epoch};
 use servo_msg::constellation_msg::PipelineId;
-use servo_msg::platform::macos::surface::{NativeSurface, NativeSurfaceMethods};
+use servo_msg::platform::macos::surface::NativeSurfaceAzureMethods;
 use std::cell::Cell;
 use windowing::{MouseWindowEvent, MouseWindowClickEvent, MouseWindowMouseDownEvent, MouseWindowMouseUpEvent};
 
@@ -99,8 +100,8 @@ impl CompositorLayer {
             children: ~[],
             quadtree: match page_size {
                 None => NoTree(tile_size, max_mem),
-                Some(page_size) => Tree(Quadtree::new(page_size.width as uint,
-                                                      page_size.height as uint,
+                Some(page_size) => Tree(Quadtree::new(Size2D(page_size.width as uint,
+                                                             page_size.height as uint),
                                                       tile_size,
                                                       max_mem)),
             },
@@ -340,10 +341,10 @@ impl CompositorLayer {
                                                                                    new_size.height as uint)));
                 }
                 NoTree(tile_size, max_mem) => {
-                    self.quadtree = Tree(Quadtree::new(new_size.width as uint,
-                                                       new_size.height as uint,
+                    self.quadtree = Tree(Quadtree::new(Size2D(new_size.width as uint,
+                                                              new_size.height as uint),
                                                        tile_size,
-                                                       max_mem));
+                                                       max_mem))
                 }
             }
             // Call scroll for bounds checking if the page shrunk. Use (-1, -1) as the cursor position
@@ -371,10 +372,10 @@ impl CompositorLayer {
                                                                                         new_size.height as uint)));
                     }
                     NoTree(tile_size, max_mem) => {
-                        child.quadtree = Tree(Quadtree::new(new_size.width as uint,
-                                                            new_size.height as uint,
+                        child.quadtree = Tree(Quadtree::new(Size2D(new_size.width as uint,
+                                                                   new_size.height as uint),
                                                             tile_size,
-                                                            max_mem));
+                                                            max_mem))
                     }
                 }
                 match child_node.container.scissor {
@@ -430,7 +431,7 @@ impl CompositorLayer {
                               buffer.screen_pos.size.height as int);
 
             // Find or create a texture layer.
-            let texture_layer;
+            let surface_layer;
             current_layer_child = match current_layer_child {
                 None => {
                     debug!("osmain: adding new texture layer");
@@ -441,19 +442,26 @@ impl CompositorLayer {
                     };
 
                     // Make a new texture and bind the layer buffer's surface to it.
-                    let texture = Texture::new();
+                    let target = TextureTargetRectangle(Size2D(size.width as uint,
+                                                               size.height as uint));
+                    let texture = Texture::new(target);
                     debug!("COMPOSITOR binding to native surface %d",
                            buffer.native_surface.get_id() as int);
                     buffer.native_surface.bind_to_texture(&texture, size);
-                    texture_layer = @mut TextureLayer::new(Arc::new(texture),
-                                                           buffer.screen_pos.size,
-                                                           flip);
-                    self.root_layer.add_child_end(TextureLayerKind(texture_layer));
+                    let surface = SurfaceTexture {
+                        native_surface: buffer.native_surface.clone(),
+                        texture: texture,
+                    };
+                    surface_layer = @mut SurfaceLayer::new(surface, buffer.screen_pos.size, flip);
+                    self.root_layer.add_child_end(SurfaceLayerKind(surface_layer));
                     None
                 }
-                Some(TextureLayerKind(existing_texture_layer)) => {
-                    texture_layer = existing_texture_layer;
-                    buffer.native_surface.bind_to_texture(texture_layer.texture.get(), size);
+                Some(SurfaceLayerKind(existing_surface_layer)) => {
+                    surface_layer = existing_surface_layer;
+
+                    let surface_texture = &mut surface_layer.surface_texture;
+                    buffer.native_surface.bind_to_texture(&surface_texture.texture, size);
+                    surface_texture.native_surface = buffer.native_surface.clone();
 
                     // Move on to the next sibling.
                     do current_layer_child.unwrap().with_common |common| {
@@ -467,7 +475,7 @@ impl CompositorLayer {
             // Set the layer's transform.
             let transform = identity().translate(rect.origin.x, rect.origin.y, 0.0);
             let transform = transform.scale(rect.size.width, rect.size.height, 1.0);
-            texture_layer.common.set_transform(transform);
+            surface_layer.common.set_transform(transform);
         }
 
         // Add child layers.

@@ -4,20 +4,22 @@
 
 // The task that handles all rendering/painting.
 
-use azure::azure_hl::{B8G8R8A8, DrawTarget, GLContext};
+use azure::azure_hl::{B8G8R8A8, DrawTarget, GLContext, StolenGLResources};
 use azure::azure_hl;
-use azure::{AzFloat, AzGLContext};
+use azure::{AzFloat, AzGLContext, AzGLPixelFormatRef};
 use display_list::DisplayList;
 use font_context::FontContext;
 use geom::matrix2d::Matrix2D;
 use geom::rect::Rect;
 use geom::size::Size2D;
 use layers::layers::ARGB32Format;
-use layers::texturegl::{Texture, TextureImageData};
+use layers::texturegl::{Texture, TextureImageData, TextureTargetRectangle};
+use layers::platform::macos::surface::{NativeSurface, NativeSurfaceMethods};
+use layers;
 use servo_msg::compositor_msg::{LayerBufferSet, Epoch};
 use servo_msg::compositor_msg::{RenderListener, IdleRenderState, RenderingRenderState, LayerBuffer};
 use servo_msg::constellation_msg::{ConstellationChan, PipelineId, RendererReadyMsg};
-use servo_msg::platform::macos::surface::{NativeSurface, NativeSurfaceMethods};
+use servo_msg::platform::macos::surface::NativeSurfaceAzureMethods;
 use servo_util::time::{ProfilerChan, profile};
 use servo_util::time;
 
@@ -89,7 +91,7 @@ impl<T: Send> GenericSmartChan<Msg<T>> for RenderChan<T> {
 /// If we're using GPU rendering, this shares the GL context with the main thread.
 enum GraphicsContext {
     CpuGraphicsContext,
-    GpuGraphicsContext(AzGLContext),
+    GpuGraphicsContext(AzGLPixelFormatRef),
 }
 
 pub struct RenderTask<C,T> {
@@ -133,7 +135,7 @@ impl<C: RenderListener + Send,T:Send+Freeze> RenderTask<C,T> {
         do spawn_with((port, compositor, constellation_chan, opts, profiler_chan))
             |(port, compositor, constellation_chan, opts, profiler_chan)| {
 
-            let share_gl_context = compositor.get_gl_context();
+            let share_gl_pixel_format = compositor.get_gl_pixel_format();
             let cpu_painting = opts.cpu_painting;
 
             // FIXME: rust/#5967
@@ -151,7 +153,7 @@ impl<C: RenderListener + Send,T:Send+Freeze> RenderTask<C,T> {
                 graphics_context: if cpu_painting {
                     CpuGraphicsContext
                 } else {
-                    GpuGraphicsContext(share_gl_context)
+                    GpuGraphicsContext(share_gl_pixel_format)
                 },
 
                 render_layer: None,
@@ -247,14 +249,17 @@ impl<C: RenderListener + Send,T:Send+Freeze> RenderTask<C,T> {
                     let height = tile.screen_rect.size.height;
 
                     // FIXME(pcwalton): Cache draw targets; don't recreate them all the time.
+                    //
+                    // This is especially bad now that we're using separate GL contexts instead of
+                    // one shared one.
                     let size = Size2D(width as i32, height as i32);
                     let draw_target = match self.graphics_context {
                         CpuGraphicsContext => {
                             DrawTarget::new(self.opts.render_backend, size, B8G8R8A8)
                         }
-                        GpuGraphicsContext(share_gl_context) => {
+                        GpuGraphicsContext(share_gl_pixel_format) => {
                             DrawTarget::new_with_fbo(self.opts.render_backend,
-                                                     share_gl_context,
+                                                     share_gl_pixel_format,
                                                      size,
                                                      B8G8R8A8)
                         }
@@ -279,8 +284,8 @@ impl<C: RenderListener + Send,T:Send+Freeze> RenderTask<C,T> {
                             //
                             // FIXME(pcwalton): This is wasteful if GPU rendering is being used!
                             let native_surface: NativeSurface =
-                                NativeSurfaceMethods::new(Size2D(width as i32, height as i32),
-                                                          width as i32 * 4);
+                                layers::platform::macos::surface::NativeSurfaceMethods::new(
+                                    Size2D(width as i32, height as i32), width as i32 * 4);
                             ~LayerBuffer {
                                 native_surface: native_surface,
                                 rect: tile.page_rect,
@@ -330,9 +335,12 @@ impl<C: RenderListener + Send,T:Send+Freeze> RenderTask<C,T> {
                         }
                         GpuGraphicsContext(_) => {
                             draw_target.make_current();
-                            let texture_id = draw_target.steal_texture_id().unwrap();
-                            // TODO(pcwalton)
-                            //buffer.texture = Arc::new(Texture::adopt_native_texture(texture_id));
+                            let StolenGLResources {
+                                surface: native_surface
+                            } = draw_target.steal_gl_resources().unwrap();
+
+                            buffer.native_surface =
+                                NativeSurfaceAzureMethods::from_azure_surface(native_surface);
                         }
                     }
                     

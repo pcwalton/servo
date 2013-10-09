@@ -112,6 +112,7 @@ DEPS_rust-azure += \
 	rust-core-text \
 	rust-core-foundation \
 	rust-cocoa \
+	rust-io-surface \
 	rust \
 	$(NULL)
 
@@ -149,6 +150,7 @@ DEPS_rust-layers += \
 	rust-core-foundation \
 	rust-core-graphics \
 	rust-core-text \
+	rust-io-surface \
 	rust-cocoa \
 	rust \
 	$(NULL)

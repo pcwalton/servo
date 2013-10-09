@@ -3,11 +3,11 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 use azure::azure_hl::DrawTarget;
-use azure::azure::AzGLContext;
+use azure::azure::AzGLPixelFormatRef;
 use extra::arc::Arc;
 use geom::rect::Rect;
 use geom::size::Size2D;
-use platform::macos::surface::{NativeSurface, NativeSurfaceMethods};
+use layers::platform::macos::surface::NativeSurface;
 
 use constellation_msg::PipelineId;
 
@@ -70,7 +70,7 @@ impl Epoch {
 /// The interface used by the renderer to acquire draw targets for each render frame and
 /// submit them to be drawn to the display.
 pub trait RenderListener {
-    fn get_gl_context(&self) -> AzGLContext;
+    fn get_gl_pixel_format(&self) -> AzGLPixelFormatRef;
     fn new_layer(&self, PipelineId, Size2D<uint>);
     fn set_layer_page_size(&self, PipelineId, Size2D<uint>, Epoch);
     fn set_layer_clip_rect(&self, PipelineId, Rect<uint>);

@@ -75,9 +75,9 @@ impl<T: Tile> Quadtree<T> {
     /// Takes in the initial width and height of the space, a maximum tile size, and
     /// a maximum amount of memory. Tiles will be deleted if this memory is exceeded.
     /// Set max_mem to None to turn off automatic tile removal.
-    pub fn new(width: uint, height: uint, tile_size: uint, max_mem: Option<uint>) -> Quadtree<T> {
+    pub fn new(clip_size: Size2D<uint>, tile_size: uint, max_mem: Option<uint>) -> Quadtree<T> {
         // Spaces must be squares and powers of 2, so expand the space until it is
-        let longer = width.max(&height);
+        let longer = clip_size.width.max(&clip_size.height);
         let num_tiles = div_ceil(longer, tile_size);
         let power_of_two = next_power_of_two(num_tiles);
         let size = power_of_two * tile_size;
@@ -91,7 +91,7 @@ impl<T: Tile> Quadtree<T> {
                 tile_mem: 0,
                 status: Normal,
             },
-            clip_size: Size2D(width, height),
+            clip_size: clip_size,
             max_tile_size: tile_size,
             max_mem: max_mem,
         }
@@ -111,7 +111,7 @@ impl<T: Tile> Quadtree<T> {
         self.root.get_tile(x, y)
     }
 
-    /// Add a tile associtated with a given pixel position and scale.
+    /// Add a tile associated with a given pixel position and scale.
     /// If the tile pushes the total memory over its maximum, tiles will be removed
     /// until total memory is below the maximum again. These tiles are returned.
     pub fn add_tile_pixel(&mut self, x: uint, y: uint, scale: f32, tile: T) -> ~[T] {
@@ -133,7 +133,7 @@ impl<T: Tile> Quadtree<T> {
         tiles
     }
 
-    /// Add a tile associtated with a given page position.
+    /// Add a tile associated with a given page position.
     /// If the tile pushes the total memory over its maximum, tiles will be removed
     /// until total memory is below the maximum again. These tiles are returned.
     pub fn add_tile_page(&mut self, x: f32, y: f32, scale: f32, tile: T) -> ~[T] {
@@ -152,6 +152,11 @@ impl<T: Tile> Quadtree<T> {
             None => {} // Nothing to do
         }
         tiles
+    }
+
+    /// Helper function to prune tiles until memory usage falls below the high water mark.
+    fn delete_tiles_as_necessary(&mut self) {
+        // ...
     }
 
     /// Get the tile rect in screen and page coordinates for a given pixel position.
