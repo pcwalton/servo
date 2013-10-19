@@ -5,7 +5,7 @@
 // This file is a Mako template: http://www.makotemplates.org/
 
 use std::ascii::StrAsciiExt;
-pub use std::iterator;
+pub use std::iter;
 pub use cssparser::*;
 pub use style::errors::{ErrorLoggerIterator, log_css_error};
 pub use style::parsing_utils::*;
@@ -63,7 +63,7 @@ pub mod longhands {
         <%self:longhand name="${name}" inherited="${inherited}">
             ${caller.body()}
             pub fn parse(input: &[ComponentValue]) -> Option<SpecifiedValue> {
-                one_component_value(input).chain(from_component_value)
+                one_component_value(input).and_then(from_component_value)
             }
         </%self:longhand>
     </%def>
@@ -82,7 +82,7 @@ pub mod longhands {
                 ${to_rust_ident(values.split()[0])}
             }
             pub fn from_component_value(v: &ComponentValue) -> Option<SpecifiedValue> {
-                do get_ident_lower(v).chain |keyword| {
+                do get_ident_lower(v).and_then |keyword| {
                     match keyword.as_slice() {
                         % for value in values.split():
                             "${value}" => Some(${to_rust_ident(value)}),
@@ -101,7 +101,7 @@ pub mod longhands {
             pub type ComputedValue = computed::${type};
             #[inline] pub fn get_initial_value() -> ComputedValue { ${initial_value} }
             pub fn parse(input: &[ComponentValue]) -> Option<SpecifiedValue> {
-                one_component_value(input).chain(specified::${type}::${parse_method})
+                one_component_value(input).and_then(specified::${type}::${parse_method})
             }
         </%self:longhand>
     </%def>
@@ -153,7 +153,7 @@ pub mod longhands {
                 computed::Length(3 * 60)  // medium
             }
             pub fn parse(input: &[ComponentValue]) -> Option<SpecifiedValue> {
-                one_component_value(input).chain(parse_border_width)
+                one_component_value(input).and_then(parse_border_width)
             }
             pub fn to_computed_value(value: SpecifiedValue, context: &computed::Context)
                                   -> ComputedValue {
@@ -489,10 +489,10 @@ pub mod shorthands {
             // two values set (top, bottom) and (left, right)
             // three values set top, (left, right) and bottom
             // four values set them in order
-            let top = iter.next().unwrap_or_default(None);
-            let right = iter.next().unwrap_or_default(top);
-            let bottom = iter.next().unwrap_or_default(top);
-            let left = iter.next().unwrap_or_default(right);
+            let top = iter.next().unwrap_or(None);
+            let right = iter.next().unwrap_or(top);
+            let bottom = iter.next().unwrap_or(top);
+            let left = iter.next().unwrap_or(right);
             if top.is_some() && right.is_some() && bottom.is_some() && left.is_some()
             && iter.next().is_none() {
                 Some(Longhands {
@@ -509,7 +509,7 @@ pub mod shorthands {
 
     // TODO: other background-* properties
     <%self:shorthand name="background" sub_properties="background-color">
-        do one_component_value(input).chain(specified::CSSColor::parse).map_move |color| {
+        do one_component_value(input).and_then(specified::CSSColor::parse).map_move |color| {
             Longhands { background_color: Some(color) }
         }
     </%self:shorthand>
@@ -619,7 +619,7 @@ pub enum CSSWideKeyword {
 
 impl CSSWideKeyword {
     pub fn parse(input: &[ComponentValue]) -> Option<CSSWideKeyword> {
-        do one_component_value(input).chain(get_ident_lower).chain |keyword| {
+        do one_component_value(input).and_then(get_ident_lower).and_then |keyword| {
             match keyword.as_slice() {
                 "initial" => Some(Initial),
                 "inherit" => Some(Inherit),

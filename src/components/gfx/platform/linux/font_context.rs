@@ -18,7 +18,7 @@ struct FreeTypeLibraryHandle {
 
 impl Drop for FreeTypeLibraryHandle {
     #[fixed_stack_segment]
-    fn drop(&self) {
+    fn drop(&mut self) {
         assert!(self.ctx.is_not_null());
         unsafe {
             FT_Done_FreeType(self.ctx);
@@ -53,7 +53,7 @@ impl FontContextHandleMethods for FontContextHandle {
     fn create_font_from_identifier(&self, name: ~str, style: UsedFontStyle)
                                 -> Result<FontHandle, ()> {
         debug!("Creating font handle for %s", name);
-        do path_from_identifier(name, &style).chain |file_name| {
+        do path_from_identifier(name, &style).and_then |file_name| {
             debug!("Opening font face %s", file_name);
             FontHandle::new_from_file(self, file_name, &style)
         }

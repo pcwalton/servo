@@ -6,7 +6,7 @@
 
 use azure::azure_hl::{B8G8R8A8, DrawTarget, GLContext, StolenGLResources};
 use azure::azure_hl;
-use azure::{AzFloat, AzGLContext, AzGLPixelFormatRef};
+use azure::{AzFloat, AzGLContext, AzGLContextMetadataRef};
 use display_list::DisplayList;
 use font_context::FontContext;
 use geom::matrix2d::Matrix2D;
@@ -14,17 +14,19 @@ use geom::rect::Rect;
 use geom::size::Size2D;
 use layers::layers::ARGB32Format;
 use layers::texturegl::{Texture, TextureImageData, TextureTargetRectangle};
-use layers::platform::macos::surface::{NativeSurface, NativeSurfaceMethods};
+use layers::platform::surface::{NativeGraphicsMetadata, NativePaintingGraphicsContext};
+use layers::platform::surface::{NativeSurface, NativeSurfaceMethods};
 use layers;
 use servo_msg::compositor_msg::{LayerBufferSet, Epoch};
 use servo_msg::compositor_msg::{RenderListener, IdleRenderState, RenderingRenderState, LayerBuffer};
 use servo_msg::constellation_msg::{ConstellationChan, PipelineId, RendererReadyMsg};
-use servo_msg::platform::macos::surface::NativeSurfaceAzureMethods;
+use servo_msg::platform::surface::NativeSurfaceAzureMethods;
 use servo_util::time::{ProfilerChan, profile};
 use servo_util::time;
 
 use std::comm::{Chan, Port, SharedChan};
 use std::task::spawn_with;
+use std::util;
 use extra::arc::Arc;
 
 use buffer_map::BufferMap;
@@ -88,10 +90,11 @@ impl<T: Send> GenericSmartChan<Msg<T>> for RenderChan<T> {
     }
 }
 
-/// If we're using GPU rendering, this shares the GL context with the main thread.
+/// If we're using GPU rendering, this provides the metadata needed to create a GL context that
+/// is compatible with that of the main thread.
 enum GraphicsContext {
-    CpuGraphicsContext,
-    GpuGraphicsContext(AzGLPixelFormatRef),
+    CpuGraphicsContext(NativeGraphicsMetadata),
+    GpuGraphicsContext(NativeGraphicsMetadata),
 }
 
 pub struct RenderTask<C,T> {
@@ -107,6 +110,9 @@ pub struct RenderTask<C,T> {
 
     /// The graphics context to use.
     graphics_context: GraphicsContext,
+
+    /// The native graphics context.
+    native_graphics_context: NativePaintingGraphicsContext,
 
     /// The layer to be rendered
     render_layer: Option<RenderLayer<T>>,
@@ -131,12 +137,13 @@ impl<C: RenderListener + Send,T:Send+Freeze> RenderTask<C,T> {
                   constellation_chan: ConstellationChan,
                   opts: Opts,
                   profiler_chan: ProfilerChan) {
-
         do spawn_with((port, compositor, constellation_chan, opts, profiler_chan))
             |(port, compositor, constellation_chan, opts, profiler_chan)| {
 
-            let share_gl_pixel_format = compositor.get_gl_pixel_format();
+            let graphics_metadata = compositor.get_graphics_metadata();
             let cpu_painting = opts.cpu_painting;
+            let native_graphics_context =
+                    NativePaintingGraphicsContext::from_metadata(&graphics_metadata);
 
             // FIXME: rust/#5967
             let mut render_task = RenderTask {
@@ -151,10 +158,12 @@ impl<C: RenderListener + Send,T:Send+Freeze> RenderTask<C,T> {
                 profiler_chan: profiler_chan,
 
                 graphics_context: if cpu_painting {
-                    CpuGraphicsContext
+                    CpuGraphicsContext(graphics_metadata)
                 } else {
-                    GpuGraphicsContext(share_gl_pixel_format)
+                    GpuGraphicsContext(graphics_metadata)
                 },
+
+                native_graphics_context: native_graphics_context,
 
                 render_layer: None,
 
@@ -165,6 +174,9 @@ impl<C: RenderListener + Send,T:Send+Freeze> RenderTask<C,T> {
             };
 
             render_task.start();
+
+            // Destroy all the buffers.
+            render_task.buffer_map.clear(&render_task.native_graphics_context)
         }
     }
 
@@ -193,7 +205,7 @@ impl<C: RenderListener + Send,T:Send+Freeze> RenderTask<C,T> {
                 UnusedBufferMsg(unused_buffers) => {
                     // move_rev_iter is more efficient
                     for buffer in unused_buffers.move_rev_iter() {
-                        self.buffer_map.insert(buffer);
+                        self.buffer_map.insert(&self.native_graphics_context, buffer);
                     }
                 }
                 PaintPermissionGranted => {
@@ -209,9 +221,10 @@ impl<C: RenderListener + Send,T:Send+Freeze> RenderTask<C,T> {
                     // the compositor will ask for. However, even if it sends the right
                     // tiles, the compositor still asks for them, and they will be
                     // re-rendered redundantly.
-                    match self.last_paint_msg {
-                        Some(ref layer_buffer_set) => {
-                            self.compositor.paint(self.id, layer_buffer_set.clone(), self.epoch);
+                    let last_paint_msg = util::replace(&mut self.last_paint_msg, None);
+                    match last_paint_msg {
+                        Some(layer_buffer_set) => {
+                            self.compositor.paint(self.id, layer_buffer_set, self.epoch);
                         }
                         None => {} // Nothing to do
                     }
@@ -238,7 +251,6 @@ impl<C: RenderListener + Send,T:Send+Freeze> RenderTask<C,T> {
 
         self.compositor.set_render_state(RenderingRenderState);
         do time::profile(time::RenderingCategory, self.profiler_chan.clone()) {
-
             // FIXME: Try not to create a new array here.
             let mut new_buffers = ~[];
 
@@ -254,12 +266,13 @@ impl<C: RenderListener + Send,T:Send+Freeze> RenderTask<C,T> {
                     // one shared one.
                     let size = Size2D(width as i32, height as i32);
                     let draw_target = match self.graphics_context {
-                        CpuGraphicsContext => {
+                        CpuGraphicsContext(_) => {
                             DrawTarget::new(self.opts.render_backend, size, B8G8R8A8)
                         }
-                        GpuGraphicsContext(share_gl_pixel_format) => {
+                        GpuGraphicsContext(ref graphics_metadata) => {
+                            println(fmt!("*** size=%?", size));
                             DrawTarget::new_with_fbo(self.opts.render_backend,
-                                                     share_gl_pixel_format,
+                                                     graphics_metadata,
                                                      size,
                                                      B8G8R8A8)
                         }
@@ -267,8 +280,8 @@ impl<C: RenderListener + Send,T:Send+Freeze> RenderTask<C,T> {
 
                     // Make the appropriate context current.
                     match self.graphics_context {
-                        CpuGraphicsContext => {}
-                        GpuGraphicsContext(_) => draw_target.make_current(),
+                        CpuGraphicsContext(_) => {}
+                        GpuGraphicsContext(*) => draw_target.make_current(),
                     }
 
                     let mut buffer = match self.buffer_map.find(tile.screen_rect.size) {
@@ -283,9 +296,15 @@ impl<C: RenderListener + Send,T:Send+Freeze> RenderTask<C,T> {
                             // Create an empty texture to use as a placeholder.
                             //
                             // FIXME(pcwalton): This is wasteful if GPU rendering is being used!
+                            let native_graphics_metadata = match self.graphics_context {
+                                CpuGraphicsContext(metadata) => metadata,
+                                GpuGraphicsContext(metadata) => metadata,
+                            };
                             let native_surface: NativeSurface =
-                                layers::platform::macos::surface::NativeSurfaceMethods::new(
-                                    Size2D(width as i32, height as i32), width as i32 * 4);
+                                layers::platform::surface::NativeSurfaceMethods::new(
+                                    &self.native_graphics_context,
+                                    Size2D(width as i32, height as i32),
+                                    width as i32 * 4);
                             ~LayerBuffer {
                                 native_surface: native_surface,
                                 rect: tile.page_rect,
@@ -326,14 +345,14 @@ impl<C: RenderListener + Send,T:Send+Freeze> RenderTask<C,T> {
                     // Extract the texture from the draw target and place it into its slot in the
                     // buffer. If using CPU rendering, upload it first.
                     match self.graphics_context {
-                        CpuGraphicsContext => {
+                        CpuGraphicsContext(_) => {
                             do draw_target.snapshot().get_data_surface().with_data |data| {
-                                buffer.native_surface.upload(data);
+                                buffer.native_surface.upload(&self.native_graphics_context, data);
                                 debug!("RENDERER uploading to native surface %d",
                                        buffer.native_surface.get_id() as int);
                             }
                         }
-                        GpuGraphicsContext(_) => {
+                        GpuGraphicsContext(ref graphics_metadata) => {
                             draw_target.make_current();
                             let StolenGLResources {
                                 surface: native_surface
@@ -354,12 +373,12 @@ impl<C: RenderListener + Send,T:Send+Freeze> RenderTask<C,T> {
 
             debug!("render_task: returning surface");
             if self.paint_permission {
-                self.compositor.paint(self.id, layer_buffer_set.clone(), self.epoch);
+                self.compositor.paint(self.id, layer_buffer_set, self.epoch);
             } else {
                 self.constellation_chan.send(RendererReadyMsg(self.id));
             }
             debug!("caching paint msg");
-            self.last_paint_msg = Some(layer_buffer_set);
+            //self.last_paint_msg = Some(layer_buffer_set);
             self.compositor.set_render_state(IdleRenderState);
         }
     }

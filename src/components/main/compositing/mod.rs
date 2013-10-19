@@ -12,14 +12,14 @@ use windowing::{QuitWindowEvent, MouseWindowClickEvent, MouseWindowMouseDownEven
 use windowing::{MouseWindowMouseUpEvent};
 
 use servo_msg::compositor_msg::{RenderListener, LayerBufferSet, RenderState};
-use servo_msg::compositor_msg::{ReadyState, ScriptListener, Epoch};
-use servo_msg::constellation_msg::{ConstellationChan, NavigateMsg, PipelineId, ResizedWindowMsg, LoadUrlMsg};
+use servo_msg::compositor_msg::{ReadyState, ScriptListener, Epoch, Tile};
+use servo_msg::constellation_msg::{ConstellationChan, LoadUrlMsg, NavigateMsg, PipelineId};
+use servo_msg::constellation_msg::{ResizedWindowMsg};
 use servo_msg::constellation_msg;
 use gfx::opts::Opts;
 
-use azure::azure_hl::{DataSourceSurface, DrawTarget, SourceSurfaceMethods, current_gl_context};
-use azure::azure_hl::{gl_context_pixel_format};
-use azure::azure::AzGLPixelFormatRef;
+use azure::azure_hl::{DataSourceSurface, DrawTarget, SourceSurfaceMethods};
+use azure::azure_hl;
 use std::comm;
 use std::comm::{Chan, SharedChan, Port};
 use std::num::Orderable;
@@ -31,6 +31,7 @@ use geom::point::Point2D;
 use geom::size::Size2D;
 use geom::rect::Rect;
 use layers::layers::{ARGB32Format, ContainerLayer, ContainerLayerKind, Format};
+use layers::platform::surface::{NativeCompositingGraphicsContext, NativeGraphicsMetadata};
 use layers::rendergl;
 use layers::scene::Scene;
 use opengles::gl2;
@@ -58,7 +59,6 @@ pub struct CompositorChan {
 
 /// Implementation of the abstract `ScriptListener` interface.
 impl ScriptListener for CompositorChan {
-
     fn set_ready_state(&self, ready_state: ReadyState) {
         let msg = ChangeReadyState(ready_state);
         self.chan.send(msg);
@@ -76,9 +76,9 @@ impl ScriptListener for CompositorChan {
 
 /// Implementation of the abstract `RenderListener` interface.
 impl RenderListener for CompositorChan {
-    fn get_gl_pixel_format(&self) -> AzGLPixelFormatRef {
+    fn get_graphics_metadata(&self) -> NativeGraphicsMetadata {
         let (port, chan) = comm::stream();
-        self.chan.send(GetGLPixelFormat(chan));
+        self.chan.send(GetGraphicsMetadata(chan));
         port.recv()
     }
 
@@ -136,8 +136,10 @@ pub enum Msg {
     Exit,
     /// Requests the window size
     GetSize(Chan<Size2D<int>>),
-    /// Requests the compositors GL pixel format.
-    GetGLPixelFormat(Chan<AzGLPixelFormatRef>),
+    /// Requests the compositor's graphics metadata. Graphics metadata is what the renderer needs
+    /// to create surfaces that the compositor can see. On Linux this is the X display; on Mac this
+    /// is the pixel format.
+    GetGraphicsMetadata(Chan<NativeGraphicsMetadata>),
 
     /// Alerts the compositor that there is a new layer to be rendered.
     NewLayer(PipelineId, Size2D<f32>),
@@ -181,6 +183,16 @@ impl CompositorTask {
         }
     }
 
+    /// Creates a graphics context. Platform-specific.
+    #[cfg(target_os="linux")]
+    fn create_graphics_context() -> NativeCompositingGraphicsContext {
+        NativeCompositingGraphicsContext::from_display(azure_hl::current_display())
+    }
+    #[cfg(not(target_os="linux"))]
+    fn create_graphics_context() -> NativeCompositingGraphicsContext {
+        NativeCompositingGraphicsContext::new()
+    }
+
     /// Starts the compositor, which listens for messages on the specified port. 
     pub fn run(&self) {
         let app: Application = ApplicationMethods::new();
@@ -197,6 +209,7 @@ impl CompositorTask {
         let mut window_size = Size2D(window_size.width as uint, window_size.height as uint);
         let mut done = false;
         let mut recomposite = false;
+        let graphics_context = CompositorTask::create_graphics_context();
 
         // Keeps track of the current zoom factor
         let mut world_zoom = 1f32;
@@ -213,8 +226,9 @@ impl CompositorTask {
                                           window_size.height as f32 / world_zoom);
             for layer in compositor_layer.mut_iter() {
                 if !layer.hidden {
-                    recomposite = layer.get_buffer_request(Rect(Point2D(0f32, 0f32), window_size_page),
-                                                           world_zoom) || recomposite;
+                    let rect = Rect(Point2D(0f32, 0f32), window_size_page);
+                    recomposite = layer.get_buffer_request(&graphics_context, rect, world_zoom)
+                        || recomposite;
                 } else { 
                     debug!("Compositor: root layer is hidden!");
                 }
@@ -244,8 +258,14 @@ impl CompositorTask {
                                                                      Some(5000000),
                                                                      self.opts.cpu_painting);
                         root_layer.add_child_start(ContainerLayerKind(layer.root_layer));
-                        compositor_layer = Some(layer);
 
+                        // If there's already a root layer, destroy it cleanly.
+                        match compositor_layer {
+                            None => {}
+                            Some(ref mut compositor_layer) => compositor_layer.clear_all(),
+                        }
+
+                        compositor_layer = Some(layer);
                         constellation_chan = Some(new_constellation_chan);
                     }
 
@@ -254,8 +274,8 @@ impl CompositorTask {
                         chan.send(Size2D(size.width as int, size.height as int));
                     }
 
-                    GetGLPixelFormat(chan) => {
-                        chan.send(gl_context_pixel_format(current_gl_context()))
+                    GetGraphicsMetadata(chan) => {
+                        chan.send(azure_hl::current_graphics_metadata())
                     }
 
                     NewLayer(_id, new_size) => {
@@ -311,7 +331,7 @@ impl CompositorTask {
                     DeleteLayer(id) => {
                         match compositor_layer {
                             Some(ref mut layer) => {
-                                assert!(layer.delete(id));
+                                assert!(layer.delete(&graphics_context, id));
                                 ask_for_tiles();
                             }
                             None => {}
@@ -323,7 +343,10 @@ impl CompositorTask {
 
                         match compositor_layer {
                             Some(ref mut layer) => {
-                                assert!(layer.add_buffers(id, new_layer_buffer_set, epoch));
+                                assert!(layer.add_buffers(&graphics_context,
+                                                          id,
+                                                          new_layer_buffer_set,
+                                                          epoch).is_none());
                                 recomposite = true;
                             }
                             None => {
@@ -499,7 +522,9 @@ impl CompositorTask {
 
             window.present();
 
-            if exit { done = true; }
+            if exit {
+                done = true;
+            }
         };
 
         // Enter the main event loop.
@@ -523,9 +548,14 @@ impl CompositorTask {
                 zoom_action = false;
                 ask_for_tiles();
             }
-
         }
 
-        self.shutdown_chan.send(())
+        self.shutdown_chan.send(());
+
+        // Clear out the compositor layers so that the painting tasks can destroy the buffers.
+        match compositor_layer {
+            None => {}
+            Some(ref mut layer) => layer.forget_all_tiles(),
+        }
     }
 }

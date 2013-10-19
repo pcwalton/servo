@@ -9,17 +9,17 @@ use geom::point::Point2D;
 use geom::rect::Rect;
 use geom::size::Size2D;
 use gfx::render_task::{ReRenderMsg, UnusedBufferMsg};
-use layers::layers::{ContainerLayerKind, ContainerLayer, NoFlip, SurfaceLayerKind, SurfaceLayer};
-use layers::layers::{VerticalFlip};
-use layers::platform::macos::surface::NativeSurfaceMethods;
+use layers::layers::{ContainerLayerKind, ContainerLayer, Flip, NoFlip, SurfaceLayerKind};
+use layers::layers::{SurfaceLayer, VerticalFlip};
+use layers::platform::surface::{NativeCompositingGraphicsContext, NativeSurfaceMethods};
 use layers::surfacetexture::SurfaceTexture;
-use layers::texturegl::{Texture, TextureTargetRectangle};
+use layers::texturegl::{Texture, TextureTarget, TextureTarget2D, TextureTargetRectangle};
 use pipeline::Pipeline;
 use script::dom::event::{ClickEvent, MouseDownEvent, MouseUpEvent};
 use script::script_task::SendEventMsg;
-use servo_msg::compositor_msg::{LayerBuffer, LayerBufferSet, Epoch};
+use servo_msg::compositor_msg::{LayerBuffer, LayerBufferSet, Epoch, Tile};
 use servo_msg::constellation_msg::PipelineId;
-use servo_msg::platform::macos::surface::NativeSurfaceAzureMethods;
+use servo_msg::platform::surface::NativeSurfaceAzureMethods;
 use std::cell::Cell;
 use windowing::{MouseWindowEvent, MouseWindowClickEvent, MouseWindowMouseDownEvent, MouseWindowMouseUpEvent};
 
@@ -82,7 +82,6 @@ enum ScrollBehavior {
     /// passed on to child layers.
     FixedPosition,
 }
-               
 
 impl CompositorLayer {
     /// Creates a new CompositorLayer with an optional page size. If no page size is given,
@@ -154,7 +153,8 @@ impl CompositorLayer {
     // the position of the layer relative to its parent. This also takes in a cursor position
     // to see if the mouse is over child layers first. If a layer successfully scrolled, returns
     // true; otherwise returns false, so a parent layer can scroll instead.
-    pub fn scroll(&mut self, delta: Point2D<f32>, cursor: Point2D<f32>, window_size: Size2D<f32>) -> bool {
+    pub fn scroll(&mut self, delta: Point2D<f32>, cursor: Point2D<f32>, window_size: Size2D<f32>)
+                  -> bool {
         let cursor = cursor - self.scroll_offset;
         for child in self.children.mut_iter().filter(|x| !x.child.hidden) {
             match child.container.scissor {
@@ -235,7 +235,11 @@ impl CompositorLayer {
     // Given the current window size, determine which tiles need to be (re)rendered
     // and sends them off the the appropriate renderer.
     // Returns a bool that is true if the scene should be repainted.
-    pub fn get_buffer_request(&mut self, window_rect: Rect<f32>, scale: f32) -> bool {
+    pub fn get_buffer_request(&mut self,
+                              graphics_context: &NativeCompositingGraphicsContext,
+                              window_rect: Rect<f32>,
+                              scale: f32)
+                              -> bool {
         let rect = Rect(Point2D(-self.scroll_offset.x + window_rect.origin.x,
                                 -self.scroll_offset.y + window_rect.origin.y),
                         window_rect.size);
@@ -256,7 +260,7 @@ impl CompositorLayer {
             }
         }
         if redisplay {
-            self.build_layer_tree();
+            self.build_layer_tree(graphics_context);
         }
         let transform = |x: &mut CompositorLayerChild| -> bool {
             match x.container.scissor {
@@ -269,7 +273,7 @@ impl CompositorLayer {
                             // to make the child_rect appear in coordinates local to it.
                             let child_rect = Rect(new_rect.origin.sub(&scissor.origin),
                                                   new_rect.size);
-                            x.child.get_buffer_request(child_rect, scale)
+                            x.child.get_buffer_request(graphics_context, child_rect, scale)
                         }
                         None => {
                             false //Layer is offscreen
@@ -357,6 +361,23 @@ impl CompositorLayer {
             self.resize_helper(pipeline_id, new_size, epoch)
         }
     }
+
+    // Returns whether the layer should be vertically flipped. and 
+    #[cfg(target_os="macos")]
+    fn texture_flip_and_target(cpu_painting: bool, size: Size2D<uint>) -> (Flip, TextureTarget) {
+        let flip = if cpu_painting {
+            NoFlip
+        } else {
+            VerticalFlip
+        };
+
+        (flip, TextureTargetRectangle(size))
+    }
+
+    #[cfg(not(target_os="macos"))]
+    fn texture_flip_and_target(_: bool, _: Size2D<uint>) -> (Flip, TextureTarget) {
+        (NoFlip, TextureTarget2D)
+    }
     
     // A helper method to resize sublayers.
     fn resize_helper(&mut self, pipeline_id: PipelineId, new_size: Size2D<f32>, epoch: Epoch) -> bool {
@@ -403,7 +424,7 @@ impl CompositorLayer {
 
     // Collect buffers from the quadtree. This method IS NOT recursive, so child CompositorLayers
     // are not rebuilt directly from this method.
-    pub fn build_layer_tree(&mut self) {
+    pub fn build_layer_tree(&mut self, graphics_context: &NativeCompositingGraphicsContext) {
         // Iterate over the children of the container layer.
         let mut current_layer_child = self.root_layer.first_child;
         
@@ -435,23 +456,24 @@ impl CompositorLayer {
             current_layer_child = match current_layer_child {
                 None => {
                     debug!("osmain: adding new texture layer");
-                    let flip = if self.cpu_painting {
-                        NoFlip
-                    } else {
-                        VerticalFlip
-                    };
+
+                    // Determine, in a platform-specific way, whether we should flip the texture
+                    // and which target to use.
+                    let (flip, target) =
+                            CompositorLayer::texture_flip_and_target(self.cpu_painting,
+                                                                     Size2D(size.width as uint,
+                                                                            size.height as uint));
 
                     // Make a new texture and bind the layer buffer's surface to it.
-                    let target = TextureTargetRectangle(Size2D(size.width as uint,
-                                                               size.height as uint));
                     let texture = Texture::new(target);
                     debug!("COMPOSITOR binding to native surface %d",
                            buffer.native_surface.get_id() as int);
-                    buffer.native_surface.bind_to_texture(&texture, size);
+                    buffer.native_surface.bind_to_texture(graphics_context, &texture, size);
                     let surface = SurfaceTexture {
-                        native_surface: buffer.native_surface.clone(),
                         texture: texture,
                     };
+
+                    // Make a surface layer and add it.
                     surface_layer = @mut SurfaceLayer::new(surface, buffer.screen_pos.size, flip);
                     self.root_layer.add_child_end(SurfaceLayerKind(surface_layer));
                     None
@@ -460,8 +482,9 @@ impl CompositorLayer {
                     surface_layer = existing_surface_layer;
 
                     let surface_texture = &mut surface_layer.surface_texture;
-                    buffer.native_surface.bind_to_texture(&surface_texture.texture, size);
-                    surface_texture.native_surface = buffer.native_surface.clone();
+                    buffer.native_surface.bind_to_texture(graphics_context,
+                                                          &surface_texture.texture,
+                                                          size);
 
                     // Move on to the next sibling.
                     do current_layer_child.unwrap().with_common |common| {
@@ -471,8 +494,8 @@ impl CompositorLayer {
                 Some(_) => fail!(~"found unexpected layer kind"),
             };
 
-            let rect = buffer.rect;
             // Set the layer's transform.
+            let rect = buffer.rect;
             let transform = identity().translate(rect.origin.x, rect.origin.y, 0.0);
             let transform = transform.scale(rect.size.width, rect.size.height, 1.0);
             surface_layer.common.set_transform(transform);
@@ -493,17 +516,20 @@ impl CompositorLayer {
                 }
             };
         }
-
-
     }
     
-    // Add LayerBuffers to the specified layer. Returns false if the layer is not found.
-    // If the epoch of the message does not match the layer's epoch, the message is ignored.
+    // Add LayerBuffers to the specified layer. Returns the layer buffer set back if the layer that
+    // matches the given pipeline ID was not found; otherwise returns None and consumes the layer
+    // buffer set.
+    //
+    // If the epoch of the message does not match the layer's epoch, the message is ignored, the
+    // layer buffer set is consumed, and None is returned.
     pub fn add_buffers(&mut self,
+                       graphics_context: &NativeCompositingGraphicsContext,
                        pipeline_id: PipelineId,
-                       new_buffers: ~LayerBufferSet,
+                       mut new_buffers: ~LayerBufferSet,
                        epoch: Epoch)
-                       -> bool {
+                       -> Option<~LayerBufferSet> {
         let cell = Cell::new(new_buffers);
         if self.pipeline.id == pipeline_id {
             if self.epoch != epoch {
@@ -512,7 +538,7 @@ impl CompositorLayer {
                        epoch,
                        self.pipeline.id);
                 self.pipeline.render_chan.send(UnusedBufferMsg(cell.take().buffers));
-                return true;
+                return None;
             }
             {
                 // Block here to prevent double mutable borrow of self.
@@ -532,22 +558,30 @@ impl CompositorLayer {
                     self.pipeline.render_chan.send(UnusedBufferMsg(unused_tiles));
                 }
             }
-            self.build_layer_tree();
-            true
-        } else { 
-                // ID does not match ours, so recurse on descendents (including hidden children).
-                self.children.mut_iter().map(|x| &mut x.child)
-                    .any(|x| {
-                                let buffers = cell.take();
-                                let result = x.add_buffers(pipeline_id, buffers.clone(), epoch);
-                                cell.put_back(buffers);
-                                result
-                                })
+            self.build_layer_tree(graphics_context);
+            return None;
         }
+
+        // ID does not match ours, so recurse on descendents (including hidden children).
+        for child_layer in self.children.mut_iter() {
+            match child_layer.child.add_buffers(graphics_context,
+                                                pipeline_id,
+                                                cell.take(),
+                                                epoch) {
+                None => return None,
+                Some(buffers) => cell.put_back(buffers),
+            }
+        }
+
+        // Not found. Give the caller the buffers back.
+        Some(cell.take())
     }
 
     // Deletes a specified sublayer, including hidden children. Returns false if the layer is not found.
-    pub fn delete(&mut self, pipeline_id: PipelineId) -> bool {
+    pub fn delete(&mut self,
+                  graphics_context: &NativeCompositingGraphicsContext,
+                  pipeline_id: PipelineId)
+                  -> bool {
         match self.children.iter().position(|x| x.child.pipeline.id == pipeline_id) {
             Some(i) => {
                 let mut child = self.children.remove(i);
@@ -562,18 +596,16 @@ impl CompositorLayer {
                         }
                     }
                 }
-                match child.child.quadtree {
-                    NoTree(*) => {} // Nothing to do
-                    Tree(ref mut quadtree) => {
-                        // Send back all tiles to renderer.
-                        child.child.pipeline.render_chan.send(UnusedBufferMsg(quadtree.collect_tiles()));
-                    }
-                }
-                self.build_layer_tree();
+
+                // Send back all tiles to renderer.
+                child.child.clear();
+
+                self.build_layer_tree(graphics_context);
                 true
             }
             None => {
-                self.children.mut_iter().map(|x| &mut x.child).any(|x| x.delete(pipeline_id))
+                self.children.mut_iter().map(|x| &mut x.child)
+                                        .any(|x| x.delete(graphics_context, pipeline_id))
             }
         }
     }
@@ -632,4 +664,57 @@ impl CompositorLayer {
             child.child.set_occlusions();
         }
     }
+
+    /// Destroys all quadtree tiles, sending the buffers back to the renderer to be destroyed or
+    /// reused.
+    fn clear(&mut self) {
+        match self.quadtree {
+            NoTree(*) => {}
+            Tree(ref mut quadtree) => {
+                let mut tiles = quadtree.collect_tiles();
+
+                // We have no way of knowing without a race whether the render task is even up and
+                // running, but mark the tiles as not leaking. If the render task died, then the
+                // tiles are going to be cleaned up.
+                for tile in tiles.mut_iter() {
+                    tile.mark_wont_leak()
+                }
+
+                self.pipeline.render_chan.send(UnusedBufferMsg(tiles))
+            }
+        }
+    }
+
+    /// Destroys all quadtree tiles of all layers, including child layers, sending the buffers
+    /// back to the renderer to be destroyed or reused.
+    pub fn clear_all(&mut self) {
+        self.clear();
+
+        for kid in self.children.mut_iter() {
+            kid.child.clear_all()
+        }
+    }
+
+    /// Destroys all tiles of all layers, including children, *without* sending them back to the
+    /// renderer. You must call this only when the render task is destined to be going down;
+    /// otherwise, you will leak tiles.
+    ///
+    /// This is used during shutdown, when we know the render task is going away.
+    pub fn forget_all_tiles(&mut self) {
+        match self.quadtree {
+            NoTree(*) => {}
+            Tree(ref mut quadtree) => {
+                let tiles = quadtree.collect_tiles();
+                for tile in tiles.move_iter() {
+                    let mut tile = tile;
+                    tile.mark_wont_leak()
+                }
+            }
+        }
+
+        for kid in self.children.mut_iter() {
+            kid.child.forget_all_tiles();
+        }
+    }
 }
+

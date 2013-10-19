@@ -8,10 +8,11 @@
 use geom::point::Point2D;
 use geom::size::Size2D;
 use geom::rect::Rect;
+use layers::platform::surface::NativeCompositingGraphicsContext;
+use gfx::render_task::BufferRequest;
 use std::uint::{div_ceil, next_power_of_two};
 use std::vec::build;
 use std::util::replace;
-use gfx::render_task::BufferRequest;
 use servo_msg::compositor_msg::Tile;
 
 static HEADER: &'static str = "<!DOCTYPE html><html>";
@@ -307,7 +308,6 @@ impl<T: Tile> Quadtree<T> {
     pub fn get_html(&self) -> ~str {
         fmt!("%s<body>%s</body></html>", HEADER, self.root.get_html())
     }
-
 }
 
 impl<T: Tile> QuadtreeNode<T> {
@@ -774,7 +774,6 @@ impl<T: Tile> QuadtreeNode<T> {
         }
         return ret;
     }
-
 }
 
 #[test]

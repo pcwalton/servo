@@ -3,19 +3,17 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 use azure::azure_hl::DrawTarget;
-use azure::azure::AzGLPixelFormatRef;
 use extra::arc::Arc;
 use geom::rect::Rect;
 use geom::size::Size2D;
-use layers::platform::macos::surface::NativeSurface;
+use layers::platform::surface::{NativeGraphicsMetadata, NativePaintingGraphicsContext};
+use layers::platform::surface::{NativeSurface, NativeSurfaceMethods};
 
 use constellation_msg::PipelineId;
 
-#[deriving(Clone)]
 pub struct LayerBuffer {
-    /// The native surface which can be shared between processes. On Mac this is an `IOSurface`;
-    /// on Linux this is an X Pixmap; on Android this is an `EGLImageKHR`. This must be atomically
-    /// reference countable.
+    /// The native surface which can be shared between threads or processes. On Mac this is an
+    /// `IOSurface`; on Linux this is an X Pixmap; on Android this is an `EGLImageKHR`.
     native_surface: NativeSurface,
 
     /// The rect in the containing RenderLayer that this represents.
@@ -33,7 +31,6 @@ pub struct LayerBuffer {
 
 /// A set of layer buffers. This is an atomic unit used to switch between the front and back
 /// buffers.
-#[deriving(Clone)]
 pub struct LayerBufferSet {
     buffers: ~[~LayerBuffer]
 }
@@ -70,7 +67,7 @@ impl Epoch {
 /// The interface used by the renderer to acquire draw targets for each render frame and
 /// submit them to be drawn to the display.
 pub trait RenderListener {
-    fn get_gl_pixel_format(&self) -> AzGLPixelFormatRef;
+    fn get_graphics_metadata(&self) -> NativeGraphicsMetadata;
     fn new_layer(&self, PipelineId, Size2D<uint>);
     fn set_layer_page_size(&self, PipelineId, Size2D<uint>, Epoch);
     fn set_layer_clip_rect(&self, PipelineId, Rect<uint>);
@@ -87,7 +84,7 @@ pub trait ScriptListener : Clone {
     fn close(&self);
 }
 
-/// The interface used by the quadtree to get info about LayerBuffers
+/// The interface used by the quadtree and buffer map to get info about layer buffers.
 pub trait Tile {
     /// Returns the amount of memory used by the tile
     fn get_mem(&self) -> uint;
@@ -95,6 +92,13 @@ pub trait Tile {
     fn is_valid(&self, f32) -> bool;
     /// Returns the Size2D of the tile
     fn get_size_2d(&self) -> Size2D<uint>;
+
+    /// Marks the layer buffer as not leaking. See comments on
+    /// `NativeSurfaceMethods::mark_wont_leak` for how this is used.
+    fn mark_wont_leak(&mut self);
+
+    /// Destroys the layer buffer. Painting task only.
+    fn destroy(self, graphics_context: &NativePaintingGraphicsContext);
 }
 
 impl Tile for ~LayerBuffer {
@@ -108,4 +112,12 @@ impl Tile for ~LayerBuffer {
     fn get_size_2d(&self) -> Size2D<uint> {
         self.screen_pos.size
     }
+    fn mark_wont_leak(&mut self) {
+        self.native_surface.mark_wont_leak()
+    }
+    fn destroy(self, graphics_context: &NativePaintingGraphicsContext) {
+        let mut this = self;
+        this.native_surface.destroy(graphics_context)
+    }
 }
+
