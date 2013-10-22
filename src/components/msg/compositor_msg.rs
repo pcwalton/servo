@@ -35,6 +35,15 @@ pub struct LayerBufferSet {
     buffers: ~[~LayerBuffer]
 }
 
+impl LayerBufferSet {
+    /// Notes all buffer surfaces will leak if not destroyed via a call to `destroy`.
+    pub fn mark_will_leak(&mut self) {
+        for buffer in self.buffers.mut_iter() {
+            buffer.native_surface.mark_will_leak()
+        }
+    }
+}
+
 /// The status of the renderer.
 #[deriving(Eq)]
 pub enum RenderState {

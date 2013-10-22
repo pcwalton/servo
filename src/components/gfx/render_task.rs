@@ -260,19 +260,16 @@ impl<C: RenderListener + Send,T:Send+Freeze> RenderTask<C,T> {
                     let width = tile.screen_rect.size.width;
                     let height = tile.screen_rect.size.height;
 
-                    // FIXME(pcwalton): Cache draw targets; don't recreate them all the time.
-                    //
-                    // This is especially bad now that we're using separate GL contexts instead of
-                    // one shared one.
                     let size = Size2D(width as i32, height as i32);
                     let draw_target = match self.graphics_context {
                         CpuGraphicsContext(_) => {
                             DrawTarget::new(self.opts.render_backend, size, B8G8R8A8)
                         }
-                        GpuGraphicsContext(ref graphics_metadata) => {
-                            println(fmt!("*** size=%?", size));
+                        GpuGraphicsContext(_) => {
+                            // FIXME(pcwalton): Cache the components of draw targets
+                            // (texture color buffer, renderbuffers) instead of recreating them.
                             DrawTarget::new_with_fbo(self.opts.render_backend,
-                                                     graphics_metadata,
+                                                     &self.native_graphics_context,
                                                      size,
                                                      B8G8R8A8)
                         }
@@ -284,51 +281,21 @@ impl<C: RenderListener + Send,T:Send+Freeze> RenderTask<C,T> {
                         GpuGraphicsContext(*) => draw_target.make_current(),
                     }
 
-                    let mut buffer = match self.buffer_map.find(tile.screen_rect.size) {
-                        Some(buffer) => {
-                            let mut buffer = buffer;
-                            buffer.rect = tile.page_rect;
-                            buffer.screen_pos = tile.screen_rect;
-                            buffer.resolution = scale;
-                            buffer
-                        }
-                        None => {
-                            // Create an empty texture to use as a placeholder.
-                            //
-                            // FIXME(pcwalton): This is wasteful if GPU rendering is being used!
-                            let native_graphics_metadata = match self.graphics_context {
-                                CpuGraphicsContext(metadata) => metadata,
-                                GpuGraphicsContext(metadata) => metadata,
-                            };
-                            let native_surface: NativeSurface =
-                                layers::platform::surface::NativeSurfaceMethods::new(
-                                    &self.native_graphics_context,
-                                    Size2D(width as i32, height as i32),
-                                    width as i32 * 4);
-                            ~LayerBuffer {
-                                native_surface: native_surface,
-                                rect: tile.page_rect,
-                                screen_pos: tile.screen_rect,
-                                resolution: scale,
-                                stride: (width * 4) as uint
-                            }
-                        }
-                    };
-
                     {
                         // Build the render context.
                         let ctx = RenderContext {
-                            canvas: &buffer,
                             draw_target: &draw_target,
                             font_ctx: self.font_ctx,
-                            opts: &self.opts
+                            opts: &self.opts,
+                            page_rect: tile.page_rect,
+                            screen_rect: tile.screen_rect,
                         };
 
                         // Apply the translation to render the tile we want.
                         let matrix: Matrix2D<AzFloat> = Matrix2D::identity();
                         let matrix = matrix.scale(scale as AzFloat, scale as AzFloat);
-                        let matrix = matrix.translate(-(buffer.rect.origin.x) as AzFloat,
-                                                      -(buffer.rect.origin.y) as AzFloat);
+                        let matrix = matrix.translate(-(tile.page_rect.origin.x) as AzFloat,
+                                                      -(tile.page_rect.origin.y) as AzFloat);
                         
                         ctx.draw_target.set_transform(&matrix);
                         
@@ -344,13 +311,47 @@ impl<C: RenderListener + Send,T:Send+Freeze> RenderTask<C,T> {
 
                     // Extract the texture from the draw target and place it into its slot in the
                     // buffer. If using CPU rendering, upload it first.
-                    match self.graphics_context {
+                    //
+                    // FIXME(pcwalton): We should supply the texture and native surface *to* the
+                    // draw target in GPU rendering mode, so that it doesn't have to recreate it.
+                    let buffer = match self.graphics_context {
                         CpuGraphicsContext(_) => {
+                            let mut buffer = match self.buffer_map.find(tile.screen_rect.size) {
+                                Some(buffer) => {
+                                    let mut buffer = buffer;
+                                    buffer.rect = tile.page_rect;
+                                    buffer.screen_pos = tile.screen_rect;
+                                    buffer.resolution = scale;
+                                    buffer.native_surface.mark_wont_leak();
+                                    buffer
+                                }
+                                None => {
+                                    // Create an empty native surface. We mark it as not leaking
+                                    // in case it dies in transit to the compositor task.
+                                    let mut native_surface: NativeSurface =
+                                        layers::platform::surface::NativeSurfaceMethods::new(
+                                            &self.native_graphics_context,
+                                            Size2D(width as i32, height as i32),
+                                            width as i32 * 4);
+                                    native_surface.mark_wont_leak();
+
+                                    ~LayerBuffer {
+                                        native_surface: native_surface,
+                                        rect: tile.page_rect,
+                                        screen_pos: tile.screen_rect,
+                                        resolution: scale,
+                                        stride: (width * 4) as uint
+                                    }
+                                }
+                            };
+
                             do draw_target.snapshot().get_data_surface().with_data |data| {
                                 buffer.native_surface.upload(&self.native_graphics_context, data);
                                 debug!("RENDERER uploading to native surface %d",
                                        buffer.native_surface.get_id() as int);
                             }
+
+                            buffer
                         }
                         GpuGraphicsContext(ref graphics_metadata) => {
                             draw_target.make_current();
@@ -358,10 +359,21 @@ impl<C: RenderListener + Send,T:Send+Freeze> RenderTask<C,T> {
                                 surface: native_surface
                             } = draw_target.steal_gl_resources().unwrap();
 
-                            buffer.native_surface =
+                            // We mark the native surface as not leaking in case the surfaces
+                            // die on their way to the compositor task.
+                            let mut native_surface: NativeSurface =
                                 NativeSurfaceAzureMethods::from_azure_surface(native_surface);
+                            native_surface.mark_wont_leak();
+
+                            ~LayerBuffer {
+                                native_surface: native_surface,
+                                rect: tile.page_rect,
+                                screen_pos: tile.screen_rect,
+                                resolution: scale,
+                                stride: (width * 4) as uint
+                            }
                         }
-                    }
+                    };
                     
                     new_buffers.push(buffer);
                 }

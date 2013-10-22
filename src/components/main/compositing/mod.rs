@@ -341,6 +341,10 @@ impl CompositorTask {
                     Paint(id, new_layer_buffer_set, epoch) => {
                         debug!("osmain: received new frame"); 
 
+                        // From now on, if we destroy the buffers, they will leak.
+                        let mut new_layer_buffer_set = new_layer_buffer_set;
+                        new_layer_buffer_set.mark_will_leak();
+
                         match compositor_layer {
                             Some(ref mut layer) => {
                                 assert!(layer.add_buffers(&graphics_context,

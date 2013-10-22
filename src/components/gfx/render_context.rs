@@ -25,10 +25,13 @@ use servo_net::image::base::Image;
 use extra::arc::Arc;
 
 pub struct RenderContext<'self> {
-    canvas: &'self ~LayerBuffer,
     draw_target: &'self DrawTarget,
     font_ctx: @mut FontContext,
-    opts: &'self Opts
+    opts: &'self Opts,
+    /// The rectangle that this context encompasses in page coordinates.
+    page_rect: Rect<f32>,
+    /// The rectangle that this context encompasses in screen coordinates (pixels).
+    screen_rect: Rect<uint>,
 }
 
 impl<'self> RenderContext<'self>  {
@@ -122,10 +125,10 @@ impl<'self> RenderContext<'self>  {
 
     pub fn clear(&self) {
         let pattern = ColorPattern(Color(1.0, 1.0, 1.0, 1.0));
-        let rect = Rect(Point2D(self.canvas.rect.origin.x as AzFloat,
-                                self.canvas.rect.origin.y as AzFloat),
-                        Size2D(self.canvas.screen_pos.size.width as AzFloat,
-                               self.canvas.screen_pos.size.height as AzFloat));
+        let rect = Rect(Point2D(self.page_rect.origin.x as AzFloat,
+                                self.page_rect.origin.y as AzFloat),
+                        Size2D(self.screen_rect.size.width as AzFloat,
+                               self.screen_rect.size.height as AzFloat));
         self.draw_target.make_current();
         self.draw_target.fill_rect(&rect, &pattern);
     }
