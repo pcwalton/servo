@@ -5,29 +5,31 @@
 use compositing::*;
 
 use geom::size::Size2D;
-use std::unstable::intrinsics;
+use servo_msg::compositor_msg::{ChangeReadyState, ChangeRenderState, DeleteLayer, Exit};
+use servo_msg::compositor_msg::{InvalidateRect, NewLayer, Paint, SetIds, SetLayerClipRect};
+use servo_msg::compositor_msg::{SetLayerPageSize};
+use servo_msg::constellation_msg::{FrameTreeReceivedMsg, InitLoadUrlMsg, ResizedWindowMsg};
+use servo_msg::constellation_msg;
+use servo_util::url;
 
 /// Starts the compositor, which listens for messages on the specified port.
 ///
 /// This is the null compositor which doesn't draw anything to the screen.
 /// It's intended for headless testing.
-pub fn run_compositor(compositor: &CompositorTask) {
+pub fn run_compositor(compositor: &mut CompositorTask) {
+    // Send over the initial URL(s).
+    for url in compositor.opts.urls.iter() {
+        compositor.comm.send(InitLoadUrlMsg(url::make_url(url.clone(), None).to_str()));
+    }
+
     loop {
-        match compositor.port.recv() {
+        let msg = compositor.comm.recv();
+        match msg {
             Exit => break,
 
-            GetSize(chan) => {
-                chan.send(Size2D(500, 500));
-            }
-
-            GetGraphicsMetadata(chan) => {
-                unsafe {
-                    chan.send(intrinsics::uninit());
-                }
-            }
-
-            SetIds(_, response_chan, _) => {
-                response_chan.send(());
+            SetIds(*) => {
+                compositor.comm.send(ResizedWindowMsg(Size2D(400u, 300u)));
+                compositor.comm.send(FrameTreeReceivedMsg);
             }
 
             // Explicitly list ignored messages so that when we add a new one,
@@ -39,5 +41,6 @@ pub fn run_compositor(compositor: &CompositorTask) {
                 => ()
         }
     }
-    compositor.shutdown_chan.send(())
+
+    compositor.comm.send(constellation_msg::ExitMsg);
 }

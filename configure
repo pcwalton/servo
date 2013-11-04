@@ -491,7 +491,7 @@ CFG_SUBMODULES="\
     support/nss/nspr \
     support/nss/nss \
     support/opengles/rust-opengles \
-    support/sharegl/sharegl \
+    support/sandbox/rust-sandbox \
     support/skia/skia \
     support/spidermonkey/mozjs \
     support/spidermonkey/rust-mozjs \

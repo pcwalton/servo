@@ -7,19 +7,9 @@ use dom::window::Window;
 use dom::bindings::codegen::EventBinding;
 use dom::bindings::utils::{Reflectable, Reflector, reflect_dom_object};
 use dom::bindings::utils::{DOMString, ErrorResult, Fallible};
-
-use geom::point::Point2D;
-use js::jsapi::{JSObject, JSContext};
-
 use script_task::page_from_context;
 
-pub enum Event_ {
-    ResizeEvent(uint, uint), 
-    ReflowEvent,
-    ClickEvent(uint, Point2D<f32>),
-    MouseDownEvent(uint, Point2D<f32>),
-    MouseUpEvent(uint, Point2D<f32>),
-}
+use js::jsapi::{JSObject, JSContext};
 
 pub struct Event {
     reflector_: Reflector,

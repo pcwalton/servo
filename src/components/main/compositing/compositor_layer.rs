@@ -3,27 +3,26 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 use compositing::quadtree::{Quadtree, Normal, Invalid, Hidden};
-use constellation::{SendableChildFrameTree, SendableFrameTree};
 use geom::matrix::identity;
 use geom::point::Point2D;
 use geom::rect::Rect;
 use geom::size::Size2D;
-use gfx::render_task::{ReRenderMsg, UnusedBufferMsg};
 use layers::layers::{ContainerLayerKind, ContainerLayer, Flip, NoFlip, TextureLayer};
 use layers::layers::TextureLayerKind;
-#[cfg(target_os="macos")] use layers::layers::VerticalFlip;
 use layers::platform::surface::{NativeCompositingGraphicsContext, NativeSurfaceMethods};
 use layers::texturegl::{Texture, TextureTarget};
-#[cfg(target_os="macos")] use layers::texturegl::TextureTargetRectangle;
-use pipeline::Pipeline;
-use script::dom::event::{ClickEvent, MouseDownEvent, MouseUpEvent};
-use script::script_task::SendEventMsg;
-use servo_msg::compositor_msg::{LayerBuffer, LayerBufferSet, Epoch, Tile};
-use servo_msg::constellation_msg::PipelineId;
+use servo_msg::compositor_msg::{CompositorComm, Epoch, LayerBuffer, LayerBufferSet};
+use servo_msg::compositor_msg::{SendableChildFrameTree, SendableFrameTree, Tile};
+use servo_msg::constellation_msg::{ClickEvent, MouseDownEvent, MouseUpEvent};
+use servo_msg::constellation_msg::{PipelineId, ReRenderMsg, SendEventMsg, UnusedBufferMsg};
 use std::cell::Cell;
 use windowing::{MouseWindowEvent, MouseWindowClickEvent, MouseWindowMouseDownEvent};
 use windowing::{MouseWindowMouseUpEvent};
 
+#[cfg(target_os="macos")]
+use layers::layers::VerticalFlip;
+#[cfg(target_os="macos")]
+use layers::texturegl::TextureTargetRectangle;
 #[cfg(not(target_os="macos"))]
 use layers::texturegl::TextureTarget2D;
 
@@ -31,8 +30,9 @@ use layers::texturegl::TextureTarget2D;
 /// or animation behavior. This can include absolute positioned elements, iframes, etc.
 /// Each layer can also have child layers.
 pub struct CompositorLayer {
-    /// This layer's pipeline. BufferRequests and mouse events will be sent through this.
-    pipeline: Pipeline,
+    /// This layer's pipeline ID. BufferRequests and mouse events will be dispatched to the
+    /// pipeline with this ID, care of the constellation task.
+    pipeline_id: PipelineId,
 
     /// The size of the underlying page in page coordinates. This is an option
     /// because we may not know the size of the page until layout is finished completely.
@@ -99,14 +99,14 @@ enum ScrollBehavior {
 impl CompositorLayer {
     /// Creates a new CompositorLayer with an optional page size. If no page size is given,
     /// the layer is initially hidden and initialized without a quadtree.
-    pub fn new(pipeline: Pipeline,
+    pub fn new(pipeline_id: PipelineId,
                page_size: Option<Size2D<f32>>,
                tile_size: uint,
                max_mem: Option<uint>,
                cpu_painting: bool)
                -> CompositorLayer {
         CompositorLayer {
-            pipeline: pipeline,
+            pipeline_id: pipeline_id,
             page_size: page_size,
             scroll_offset: Point2D(0f32, 0f32),
             children: ~[],
@@ -131,8 +131,8 @@ impl CompositorLayer {
                            max_mem: Option<uint>,
                            cpu_painting: bool)
                            -> CompositorLayer {
-        let SendableFrameTree { pipeline, children } = frame_tree;
-        let mut layer = CompositorLayer::new(pipeline, None, tile_size, max_mem, cpu_painting);
+        let SendableFrameTree { pipeline_id, children } = frame_tree;
+        let mut layer = CompositorLayer::new(pipeline_id, None, tile_size, max_mem, cpu_painting);
         layer.children = (do children.move_iter().map |child| {
             let SendableChildFrameTree { frame_tree, rect } = child;
             let container = @mut ContainerLayer();
@@ -218,7 +218,10 @@ impl CompositorLayer {
     // Takes in a MouseWindowEvent, determines if it should be passed to children, and 
     // sends the event off to the appropriate pipeline. NB: the cursor position is in
     // page coordinates.
-    pub fn send_mouse_event(&self, event: MouseWindowEvent, cursor: Point2D<f32>) {
+    pub fn send_mouse_event(&self,
+                            comm: &mut CompositorComm,
+                            event: MouseWindowEvent,
+                            cursor: Point2D<f32>) {
         let cursor = cursor - self.scroll_offset;
         for child in self.children.iter().filter(|&x| !x.child.hidden) {
             match child.container.scissor {
@@ -228,7 +231,7 @@ impl CompositorLayer {
                 Some(rect) => {
                     if cursor.x >= rect.origin.x && cursor.x < rect.origin.x + rect.size.width
                         && cursor.y >= rect.origin.y && cursor.y < rect.origin.y + rect.size.height {
-                        child.child.send_mouse_event(event, cursor - rect.origin);
+                        child.child.send_mouse_event(comm, event, cursor - rect.origin);
                         return;
                     }
                 }
@@ -241,8 +244,8 @@ impl CompositorLayer {
             MouseWindowMouseDownEvent(button, _) => MouseDownEvent(button, cursor),
             MouseWindowMouseUpEvent(button, _) => MouseUpEvent(button, cursor),
         };
-        
-        self.pipeline.script_chan.send(SendEventMsg(self.pipeline.id.clone(), message));
+
+        comm.send(SendEventMsg(self.pipeline_id.clone(), message));
     }
     
     // Given the current window size, determine which tiles need to be (re)rendered
@@ -250,6 +253,7 @@ impl CompositorLayer {
     // Returns a bool that is true if the scene should be repainted.
     pub fn get_buffer_request(&mut self,
                               graphics_context: &NativeCompositingGraphicsContext,
+                              comm: &mut CompositorComm,
                               window_rect: Rect<f32>,
                               scale: f32)
                               -> bool {
@@ -260,16 +264,16 @@ impl CompositorLayer {
         { // block here to prevent double mutable borrow of self
             let quadtree = match self.quadtree {
                 NoTree(*) => fail!("CompositorLayer: cannot get buffer request for {:?},
-                                   no quadtree initialized", self.pipeline.id),
+                                   no quadtree initialized", self.pipeline_id),
                 Tree(ref mut quadtree) => quadtree,
             };
             let (request, unused) = quadtree.get_tile_rects_page(rect, scale);
             redisplay = !unused.is_empty(); // workaround to make redisplay visible outside block
             if redisplay { // send back unused tiles
-                self.pipeline.render_chan.send(UnusedBufferMsg(unused));
+                comm.send(UnusedBufferMsg(self.pipeline_id.clone(), unused));
             }
             if !request.is_empty() { // ask for tiles
-                self.pipeline.render_chan.try_send(ReRenderMsg(request, scale, self.epoch));
+                comm.send(ReRenderMsg(self.pipeline_id.clone(), request, scale, self.epoch));
             }
         }
         if redisplay {
@@ -286,7 +290,7 @@ impl CompositorLayer {
                             // to make the child_rect appear in coordinates local to it.
                             let child_rect = Rect(new_rect.origin.sub(&scissor.origin),
                                                   new_rect.size);
-                            x.child.get_buffer_request(graphics_context, child_rect, scale)
+                            x.child.get_buffer_request(graphics_context, comm, child_rect, scale)
                         }
                         None => {
                             false //Layer is offscreen
@@ -309,7 +313,7 @@ impl CompositorLayer {
     // If the layer is hidden and has a defined page size, unhide it.
     // This method returns false if the specified layer is not found.
     pub fn set_clipping_rect(&mut self, pipeline_id: PipelineId, new_rect: Rect<f32>) -> bool {
-        match self.children.iter().position(|x| pipeline_id == x.child.pipeline.id) {
+        match self.children.iter().position(|x| pipeline_id == x.child.pipeline_id) {
             Some(i) => {
                 let child_node = &mut self.children[i];
                 let con = child_node.container;
@@ -348,20 +352,23 @@ impl CompositorLayer {
     // Set the layer's page size. This signals that the renderer is ready for BufferRequests.
     // If the layer is hidden and has a defined clipping rect, unhide it.
     // This method returns false if the specified layer is not found.
-    pub fn resize(&mut self, pipeline_id: PipelineId, new_size: Size2D<f32>, window_size: Size2D<f32>, epoch: Epoch) -> bool {
-        if self.pipeline.id == pipeline_id {
+    pub fn resize(&mut self,
+                  comm: &mut CompositorComm,
+                  pipeline_id: PipelineId,
+                  new_size: Size2D<f32>,
+                  window_size: Size2D<f32>,
+                  epoch: Epoch)
+                  -> bool {
+        if self.pipeline_id == pipeline_id {
             self.epoch = epoch;
             self.page_size = Some(new_size);
+            let (width, height) = (new_size.width as uint, new_size.height as uint);
             match self.quadtree {
                 Tree(ref mut quadtree) => {
-                    self.pipeline.render_chan.send(UnusedBufferMsg(quadtree.resize(new_size.width as uint,
-                                                                                   new_size.height as uint)));
+                    comm.send(UnusedBufferMsg(pipeline_id, quadtree.resize(width, height)));
                 }
                 NoTree(tile_size, max_mem) => {
-                    self.quadtree = Tree(Quadtree::new(Size2D(new_size.width as uint,
-                                                              new_size.height as uint),
-                                                       tile_size,
-                                                       max_mem))
+                    self.quadtree = Tree(Quadtree::new(Size2D(width, height), tile_size, max_mem))
                 }
             }
             // Call scroll for bounds checking if the page shrunk. Use (-1, -1) as the cursor position
@@ -371,7 +378,7 @@ impl CompositorLayer {
             self.set_occlusions();
             true
         } else {
-            self.resize_helper(pipeline_id, new_size, epoch)
+            self.resize_helper(comm, pipeline_id, new_size, epoch)
         }
     }
 
@@ -393,21 +400,26 @@ impl CompositorLayer {
     }
     
     // A helper method to resize sublayers.
-    fn resize_helper(&mut self, pipeline_id: PipelineId, new_size: Size2D<f32>, epoch: Epoch) -> bool {
-        let found = match self.children.iter().position(|x| pipeline_id == x.child.pipeline.id) {
+    fn resize_helper(&mut self,
+                     comm: &mut CompositorComm,
+                     pipeline_id: PipelineId,
+                     new_size: Size2D<f32>,
+                     epoch: Epoch)
+                     -> bool {
+        let found = match self.children.iter().position(|x| pipeline_id == x.child.pipeline_id) {
             Some(i) => {
                 let child_node = &mut self.children[i];
                 let child = &mut child_node.child;
                 child.epoch = epoch;
                 child.page_size = Some(new_size);
+                let (width, height) = (new_size.width as uint, new_size.height as uint);
                 match child.quadtree {
                     Tree(ref mut quadtree) => {
-                        child.pipeline.render_chan.send(UnusedBufferMsg(quadtree.resize(new_size.width as uint,
-                                                                                        new_size.height as uint)));
+                        comm.send(UnusedBufferMsg(child.pipeline_id.clone(),
+                                                  quadtree.resize(width, height)));
                     }
                     NoTree(tile_size, max_mem) => {
-                        child.quadtree = Tree(Quadtree::new(Size2D(new_size.width as uint,
-                                                                   new_size.height as uint),
+                        child.quadtree = Tree(Quadtree::new(Size2D(width, height),
                                                             tile_size,
                                                             max_mem))
                     }
@@ -431,7 +443,10 @@ impl CompositorLayer {
             true
         } else {
             // ID does not match ours, so recurse on descendents (including hidden children)
-            self.children.mut_iter().map(|x| &mut x.child).any(|x| x.resize_helper(pipeline_id, new_size, epoch))
+            self.children
+                .mut_iter()
+                .map(|x| &mut x.child)
+                .any(|x| x.resize_helper(comm, pipeline_id, new_size, epoch))
         }
     }
 
@@ -453,7 +468,7 @@ impl CompositorLayer {
         // Add new tiles.
         let quadtree = match self.quadtree {
             NoTree(*) => fail!("CompositorLayer: cannot build layer tree for {:?},
-                               no quadtree initialized", self.pipeline.id),
+                               no quadtree initialized", self.pipeline_id),
             Tree(ref mut quadtree) => quadtree,
         };
 
@@ -533,18 +548,19 @@ impl CompositorLayer {
     // layer buffer set is consumed, and None is returned.
     pub fn add_buffers(&mut self,
                        graphics_context: &NativeCompositingGraphicsContext,
+                       comm: &mut CompositorComm,
                        pipeline_id: PipelineId,
                        new_buffers: ~LayerBufferSet,
                        epoch: Epoch)
                        -> Option<~LayerBufferSet> {
         let cell = Cell::new(new_buffers);
-        if self.pipeline.id == pipeline_id {
+        if self.pipeline_id == pipeline_id {
             if self.epoch != epoch {
                 debug!("compositor epoch mismatch: {:?} != {:?}, id: {:?}",
                        self.epoch,
                        epoch,
-                       self.pipeline.id);
-                self.pipeline.render_chan.send(UnusedBufferMsg(cell.take().buffers));
+                       self.pipeline_id);
+                comm.send(UnusedBufferMsg(self.pipeline_id.clone(), cell.take().buffers));
                 return None;
             }
             {
@@ -562,7 +578,7 @@ impl CompositorLayer {
                                                                        buffer.resolution, buffer));
                 }
                 if !unused_tiles.is_empty() { // send back unused buffers
-                    self.pipeline.render_chan.send(UnusedBufferMsg(unused_tiles));
+                    comm.send(UnusedBufferMsg(self.pipeline_id.clone(), unused_tiles));
                 }
             }
             self.build_layer_tree(graphics_context);
@@ -572,6 +588,7 @@ impl CompositorLayer {
         // ID does not match ours, so recurse on descendents (including hidden children).
         for child_layer in self.children.mut_iter() {
             match child_layer.child.add_buffers(graphics_context,
+                                                comm,
                                                 pipeline_id,
                                                 cell.take(),
                                                 epoch) {
@@ -587,9 +604,10 @@ impl CompositorLayer {
     // Deletes a specified sublayer, including hidden children. Returns false if the layer is not found.
     pub fn delete(&mut self,
                   graphics_context: &NativeCompositingGraphicsContext,
+                  comm: &mut CompositorComm,
                   pipeline_id: PipelineId)
                   -> bool {
-        match self.children.iter().position(|x| x.child.pipeline.id == pipeline_id) {
+        match self.children.iter().position(|x| x.child.pipeline_id == pipeline_id) {
             Some(i) => {
                 let mut child = self.children.remove(i);
                 match self.quadtree {
@@ -605,20 +623,22 @@ impl CompositorLayer {
                 }
 
                 // Send back all tiles to renderer.
-                child.child.clear();
+                child.child.clear(comm);
 
                 self.build_layer_tree(graphics_context);
                 true
             }
             None => {
-                self.children.mut_iter().map(|x| &mut x.child)
-                                        .any(|x| x.delete(graphics_context, pipeline_id))
+                self.children
+                    .mut_iter()
+                    .map(|x| &mut x.child)
+                    .any(|x| x.delete(graphics_context, comm, pipeline_id))
             }
         }
     }
 
     pub fn invalidate_rect(&mut self, pipeline_id: PipelineId, rect: Rect<f32>) -> bool {
-        if self.pipeline.id == pipeline_id {
+        if self.pipeline_id == pipeline_id {
             let quadtree = match self.quadtree {
                 NoTree(*) => return true, // Nothing to do
                 Tree(ref mut quadtree) => quadtree,
@@ -632,14 +652,18 @@ impl CompositorLayer {
     }
     
     // Adds a child.
-    pub fn add_child(&mut self, pipeline: Pipeline, page_size: Option<Size2D<f32>>, tile_size: uint,
-                     max_mem: Option<uint>, clipping_rect: Rect<f32>) {
+    pub fn add_child(&mut self,
+                     pipeline_id: PipelineId,
+                     page_size: Option<Size2D<f32>>,
+                     tile_size: uint,
+                     max_mem: Option<uint>,
+                     clipping_rect: Rect<f32>) {
         let container = @mut ContainerLayer();
         container.scissor = Some(clipping_rect);
         container.common.set_transform(identity().translate(clipping_rect.origin.x,
                                                             clipping_rect.origin.y,
                                                             0.0));
-        let child = ~CompositorLayer::new(pipeline,
+        let child = ~CompositorLayer::new(pipeline_id,
                                           page_size,
                                           tile_size,
                                           max_mem,
@@ -674,7 +698,7 @@ impl CompositorLayer {
 
     /// Destroys all quadtree tiles, sending the buffers back to the renderer to be destroyed or
     /// reused.
-    fn clear(&mut self) {
+    fn clear(&mut self, comm: &mut CompositorComm) {
         match self.quadtree {
             NoTree(*) => {}
             Tree(ref mut quadtree) => {
@@ -687,18 +711,18 @@ impl CompositorLayer {
                     tile.mark_wont_leak()
                 }
 
-                self.pipeline.render_chan.send(UnusedBufferMsg(tiles))
+                comm.send(UnusedBufferMsg(self.pipeline_id.clone(), tiles));
             }
         }
     }
 
     /// Destroys all quadtree tiles of all layers, including child layers, sending the buffers
     /// back to the renderer to be destroyed or reused.
-    pub fn clear_all(&mut self) {
-        self.clear();
+    pub fn clear_all(&mut self, comm: &mut CompositorComm) {
+        self.clear(comm);
 
         for kid in self.children.mut_iter() {
-            kid.child.clear_all()
+            kid.child.clear_all(comm)
         }
     }
 

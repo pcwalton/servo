@@ -15,25 +15,24 @@
 
 extern mod alert;
 extern mod azure;
+extern mod extra;
 extern mod geom;
 extern mod gfx (name = "gfx");
 #[cfg(not(target_os="android"))]
 extern mod glfw;
-//extern mod http_client;
 #[cfg(target_os="android")]
 extern mod glut;
 extern mod js;
 extern mod layers;
 extern mod opengles;
 extern mod png;
+extern mod sandbox;
 extern mod script;
 extern mod servo_net (name = "net");
 extern mod servo_msg (name = "msg");
 extern mod servo_util (name = "util");
-extern mod style;
-extern mod sharegl;
 extern mod stb_image;
-extern mod extra;
+extern mod style;
 
 #[cfg(target_os="macos")]
 extern mod core_graphics;
@@ -42,24 +41,36 @@ extern mod core_text;
 #[cfg(target_os="macos")]
 extern mod io_surface;
 
-use compositing::{CompositorChan, CompositorTask};
-use constellation::Constellation;
-use servo_msg::constellation_msg::{ExitMsg, InitLoadUrlMsg};
+use compositing::CompositorTask;
+use constellation::{Constellation, ConstellationMsgDeliveryTask};
+use servo_msg::compositor_msg::{CompositorComm};
+use servo_msg::constellation_msg::{ConstellationComm, ConstellationStream};
 
 #[cfg(not(test))]
 use gfx::opts;
 
-use servo_net::image_cache_task::ImageCacheTask;
-use servo_net::resource_task::ResourceTask;
-use servo_util::time::{Profiler, ProfilerChan};
-
 pub use gfx::opts::Opts;
 pub use gfx::text;
 pub use servo_util::url::make_url;
+
+use sandbox::{OpenGLMode, RestrictedMode};
+use servo_net::image_cache_task::ImageCacheTask;
+use servo_net::resource_task::ResourceTask;
+use servo_util::ipc::NativeUnixStream;
+use servo_util::time::{Profiler, ProfilerChan};
+use std::cast;
+use std::cell::Cell;
+use std::c_str::CString;
+use std::comm::SharedChan;
 use std::comm;
-#[cfg(not(test))]
+use std::libc::{c_int, uintptr_t};
+use std::libc;
 use std::os;
-use std::task::spawn_with;
+use std::ptr;
+use std::rt;
+use std::task::SingleThreaded;
+use std::task;
+use std::vec;
 
 #[path="compositing/mod.rs"]
 pub mod compositing;
@@ -103,16 +114,21 @@ pub mod platform;
 #[path = "util/mod.rs"]
 pub mod util;
 
+/// The top-level entry point.
 #[cfg(not(test))]
 #[start]
 fn start(argc: int, argv: **u8) -> int {
     #[cfg(target_os="linux")]
     #[cfg(target_os="macos")]
-    fn getopts() -> Opts {
-        opts::from_cmdline_args(os::args())
+    fn getopts(argc: int, argv: **u8) -> Opts {
+        let args = vec::from_fn(argc as uint, |i| unsafe {
+            let c_str = CString::new(cast::transmute(*ptr::offset(argv, i as int)), false);
+            c_str.as_str().unwrap().to_str()
+        });
+        opts::from_cmdline_args(args)
     }
     #[cfg(target_os="android")]
-    fn getopts() -> Opts {
+    fn getopts(_: int, _: **u8) -> Opts {
         let mut args:~[~str] = ~[];
         args.push(~"servo");
         let servo_url = os::getenv(~"SERVO_URL");
@@ -122,52 +138,131 @@ fn start(argc: int, argv: **u8) -> int {
         }
         opts::from_cmdline_args(args)
     }
-    do std::rt::start_on_main_thread(argc, argv) {
-        run(getopts())
+
+
+    // Set up multiprocess operation. First, create a socket pair.
+    let (constellation_unix_stream, compositor_unix_stream) = NativeUnixStream::pair();
+
+    // Parse command line arguments.
+    let opts = getopts(argc, argv);
+
+    // Fork into processes or threads as directed.
+    if opts.single_process {
+        run_in_single_process_mode(argc,
+                                   argv,
+                                   opts,
+                                   compositor_unix_stream,
+                                   constellation_unix_stream)
+    } else {
+        run_in_multiprocess_mode(argc,
+                                 argv,
+                                 opts,
+                                 compositor_unix_stream,
+                                 constellation_unix_stream)
     }
 }
 
-fn run(opts: Opts) {
-    let (shutdown_port, shutdown_chan) = comm::stream();
-    let (profiler_port, profiler_chan) = special_stream!(ProfilerChan);
-    let (compositor_port, compositor_chan) = special_stream!(CompositorChan);
+extern {
+    fn rust_get_num_cpus() -> uintptr_t;
+}
 
+fn run_in_single_process_mode(argc: int,
+                              argv: **u8,
+                              opts: Opts,
+                              compositor_unix_stream: NativeUnixStream,
+                              constellation_unix_stream: NativeUnixStream)
+                              -> int {
+    do std::rt::start_on_main_thread(argc, argv) {
+        let opts = opts.clone();
+        let opts_clone = opts.clone();
+        do task::spawn {
+            run_content_process(opts_clone.clone(), false, constellation_unix_stream)
+        }
+        run_compositor_process(opts, compositor_unix_stream)
+    }
+}
+
+fn run_in_multiprocess_mode(argc: int,
+                            argv: **u8,
+                            opts: Opts,
+                            compositor_unix_stream: NativeUnixStream,
+                            constellation_unix_stream: NativeUnixStream)
+                            -> int {
+    // Fork into two processes.
+    unsafe {
+        if fork() != 0 {
+            do std::rt::start_on_main_thread(argc, argv) {
+                run_compositor_process(opts.clone(), compositor_unix_stream)
+            }
+        } else {
+            do std::rt::start(argc, argv) {
+                run_content_process(opts.clone(), true, constellation_unix_stream)
+            }
+        }
+    }
+}
+
+/// A wrapper around `fork`. This is unsafe because `libuv` doesn't like forking.
+#[fixed_stack_segment]
+unsafe fn fork() -> c_int {
+    libc::fork()
+}
+
+/// The entry point for the high-privilege compositor process.
+fn run_compositor_process(opts: Opts, compositor_unix_stream: NativeUnixStream) {
+    // Set up the profiler.
+    let (profiler_port, profiler_chan) = special_stream!(ProfilerChan);
     Profiler::create(profiler_port, profiler_chan.clone(), opts.profiler_period);
 
-    do spawn_with((profiler_chan.clone(), compositor_chan, opts.clone()))
-        |(profiler_chan, compositor_chan, opts)| {
+    let compositor_end = CompositorComm::init(compositor_unix_stream);
+    let mut compositor_task = CompositorTask::new(opts, compositor_end, profiler_chan);
+    compositor_task.run();
+}
 
-        let opts = &opts;
-        // Create a Servo instance.
-        let resource_task = ResourceTask();
-        let image_cache_task = ImageCacheTask(resource_task.clone());
-        let constellation_chan = Constellation::start(compositor_chan,
-                                                      opts,
-                                                      resource_task,
-                                                      image_cache_task,
-                                                      profiler_chan.clone());
+/// The entry point for the low-privilege content process.
+fn run_content_process(opts: Opts, sandbox: bool, constellation_unix_stream: NativeUnixStream) {
+    // Set up the profiler.
+    let (profiler_port, profiler_chan) = special_stream!(ProfilerChan);
+    Profiler::create(profiler_port, profiler_chan.clone(), opts.profiler_period);
 
-        // Send the URL command to the constellation.
-        for filename in opts.urls.iter() {
-            constellation_chan.send(InitLoadUrlMsg(make_url(filename.clone(), None)))
-        }
+    // Set up a bunch of channels.
+    let (compositor_to_constellation_port, compositor_to_constellation_chan) = comm::stream();
+    let constellation_chan = SharedChan::new(compositor_to_constellation_chan);
+    let constellation_stream = ConstellationStream::init(constellation_unix_stream);
+    let constellation_end = ConstellationComm::init(compositor_to_constellation_port,
+                                                    constellation_chan.clone(),
+                                                    constellation_stream);
 
-        // Wait for the compositor to shut down.
-        shutdown_port.recv();
-
-        // Shut the constellation down.
-        debug!("master: Shut down");
-        let (exit_response_from_constellation, exit_chan) = comm::stream();
-        constellation_chan.send(ExitMsg(exit_chan));
-        exit_response_from_constellation.recv();
+    // Set up the delivery task, which is a workaround for Rust's inability to select over I/O.
+    let constellation_chan_clone = Cell::new(constellation_chan.clone());
+    let mut task = task::task();
+    task.unlinked();
+    task.sched_mode(SingleThreaded);
+    do task.spawn {
+        let mut task = ConstellationMsgDeliveryTask::init(constellation_stream,
+                                                          constellation_chan_clone.take());
+        task.run()
     }
 
+    // Create the resource and image cache tasks.
+    //
+    // FIXME(pcwalton): The resource task should go in the trusted compositor process.
+    let resource_task = ResourceTask();
+    let image_cache_task = ImageCacheTask(resource_task.clone());
 
-    let compositor_task = CompositorTask::new(opts,
-                                              compositor_port,
-                                              profiler_chan,
-                                              shutdown_chan);
-    debug!("preparing to enter main loop");
-    compositor_task.run();
+    // Enter the sandbox, if desired.
+    //
+    // FIXME(pcwalton): Should be able to be more restrictive, but `CGLChoosePixelFormat` will
+    // fail otherwise. Bummer.
+    if sandbox {
+        sandbox::enter(OpenGLMode);
+    }
+
+    // Create and start the constellation.
+    Constellation::start(constellation_end,
+                         opts,
+                         resource_task,
+                         image_cache_task,
+                         profiler_chan.clone());
 }
 

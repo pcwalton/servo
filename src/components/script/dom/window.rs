@@ -11,7 +11,7 @@ use dom::navigator::Navigator;
 
 use layout_interface::ReflowForDisplay;
 use script_task::{ExitWindowMsg, FireTimerMsg, Page, ScriptChan};
-use servo_msg::compositor_msg::ScriptListener;
+use servo_msg::constellation_msg::ScriptListener;
 use servo_net::image_cache_task::ImageCacheTask;
 
 use js::glue::*;
@@ -39,7 +39,7 @@ pub enum TimerControlMsg {
 pub struct Window {
     page: @mut Page,
     script_chan: ScriptChan,
-    compositor: @ScriptListener,
+    compositor: @mut ScriptListener,
     reflector_: Reflector,
     timer_chan: SharedChan<TimerControlMsg>,
     navigator: Option<@mut Navigator>,
@@ -200,7 +200,7 @@ impl Window {
     pub fn new(cx: *JSContext,
                page: @mut Page,
                script_chan: ScriptChan,
-               compositor: @ScriptListener,
+               compositor: @mut ScriptListener,
                image_cache_task: ImageCacheTask)
                -> @mut Window {
         let win = @mut Window {

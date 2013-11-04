@@ -13,6 +13,7 @@ extern mod extra;
 extern mod geom;
 extern mod layers;
 extern mod std;
+extern mod util;
 
 #[cfg(target_os="macos")]
 extern mod core_foundation;

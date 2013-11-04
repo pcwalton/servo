@@ -39,12 +39,16 @@ pub struct Opts {
 
     output_file: Option<~str>,
     headless: bool,
+
+    /// Whether to run in single-process mode, for debugging..
+    single_process: bool,
 }
 
 pub fn from_cmdline_args(args: &[~str]) -> Opts {
     let args = args.tail();
 
     let opts = ~[
+        getopts::optflag("a"),      // single-process ('a'll-in-one)
         getopts::optflag("c"),      // CPU rendering
         getopts::optopt("o"),       // output file
         getopts::optopt("r"),       // rendering backend
@@ -112,5 +116,6 @@ pub fn from_cmdline_args(args: &[~str]) -> Opts {
         exit_after_load: opt_match.opt_present("x"),
         output_file: opt_match.opt_str("o"),
         headless: opt_match.opt_present("z"),
+        single_process: opt_match.opt_present("a"),
     }
 }

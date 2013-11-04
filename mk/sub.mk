@@ -16,7 +16,6 @@ SLOW_BUILDS += \
 	libcss \
 	libparserutils \
 	mozjs \
-	sharegl \
 	skia \
 	$(NULL)
 
@@ -63,12 +62,6 @@ DEPS_rust-layers += \
 	rust \
 	$(NULL)
 
-DEPS_sharegl += \
-	rust-geom \
-	rust-opengles \
-	rust \
-	$(NULL)
-
 DEPS_rust-hubbub += \
 	libhubbub \
 	libparserutils \
@@ -109,12 +102,6 @@ DEPS_rust-io-surface += \
 DEPS_rust-alert += \
 	rust-core-foundation \
 	rust-cocoa \
-	rust \
-	$(NULL)
-
-DEPS_sharegl += \
-	rust-core-foundation \
-	rust-io-surface \
 	rust \
 	$(NULL)
 

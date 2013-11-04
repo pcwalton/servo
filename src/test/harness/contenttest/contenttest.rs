@@ -87,7 +87,7 @@ fn run_test(file: ~str) {
     let path = os::make_absolute(&Path::new(file));
     // FIXME (#1094): not the right way to transform a path
     let infile = ~"file://" + path.display().to_str();
-    let res = run::process_output("./servo", [~"-z", infile]);
+    let res = run::process_output("./servo", [~"-a", ~"-z", infile]);
     let out = str::from_utf8(res.output);
     print(out);
     let lines: ~[&str] = out.split_iter('\n').collect();

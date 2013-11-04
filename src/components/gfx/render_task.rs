@@ -4,24 +4,24 @@
 
 // The task that handles all rendering/painting.
 
-use azure::azure_hl::{B8G8R8A8, DrawTarget, StolenGLResources};
 use azure::AzFloat;
+use azure::azure_hl::{B8G8R8A8, DrawTarget, StolenGLResources};
+use extra::arc::Arc;
 use geom::matrix2d::Matrix2D;
-use geom::rect::Rect;
 use geom::size::Size2D;
-use layers::platform::surface::{NativePaintingGraphicsContext, NativeSurface};
-use layers::platform::surface::{NativeSurfaceMethods};
+use layers::platform::surface::{NativeGraphicsMetadata, NativePaintingGraphicsContext};
+use layers::platform::surface::{NativeSurface, NativeSurfaceMethods};
 use layers;
 use servo_msg::compositor_msg::{Epoch, IdleRenderState, LayerBuffer, LayerBufferSet};
-use servo_msg::compositor_msg::{RenderListener, RenderingRenderState};
-use servo_msg::constellation_msg::{ConstellationChan, PipelineId, RendererReadyMsg};
+use servo_msg::compositor_msg::{RenderingRenderState};
+use servo_msg::constellation_msg::{BufferRequest, PipelineId, RenderListener};
+use servo_msg::constellation_msg::{RendererReadyMsg};
+use servo_msg::constellation_msg;
 use servo_msg::platform::surface::NativeSurfaceAzureMethods;
 use servo_util::time::{ProfilerChan, profile};
 use servo_util::time;
-
 use std::comm::{Chan, Port, SharedChan};
 use std::task::spawn_with;
-use extra::arc::Arc;
 
 use buffer_map::BufferMap;
 use display_list::DisplayList;
@@ -43,29 +43,13 @@ pub enum Msg<T> {
     ExitMsg(Chan<()>),
 }
 
-/// A request from the compositor to the renderer for tiles that need to be (re)displayed.
-#[deriving(Clone)]
-pub struct BufferRequest {
-    // The rect in pixels that will be drawn to the screen
-    screen_rect: Rect<uint>,
-    
-    // The rect in page coordinates that this tile represents
-    page_rect: Rect<f32>,
-}
-
-pub fn BufferRequest(screen_rect: Rect<uint>, page_rect: Rect<f32>) -> BufferRequest {
-    BufferRequest {
-        screen_rect: screen_rect,
-        page_rect: page_rect,
-    }
-}
-
 // FIXME(rust#9155): this should be a newtype struct, but
 // generic newtypes ICE when compiled cross-crate
 #[deriving(Clone)]
 pub struct RenderChan<T> {
     chan: SharedChan<Msg<T>>,
 }
+
 impl<T: Send> RenderChan<T> {
     pub fn new(chan: Chan<Msg<T>>) -> RenderChan<T> {
         RenderChan {
@@ -73,11 +57,13 @@ impl<T: Send> RenderChan<T> {
         }
     }
 }
+
 impl<T: Send> GenericChan<Msg<T>> for RenderChan<T> {
     fn send(&self, msg: Msg<T>) {
         assert!(self.try_send(msg), "RenderChan.send: render port closed")
     }
 }
+
 impl<T: Send> GenericSmartChan<Msg<T>> for RenderChan<T> {
     fn try_send(&self, msg: Msg<T>) -> bool {
         self.chan.try_send(msg)
@@ -95,7 +81,7 @@ pub struct RenderTask<C,T> {
     id: PipelineId,
     port: Port<Msg<T>>,
     compositor: C,
-    constellation_chan: ConstellationChan,
+    constellation_chan: SharedChan<constellation_msg::Msg>,
     font_ctx: @mut FontContext,
     opts: Opts,
 
@@ -105,8 +91,8 @@ pub struct RenderTask<C,T> {
     /// The graphics context to use.
     graphics_context: GraphicsContext,
 
-    /// The native graphics context.
-    native_graphics_context: NativePaintingGraphicsContext,
+    /// The native graphics context, if present. If not present, nothing will be rendered.
+    opt_native_graphics_context: Option<NativePaintingGraphicsContext>,
 
     /// The layer to be rendered
     render_layer: Option<RenderLayer<T>>,
@@ -121,20 +107,24 @@ pub struct RenderTask<C,T> {
     buffer_map: BufferMap<~LayerBuffer>,
 }
 
-impl<C: RenderListener + Send,T:Send+Freeze> RenderTask<C,T> {
+impl<C:RenderListener+Send,T:Send+Freeze> RenderTask<C,T> {
     pub fn create(id: PipelineId,
                   port: Port<Msg<T>>,
                   compositor: C,
-                  constellation_chan: ConstellationChan,
+                  constellation_chan: SharedChan<constellation_msg::Msg>,
+                  opt_graphics_metadata: Option<NativeGraphicsMetadata>,
                   opts: Opts,
                   profiler_chan: ProfilerChan) {
-        do spawn_with((port, compositor, constellation_chan, opts, profiler_chan))
-            |(port, compositor, constellation_chan, opts, profiler_chan)| {
-
-            let graphics_metadata = compositor.get_graphics_metadata();
+        do spawn_with((port,
+                       compositor,
+                       constellation_chan,
+                       opts,
+                       profiler_chan,
+                       opt_graphics_metadata))
+            |(port, compositor, constellation_chan, opts, profiler_chan, opt_graphics_metadata)| {
             let cpu_painting = opts.cpu_painting;
-            let native_graphics_context =
-                    NativePaintingGraphicsContext::from_metadata(&graphics_metadata);
+            let opt_native_graphics_context =
+                opt_graphics_metadata.map(|md| NativePaintingGraphicsContext::from_metadata(&md));
 
             // FIXME: rust/#5967
             let mut render_task = RenderTask {
@@ -154,7 +144,7 @@ impl<C: RenderListener + Send,T:Send+Freeze> RenderTask<C,T> {
                     GpuGraphicsContext
                 },
 
-                native_graphics_context: native_graphics_context,
+                opt_native_graphics_context: opt_native_graphics_context,
 
                 render_layer: None,
 
@@ -166,7 +156,9 @@ impl<C: RenderListener + Send,T:Send+Freeze> RenderTask<C,T> {
             render_task.start();
 
             // Destroy all the buffers.
-            render_task.buffer_map.clear(&render_task.native_graphics_context)
+            render_task.opt_native_graphics_context.as_ref().map(|native_graphics_context| {
+                render_task.buffer_map.clear(native_graphics_context)
+            });
         }
     }
 
@@ -194,7 +186,12 @@ impl<C: RenderListener + Send,T:Send+Freeze> RenderTask<C,T> {
                 UnusedBufferMsg(unused_buffers) => {
                     // move_rev_iter is more efficient
                     for buffer in unused_buffers.move_rev_iter() {
-                        self.buffer_map.insert(&self.native_graphics_context, buffer);
+                        match self.opt_native_graphics_context {
+                            None => {}
+                            Some(ref native_graphics_context) => {
+                                self.buffer_map.insert(native_graphics_context, buffer);
+                            }
+                        }
                     }
                 }
                 PaintPermissionGranted => {
@@ -219,12 +216,14 @@ impl<C: RenderListener + Send,T:Send+Freeze> RenderTask<C,T> {
     }
 
     fn render(&mut self, tiles: ~[BufferRequest], scale: f32) {
-        // In headless mode, disable the renderer, because it makes OpenGL
-        // calls.  Once we have CPU rendering we should render in CPU mode and
-        // just disable texture upload.
-        if self.opts.headless {
-            return;
-        }
+        // If we have no native graphics context, this becomes a no-op. This will happen in
+        // headless mode.
+        //
+        // FIXME(pcwalton): Try to do more. We can still render; we just can't do texture upload.
+        let native_graphics_context = match self.opt_native_graphics_context {
+            None => return,
+            Some(ref native_graphics_context) => native_graphics_context,
+        };
 
         let render_layer;
         match self.render_layer {
@@ -255,7 +254,7 @@ impl<C: RenderListener + Send,T:Send+Freeze> RenderTask<C,T> {
                             // (texture color buffer, renderbuffers) instead of recreating them.
                             let draw_target =
                                 DrawTarget::new_with_fbo(self.opts.render_backend,
-                                                         &self.native_graphics_context,
+                                                         native_graphics_context,
                                                          size,
                                                          B8G8R8A8);
                             draw_target.make_current();
@@ -312,7 +311,7 @@ impl<C: RenderListener + Send,T:Send+Freeze> RenderTask<C,T> {
                                     // in case it dies in transit to the compositor task.
                                     let mut native_surface: NativeSurface =
                                         layers::platform::surface::NativeSurfaceMethods::new(
-                                            &self.native_graphics_context,
+                                            native_graphics_context,
                                             Size2D(width as i32, height as i32),
                                             width as i32 * 4);
                                     native_surface.mark_wont_leak();
@@ -328,7 +327,7 @@ impl<C: RenderListener + Send,T:Send+Freeze> RenderTask<C,T> {
                             };
 
                             do draw_target.snapshot().get_data_surface().with_data |data| {
-                                buffer.native_surface.upload(&self.native_graphics_context, data);
+                                buffer.native_surface.upload(native_graphics_context, data);
                                 debug!("RENDERER uploading to native surface {:d}",
                                        buffer.native_surface.get_id() as int);
                             }

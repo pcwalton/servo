@@ -15,6 +15,7 @@ extern mod geom;
 
 pub mod cache;
 pub mod geometry;
+pub mod ipc;
 pub mod range;
 pub mod slot;
 pub mod time;

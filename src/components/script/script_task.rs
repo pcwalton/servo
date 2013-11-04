@@ -5,33 +5,21 @@
 /// The script task is the task that owns the DOM in memory, runs JavaScript, and spawns parsing
 /// and layout tasks.
 
-use servo_msg::compositor_msg::{ScriptListener, Loading, PerformingLayout};
-use servo_msg::compositor_msg::FinishedLoading;
 use dom::bindings::codegen::RegisterBindings;
 use dom::bindings::utils::{Reflectable, GlobalStaticData};
 use dom::document::AbstractDocument;
 use dom::element::Element;
-use dom::event::{Event_, ResizeEvent, ReflowEvent, ClickEvent, MouseDownEvent, MouseUpEvent};
 use dom::htmldocument::HTMLDocument;
 use dom::window::Window;
+use layout_interface::ReflowMsg;
 use layout_interface::{AddStylesheetMsg, DocumentDamage};
 use layout_interface::{DocumentDamageLevel, HitTestQuery, HitTestResponse, LayoutQuery};
 use layout_interface::{LayoutChan, MatchSelectorsDocumentDamage, QueryMsg, Reflow};
 use layout_interface::{ReflowDocumentDamage, ReflowForDisplay, ReflowGoal};
-use layout_interface::ReflowMsg;
 use layout_interface;
-use servo_msg::constellation_msg::{ConstellationChan, LoadUrlMsg, NavigationDirection};
-use servo_msg::constellation_msg::{PipelineId, SubpageId};
-use servo_msg::constellation_msg::{LoadIframeUrlMsg, IFrameSandboxed, IFrameUnsandboxed};
-use servo_msg::constellation_msg;
 
-use std::cell::Cell;
-use std::comm;
-use std::comm::{Port, SharedChan};
-use std::ptr;
-use std::task::{spawn_sched, SingleThreaded};
-use std::util::replace;
 use dom::window::TimerData;
+use extra::url::Url;
 use geom::size::Size2D;
 use html::hubbub_html_parser::HtmlParserResult;
 use html::hubbub_html_parser::{HtmlDiscoveredStyle, HtmlDiscoveredIFrame, HtmlDiscoveredScript};
@@ -43,12 +31,23 @@ use js::jsapi::{JSContext, JSObject};
 use js::jsapi::{JS_CallFunctionValue, JS_GetContextPrivate};
 use js::rust::{Compartment, Cx};
 use js;
+use servo_msg::compositor_msg::{FinishedLoading, Loading, PerformingLayout};
+use servo_msg::constellation_msg::{ClickEvent, LoadUrlMsg, MouseDownEvent};
+use servo_msg::constellation_msg::{LoadIframeUrlMsg, IFrameSandboxed, IFrameUnsandboxed};
+use servo_msg::constellation_msg::{MouseUpEvent, NavigationDirection};
+use servo_msg::constellation_msg::{PipelineId, SubpageId};
+use servo_msg::constellation_msg::{ReflowEvent, ResizeEvent, ScriptEvent, ScriptListener};
+use servo_msg::constellation_msg;
 use servo_net::image_cache_task::ImageCacheTask;
 use servo_net::resource_task::ResourceTask;
 use servo_util::tree::{TreeNodeRef, ElementLike};
 use servo_util::url::make_url;
-use extra::url::Url;
-use extra::future::Future;
+use std::cell::Cell;
+use std::comm::{Port, SharedChan};
+use std::comm;
+use std::ptr;
+use std::task::{spawn_sched, SingleThreaded};
+use std::util::replace;
 
 /// Messages used to control the script task.
 pub enum ScriptMsg {
@@ -59,7 +58,7 @@ pub enum ScriptMsg {
     /// Instructs the script task to send a navigate message to the constellation.
     NavigateMsg(NavigationDirection),
     /// Sends a DOM event.
-    SendEventMsg(PipelineId, Event_),
+    SendEventMsg(PipelineId, ScriptEvent),
     /// Window resized.  Sends a DOM event eventually, but first we combine events.
     ResizeMsg(PipelineId, Size2D<uint>),
     /// Fires a JavaScript timeout.
@@ -78,7 +77,7 @@ pub struct NewLayoutInfo {
     old_id: PipelineId,
     new_id: PipelineId,
     layout_chan: LayoutChan,
-    size_future: Future<Size2D<uint>>,
+    size: Size2D<uint>,
 }
 
 /// Encapsulates external communication with the script task.
@@ -112,7 +111,7 @@ pub struct Page {
     damage: Option<DocumentDamage>,
 
     /// The current size of the window, in pixels.
-    window_size: Future<Size2D<uint>>,
+    window_size: Size2D<uint>,
 
     js_info: Option<JSPageInfo>,
 
@@ -138,7 +137,7 @@ pub struct PageTreeIterator<'self> {
 }
 
 impl PageTree {
-    fn new(id: PipelineId, layout_chan: LayoutChan, size_future: Future<Size2D<uint>>) -> PageTree {
+    fn new(id: PipelineId, layout_chan: LayoutChan, size: Size2D<uint>) -> PageTree {
         PageTree {
             page: @mut Page {
                 id: id,
@@ -146,7 +145,7 @@ impl PageTree {
                 layout_chan: layout_chan,
                 layout_join_port: None,
                 damage: None,
-                window_size: size_future,
+                window_size: size,
                 js_info: None,
                 url: None,
                 next_subpage_id: SubpageId(0),
@@ -272,7 +271,10 @@ impl Page {
     /// computation to finish.
     ///
     /// This function fails if there is no root frame.
-    fn reflow(&mut self, goal: ReflowGoal, script_chan: ScriptChan, compositor: @ScriptListener) {
+    fn reflow(&mut self,
+              goal: ReflowGoal,
+              script_chan: ScriptChan,
+              compositor: @mut ScriptListener) {
         let root = match self.frame {
             None => return,
             Some(ref frame) => {
@@ -301,7 +303,7 @@ impl Page {
                     document_root: root,
                     url: self.url.get_ref().first().clone(),
                     goal: goal,
-                    window_size: self.window_size.get(),
+                    window_size: self.window_size,
                     script_chan: script_chan,
                     script_join_chan: join_chan,
                     damage: replace(&mut self.damage, None).unwrap(),
@@ -318,7 +320,10 @@ impl Page {
     /// Reflows the entire document.
     ///
     /// FIXME: This should basically never be used.
-    pub fn reflow_all(&mut self, goal: ReflowGoal, script_chan: ScriptChan, compositor: @ScriptListener) {
+    pub fn reflow_all(&mut self,
+                      goal: ReflowGoal,
+                      script_chan: ScriptChan,
+                      compositor: @mut ScriptListener) {
         if self.frame.is_some() {
             self.damage(MatchSelectorsDocumentDamage);
         }
@@ -395,9 +400,9 @@ pub struct ScriptTask {
     chan: ScriptChan,
 
     /// For communicating load url messages to the constellation
-    constellation_chan: ConstellationChan,
+    constellation_chan: SharedChan<constellation_msg::Msg>,
     /// A handle to the compositor for communicating ready state messages.
-    compositor: @ScriptListener,
+    compositor: @mut ScriptListener,
 
     /// The JavaScript runtime.
     js_runtime: js::rust::rt,
@@ -414,14 +419,14 @@ pub fn page_from_context(js_context: *JSContext) -> *mut Page {
 impl ScriptTask {
     /// Creates a new script task.
     pub fn new(id: PipelineId,
-               compositor: @ScriptListener,
+               compositor: @mut ScriptListener,
                layout_chan: LayoutChan,
                port: Port<ScriptMsg>,
                chan: ScriptChan,
-               constellation_chan: ConstellationChan,
+               constellation_chan: SharedChan<constellation_msg::Msg>,
                resource_task: ResourceTask,
                img_cache_task: ImageCacheTask,
-               initial_size: Future<Size2D<uint>>)
+               initial_size: Size2D<uint>)
                -> @mut ScriptTask {
         let js_runtime = js::rust::rt();
 
@@ -455,10 +460,10 @@ impl ScriptTask {
                                             layout_chan: LayoutChan,
                                             port: Port<ScriptMsg>,
                                             chan: ScriptChan,
-                                            constellation_chan: ConstellationChan,
+                                            constellation_chan: SharedChan<constellation_msg::Msg>,
                                             resource_task: ResourceTask,
                                             image_cache_task: ImageCacheTask,
-                                            initial_size: Future<Size2D<uint>>) {
+                                            initial_size: Size2D<uint>) {
         let parms = Cell::new((compositor, layout_chan, port, chan, constellation_chan,
                                resource_task, image_cache_task, initial_size));
         // Since SpiderMonkey is blocking it needs to run in its own thread.
@@ -468,7 +473,7 @@ impl ScriptTask {
             let (compositor, layout_chan, port, chan, constellation_chan,
                  resource_task, image_cache_task, initial_size) = parms.take();
             let script_task = ScriptTask::new(id,
-                @compositor as @ScriptListener,
+                @mut compositor as @mut ScriptListener,
                 layout_chan,
                 port,
                 chan,
@@ -546,13 +551,13 @@ impl ScriptTask {
             old_id,
             new_id,
             layout_chan,
-            size_future
+            size
         } = new_layout_info;
 
         let parent_page_tree = self.page_tree.find(old_id).expect("ScriptTask: received a layout
             whose parent has a PipelineId which does not correspond to a pipeline in the script
             task's page tree. This is a bug.");
-        let new_page_tree = PageTree::new(new_id, layout_chan, size_future);
+        let new_page_tree = PageTree::new(new_id, layout_chan, size);
         parent_page_tree.inner.push(new_page_tree);
     }
 
@@ -608,7 +613,7 @@ impl ScriptTask {
     fn handle_resize_inactive_msg(&mut self, id: PipelineId, new_size: Size2D<uint>) {
         let page = self.page_tree.find(id).expect("Received resize message for PipelineId not associated
             with a page in the page tree. This is a bug.").page;
-        page.window_size = Future::from_value(new_size);
+        page.window_size = new_size;
         let last_loaded_url = replace(&mut page.url, None);
         for url in last_loaded_url.iter() {
             page.url = Some((url.first(), true));
@@ -722,17 +727,16 @@ impl ScriptTask {
                 Some(HtmlDiscoveredStyle(sheet)) => {
                     page.layout_chan.send(AddStylesheetMsg(sheet));
                 }
-                Some(HtmlDiscoveredIFrame((iframe_url, subpage_id, size_future, sandboxed))) => {
+                Some(HtmlDiscoveredIFrame((iframe_url, subpage_id, sandboxed))) => {
                     page.next_subpage_id = SubpageId(*subpage_id + 1);
                     let sandboxed = if sandboxed {
                         IFrameSandboxed
                     } else {
                         IFrameUnsandboxed
                     };
-                    self.constellation_chan.send(LoadIframeUrlMsg(iframe_url,
+                    self.constellation_chan.send(LoadIframeUrlMsg(iframe_url.to_str(),
                                                                   pipeline_id,
                                                                   subpage_id,
-                                                                  size_future,
                                                                   sandboxed));
                 }
                 None => break
@@ -770,7 +774,7 @@ impl ScriptTask {
     /// This is the main entry point for receiving and dispatching DOM events.
     ///
     /// TODO: Actually perform DOM event dispatch.
-    fn handle_event(&mut self, pipeline_id: PipelineId, event: Event_) {
+    fn handle_event(&mut self, pipeline_id: PipelineId, event: ScriptEvent) {
         let page = self.page_tree.find(pipeline_id).expect("ScriptTask: received an event
             message for a layout channel that is not associated with this script task. This
             is a bug.").page;
@@ -779,7 +783,7 @@ impl ScriptTask {
             ResizeEvent(new_width, new_height) => {
                 debug!("script got resize event: {:u}, {:u}", new_width, new_height);
 
-                page.window_size = Future::from_value(Size2D(new_width, new_height));
+                page.window_size = Size2D(new_width, new_height);
 
                 if page.frame.is_some() {
                     page.damage(ReflowDocumentDamage);
@@ -849,7 +853,7 @@ impl ScriptTask {
             };
             debug!("ScriptTask: current url is {:?}", current_url);
             let url = make_url(href.to_owned(), current_url);
-            self.constellation_chan.send(LoadUrlMsg(page.id, url, Future::from_value(page.window_size.get())));
+            self.constellation_chan.send(LoadUrlMsg(page.id, url.to_str(), page.window_size));
         }
     }
 }

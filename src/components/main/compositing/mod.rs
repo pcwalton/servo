@@ -4,21 +4,14 @@
 
 pub use windowing;
 
-use constellation::SendableFrameTree;
 use windowing::WindowMethods;
 
 use azure::azure_hl::SourceSurfaceMethods;
-use geom::point::Point2D;
-use geom::rect::Rect;
-use geom::size::Size2D;
 use gfx::opts::Opts;
-use layers::platform::surface::{NativeCompositingGraphicsContext, NativeGraphicsMetadata};
-use servo_msg::compositor_msg::{Epoch, RenderListener, LayerBufferSet, RenderState, ReadyState};
-use servo_msg::compositor_msg::{ScriptListener, Tile};
-use servo_msg::constellation_msg::{ConstellationChan, PipelineId};
+use layers::platform::surface::NativeCompositingGraphicsContext;
+use servo_msg::compositor_msg::{CompositorComm, Tile};
+use servo_msg::constellation_msg::{RenderListener, ScriptListener};
 use servo_util::time::ProfilerChan;
-use std::comm::{Chan, SharedChan, Port};
-use std::comm;
 use std::num::Orderable;
 
 #[cfg(target_os="linux")]
@@ -30,137 +23,18 @@ mod compositor_layer;
 mod run;
 mod run_headless;
 
-
-/// The implementation of the layers-based compositor.
-#[deriving(Clone)]
-pub struct CompositorChan {
-    /// A channel on which messages can be sent to the compositor.
-    chan: SharedChan<Msg>,
-}
-
-/// Implementation of the abstract `ScriptListener` interface.
-impl ScriptListener for CompositorChan {
-    fn set_ready_state(&self, ready_state: ReadyState) {
-        let msg = ChangeReadyState(ready_state);
-        self.chan.send(msg);
-    }
-
-    fn invalidate_rect(&self, id: PipelineId, rect: Rect<uint>) {
-        self.chan.send(InvalidateRect(id, rect));
-    }
-
-    fn close(&self) {
-        self.chan.send(Exit);
-    }
-
-}
-
-/// Implementation of the abstract `RenderListener` interface.
-impl RenderListener for CompositorChan {
-    fn get_graphics_metadata(&self) -> NativeGraphicsMetadata {
-        let (port, chan) = comm::stream();
-        self.chan.send(GetGraphicsMetadata(chan));
-        port.recv()
-    }
-
-    fn paint(&self, id: PipelineId, layer_buffer_set: ~LayerBufferSet, epoch: Epoch) {
-        self.chan.send(Paint(id, layer_buffer_set, epoch))
-    }
-
-    fn new_layer(&self, id: PipelineId, page_size: Size2D<uint>) {
-        let Size2D { width, height } = page_size;
-        self.chan.send(NewLayer(id, Size2D(width as f32, height as f32)))
-    }
-    fn set_layer_page_size(&self, id: PipelineId, page_size: Size2D<uint>, epoch: Epoch) {
-        let Size2D { width, height } = page_size;
-        self.chan.send(SetLayerPageSize(id, Size2D(width as f32, height as f32), epoch))
-    }
-    fn set_layer_clip_rect(&self, id: PipelineId, new_rect: Rect<uint>) {
-        let new_rect = Rect(Point2D(new_rect.origin.x as f32,
-                                    new_rect.origin.y as f32),
-                            Size2D(new_rect.size.width as f32,
-                                   new_rect.size.height as f32));
-        self.chan.send(SetLayerClipRect(id, new_rect))
-    }
-
-    fn delete_layer(&self, id: PipelineId) {
-        self.chan.send(DeleteLayer(id))
-    }
-
-    fn set_render_state(&self, render_state: RenderState) {
-        self.chan.send(ChangeRenderState(render_state))
-    }
-}
-
-impl CompositorChan {
-
-    pub fn new(chan: Chan<Msg>) -> CompositorChan {
-        CompositorChan {
-            chan: SharedChan::new(chan),
-        }
-    }
-
-    pub fn send(&self, msg: Msg) {
-        self.chan.send(msg);
-    }
-
-    pub fn get_size(&self) -> Size2D<int> {
-        let (port, chan) = comm::stream();
-        self.chan.send(GetSize(chan));
-        port.recv()
-    }
-}
-
-/// Messages to the compositor.
-pub enum Msg {
-    /// Requests that the compositor shut down.
-    Exit,
-    /// Requests the window size
-    GetSize(Chan<Size2D<int>>),
-    /// Requests the compositor's graphics metadata. Graphics metadata is what the renderer needs
-    /// to create surfaces that the compositor can see. On Linux this is the X display; on Mac this
-    /// is the pixel format.
-    GetGraphicsMetadata(Chan<NativeGraphicsMetadata>),
-
-    /// Alerts the compositor that there is a new layer to be rendered.
-    NewLayer(PipelineId, Size2D<f32>),
-    /// Alerts the compositor that the specified layer's page has changed size.
-    SetLayerPageSize(PipelineId, Size2D<f32>, Epoch),
-    /// Alerts the compositor that the specified layer's clipping rect has changed.
-    SetLayerClipRect(PipelineId, Rect<f32>),
-    /// Alerts the compositor that the specified layer has been deleted.
-    DeleteLayer(PipelineId),
-    /// Invalidate a rect for a given layer
-    InvalidateRect(PipelineId, Rect<uint>),
-
-    /// Requests that the compositor paint the given layer buffer set for the given page size.
-    Paint(PipelineId, ~LayerBufferSet, Epoch),
-    /// Alerts the compositor to the current status of page loading.
-    ChangeReadyState(ReadyState),
-    /// Alerts the compositor to the current status of rendering.
-    ChangeRenderState(RenderState),
-    /// Sets the channel to the current layout and render tasks, along with their id
-    SetIds(SendableFrameTree, Chan<()>, ConstellationChan),
-}
-
 pub struct CompositorTask {
     opts: Opts,
-    port: Port<Msg>,
+    comm: CompositorComm,
     profiler_chan: ProfilerChan,
-    shutdown_chan: SharedChan<()>,
 }
 
 impl CompositorTask {
-    pub fn new(opts: Opts,
-               port: Port<Msg>,
-               profiler_chan: ProfilerChan,
-               shutdown_chan: Chan<()>)
-               -> CompositorTask {
+    pub fn new(opts: Opts, comm: CompositorComm, profiler_chan: ProfilerChan) -> CompositorTask {
         CompositorTask {
             opts: opts,
-            port: port,
+            comm: comm,
             profiler_chan: profiler_chan,
-            shutdown_chan: SharedChan::new(shutdown_chan),
         }
     }
 
@@ -176,7 +50,7 @@ impl CompositorTask {
         NativeCompositingGraphicsContext::new()
     }
 
-    pub fn run(&self) {
+    pub fn run(&mut self) {
         if self.opts.headless {
             run_headless::run_compositor(self);
         } else {

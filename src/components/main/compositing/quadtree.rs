@@ -6,14 +6,14 @@
 // been rasterized and which have not.
 
 use geom::point::Point2D;
-use geom::size::Size2D;
 use geom::rect::Rect;
-use gfx::render_task::BufferRequest;
+use geom::size::Size2D;
+use servo_msg::compositor_msg::Tile;
+use servo_msg::constellation_msg::BufferRequest;
 use std::uint::{div_ceil, next_power_of_two};
-use std::vec;
 use std::util::replace;
 use std::vec::build;
-use servo_msg::compositor_msg::Tile;
+use std::vec;
 
 #[cfg(test)]
 use layers::platform::surface::NativePaintingGraphicsContext;
@@ -443,8 +443,9 @@ impl<T: Tile> QuadtreeNode<T> {
             let pix_width = (page_width * scale).ceil() as uint;
             let pix_height = (page_height * scale).ceil() as uint;
             self.status = Rendering;
-            return BufferRequest(Rect(Point2D(pix_x, pix_y), Size2D(pix_width, pix_height)),
-                                 Rect(Point2D(self.origin.x, self.origin.y), Size2D(page_width, page_height)));
+            return BufferRequest::init(Rect(Point2D(pix_x, pix_y), Size2D(pix_width, pix_height)),
+                                       Rect(Point2D(self.origin.x, self.origin.y),
+                                            Size2D(page_width, page_height)));
         }
         
         let quad = self.get_quadrant(x,y);

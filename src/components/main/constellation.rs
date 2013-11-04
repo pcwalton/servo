@@ -2,36 +2,36 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use compositing::{CompositorChan, SetIds, SetLayerClipRect};
-
-use std::comm;
-use std::comm::Port;
-use std::task::spawn_with;
-use geom::size::Size2D;
-use geom::rect::Rect;
-use gfx::opts::Opts;
 use pipeline::Pipeline;
-use servo_msg::constellation_msg::{ConstellationChan, ExitMsg, FailureMsg, FrameRectMsg};
-use servo_msg::constellation_msg::{IFrameSandboxState, InitLoadUrlMsg, LoadIframeUrlMsg, LoadUrlMsg};
-use servo_msg::constellation_msg::{Msg, NavigateMsg, NavigationType, IFrameUnsandboxed};
-use servo_msg::constellation_msg::{PipelineId, RendererReadyMsg, ResizedWindowMsg, SubpageId};
-use servo_msg::constellation_msg;
+
+use extra::url::Url;
+use geom::rect::Rect;
+use geom::size::Size2D;
+use gfx::opts::Opts;
+use gfx::render_task;
+use layers::platform::surface::NativeGraphicsMetadata;
 use script::script_task::{ResizeMsg, ResizeInactiveMsg};
+use script::script_task;
+use servo_msg::compositor_msg::{SendableChildFrameTree, SendableFrameTree, SetIds};
+use servo_msg::compositor_msg::{SetLayerClipRect};
+use servo_msg::constellation_msg::{ConstellationComm, ConstellationStream, ExitMsg, FailureMsg, FrameRectMsg};
+use servo_msg::constellation_msg::{FrameTreeReceivedMsg, IFrameSandboxState, IFrameUnsandboxed};
+use servo_msg::constellation_msg::{InitLoadUrlMsg, LoadIframeUrlMsg, LoadUrlMsg, Msg, NavigateMsg};
+use servo_msg::constellation_msg::{NavigationType, PipelineId, RendererReadyMsg, ResizedWindowMsg};
+use servo_msg::constellation_msg::{SetGraphicsMetadataMsg, SubpageId};
+use servo_msg::constellation_msg;
 use servo_net::image_cache_task::{ImageCacheTask, ImageCacheTaskClient};
 use servo_net::resource_task::ResourceTask;
 use servo_net::resource_task;
 use servo_util::time::ProfilerChan;
 use servo_util::url::make_url;
+use std::comm::SharedChan;
 use std::hashmap::{HashMap, HashSet};
-use std::util::replace;
-use extra::url::Url;
-use extra::future::Future;
+use std::util;
 
 /// Maintains the pipelines and navigation context and grants permission to composite
 pub struct Constellation {
-    chan: ConstellationChan,
-    request_port: Port<Msg>,
-    compositor_chan: CompositorChan,
+    comm: ConstellationComm,
     resource_task: ResourceTask,
     image_cache_task: ImageCacheTask,
     pipelines: HashMap<PipelineId, @mut Pipeline>,
@@ -39,8 +39,27 @@ pub struct Constellation {
     priv next_pipeline_id: PipelineId,
     pending_frames: ~[FrameChange],
     pending_sizes: HashMap<(PipelineId, SubpageId), Rect<f32>>,
+
+    /// The frame tree that is waiting on the compositor to give us permission to paint.
+    pending_frame_tree: Option<@mut FrameTree>,
+
+    /// A map of `iframe`s that are waiting for sizes to come in to be created.
+    iframes_waiting_on_initial_size: HashMap<(PipelineId, SubpageId), IframeInfo>,
+
     profiler_chan: ProfilerChan,
+    window_size: Size2D<uint>,
+
+    /// The graphics metadata. On Mac, this is the pixel format; on Linux, this is the X `DISPLAY`
+    /// variable. This is needed to set up a 3D rendering context. We receive this from the
+    /// compositor process.
+    graphics_metadata: Option<NativeGraphicsMetadata>,
+
     opts: Opts,
+}
+
+struct IframeInfo {
+    url: Url,
+    sandbox: IFrameSandboxState,
 }
 
 /// Stores the Id of the outermost frame's pipeline, along with a vector of children frames
@@ -80,25 +99,6 @@ impl Clone for ChildFrameTree {
     }
 }
 
-pub struct SendableFrameTree {
-    pipeline: Pipeline,
-    children: ~[SendableChildFrameTree],
-}
-
-pub struct SendableChildFrameTree {
-    frame_tree: SendableFrameTree,
-    rect: Option<Rect<f32>>,
-}
-
-impl SendableFrameTree {
-    fn contains(&self, id: PipelineId) -> bool {
-        self.pipeline.id == id ||
-        do self.children.iter().any |&SendableChildFrameTree { frame_tree: ref frame_tree, _ }| {
-            frame_tree.contains(id)
-        }
-    }
-}
-
 impl FrameTree {
     fn contains(@mut self, id: PipelineId) -> bool {
         do self.iter().any |frame_tree| {
@@ -121,7 +121,7 @@ impl FrameTree {
                 .find(|child| child.frame_tree.pipeline.id == id);
             for child in child.mut_iter() {
                 new_child.parent = child.frame_tree.parent;
-                return Left(replace(&mut child.frame_tree, new_child));
+                return Left(util::replace(&mut child.frame_tree, new_child));
             }
         }
         Right(new_child)
@@ -129,7 +129,7 @@ impl FrameTree {
 
     fn to_sendable(&self) -> SendableFrameTree {
         let sendable_frame_tree = SendableFrameTree {
-            pipeline: (*self.pipeline).clone(),
+            pipeline_id: self.pipeline.id.clone(),
             children: self.children.iter().map(|frame_tree| frame_tree.to_sendable()).collect(),
         };
         sendable_frame_tree
@@ -213,7 +213,7 @@ impl NavigationContext {
     /// Loads a new set of page frames, returning all evicted frame trees
     pub fn load(&mut self, frame_tree: @mut FrameTree) -> ~[@mut FrameTree] {
         debug!("navigating to {:?}", frame_tree.pipeline.id);
-        let evicted = replace(&mut self.next, ~[]);
+        let evicted = util::replace(&mut self.next, ~[]);
         if self.current.is_some() {
             self.previous.push(self.current.take_unwrap());
         }
@@ -248,41 +248,33 @@ impl NavigationContext {
 }
 
 impl Constellation {
-    pub fn start(compositor_chan: CompositorChan,
-                 opts: &Opts,
+    pub fn start(comm: ConstellationComm,
+                 opts: Opts,
                  resource_task: ResourceTask,
                  image_cache_task: ImageCacheTask,
-                 profiler_chan: ProfilerChan)
-                 -> ConstellationChan {
-            
-        let (constellation_port, constellation_chan) = special_stream!(ConstellationChan);
-        do spawn_with((constellation_port, constellation_chan.clone(),
-                       compositor_chan, resource_task, image_cache_task,
-                       profiler_chan, opts.clone()))
-            |(constellation_port, constellation_chan, compositor_chan, resource_task,
-              image_cache_task, profiler_chan, opts)| {
-            let mut constellation = Constellation {
-                chan: constellation_chan,
-                request_port: constellation_port,
-                compositor_chan: compositor_chan,
-                resource_task: resource_task,
-                image_cache_task: image_cache_task,
-                pipelines: HashMap::new(),
-                navigation_context: NavigationContext::new(),
-                next_pipeline_id: PipelineId(0),
-                pending_frames: ~[],
-                pending_sizes: HashMap::new(),
-                profiler_chan: profiler_chan,
-                opts: opts
-            };
-            constellation.run();
-        }
-        constellation_chan
+                 profiler_chan: ProfilerChan) {
+        let mut constellation = Constellation {
+            comm: comm,
+            resource_task: resource_task,
+            image_cache_task: image_cache_task,
+            pipelines: HashMap::new(),
+            navigation_context: NavigationContext::new(),
+            next_pipeline_id: PipelineId(0),
+            pending_frames: ~[],
+            pending_sizes: HashMap::new(),
+            pending_frame_tree: None,
+            iframes_waiting_on_initial_size: HashMap::new(),
+            profiler_chan: profiler_chan,
+            window_size: Size2D(500u, 500u),
+            graphics_metadata: None,
+            opts: opts,
+        };
+        constellation.run();
     }
 
     fn run(&mut self) {
         loop {
-            let request = self.request_port.recv();
+            let request = self.comm.recv();
             if !self.handle_request(request) {
                 break;
             }
@@ -314,8 +306,8 @@ impl Constellation {
     /// Handles loading pages, navigation, and granting access to the compositor
     fn handle_request(&mut self, request: Msg) -> bool {
         match request {
-            ExitMsg(sender) => {
-                self.handle_exit(sender);
+            ExitMsg => {
+                self.handle_exit();
                 return false;
             }
             FailureMsg(pipeline_id, subpage_id) => {
@@ -323,26 +315,30 @@ impl Constellation {
             }
             // This should only be called once per constellation, and only by the browser
             InitLoadUrlMsg(url) => {
-                self.handle_init_load(url);
+                self.handle_init_load(from_str(url).unwrap());
             }
             // A layout assigned a size and position to a subframe. This needs to be reflected by all
             // frame trees in the navigation context containing the subframe.
             FrameRectMsg(pipeline_id, subpage_id, rect) => {
                 self.handle_frame_rect_msg(pipeline_id, subpage_id, rect);
             }
-            LoadIframeUrlMsg(url, source_pipeline_id, subpage_id, size_future, sandbox) => {
-                self.handle_load_iframe_url_msg(url, source_pipeline_id, subpage_id, size_future, sandbox);
+            LoadIframeUrlMsg(url, source_pipeline_id, subpage_id, sandbox) => {
+                self.handle_load_iframe_url_msg(from_str(url).unwrap(),
+                                                source_pipeline_id,
+                                                subpage_id,
+                                                sandbox);
             }
             // Load a new page, usually -- but not always -- from a mouse click or typed url
             // If there is already a pending page (self.pending_frames), it will not be overridden;
             // However, if the id is not encompassed by another change, it will be.
-            LoadUrlMsg(source_id, url, size_future) => {
-                self.handle_load_url_msg(source_id, url, size_future);
+            LoadUrlMsg(source_id, url, size) => {
+                self.handle_load_url_msg(source_id, from_str(url).unwrap(), size);
             }
             // Handle a forward or back request
             NavigateMsg(direction) => {
                 self.handle_navigate_msg(direction);
             }
+
             // Notification that rendering has finished and is requesting permission to paint.
             RendererReadyMsg(pipeline_id) => {
                 self.handle_renderer_ready_msg(pipeline_id);
@@ -351,34 +347,73 @@ impl Constellation {
             ResizedWindowMsg(new_size) => {
                 self.handle_resized_window_msg(new_size);
             }
+
+            FrameTreeReceivedMsg => {
+                self.grant_paint_permission();
+            }
+
+            SetGraphicsMetadataMsg(graphics_metadata_descriptor) => {
+                self.graphics_metadata =
+                    Some(NativeGraphicsMetadata::from_descriptor(&graphics_metadata_descriptor))
+            }
+
+            // Forwarding messages
+
+            constellation_msg::ReRenderMsg(pipeline_id, buffer_requests, zoom, epoch) => {
+                match self.pipelines.find(&pipeline_id) {
+                    None => error!("ReRenderMsg on destroyed pipeline"),
+                    Some(pipeline) => {
+                        let msg = render_task::ReRenderMsg(buffer_requests, zoom, epoch);
+                        let _ = pipeline.render_chan.try_send(msg);
+                    }
+                }
+            }
+
+            constellation_msg::SendEventMsg(pipeline_id, script_event) => {
+                match self.pipelines.find(&pipeline_id) {
+                    None => error!("SendEventMsg on destroyed pipeline"),
+                    Some(pipeline) => {
+                        let msg = script_task::SendEventMsg(pipeline_id, script_event);
+                        let _ = pipeline.script_chan.try_send(msg);
+                    }
+                }
+            }
+
+            constellation_msg::UnusedBufferMsg(pipeline_id, unused_buffers) => {
+                match self.pipelines.find(&pipeline_id) {
+                    None => error!("UnusedBufferMsg on destroyed pipeline"),
+                    Some(pipeline) => {
+                        let msg = render_task::UnusedBufferMsg(unused_buffers);
+                        let _ = pipeline.render_chan.try_send(msg);
+                    }
+                }
+            }
         }
         true
     }
 
-    fn handle_exit(&self, sender: Chan<()>) {
+    fn handle_exit(&self) {
         for (_id, ref pipeline) in self.pipelines.iter() {
             pipeline.exit();
         }
         self.image_cache_task.exit();
         self.resource_task.send(resource_task::Exit);
-
-        sender.send(());
     }
 
     fn handle_failure_msg(&mut self, pipeline_id: PipelineId, subpage_id: Option<SubpageId>) {
         let new_id = self.get_next_pipeline_id();
         let pipeline = @mut Pipeline::create(new_id,
                                              subpage_id,
-                                             self.chan.clone(),
-                                             self.compositor_chan.clone(),
+                                             self.comm.get_constellation_chan(),
+                                             self.comm.clone(),
                                              self.image_cache_task.clone(),
                                              self.resource_task.clone(),
                                              self.profiler_chan.clone(),
                                              self.opts.clone(),
-                                             {
-                                                let size = self.compositor_chan.get_size();
-                                                Future::from_value(Size2D(size.width as uint, size.height as uint))
-                                             });
+                                             self.window_size,
+                                             self.graphics_metadata
+                                                 .as_ref()
+                                                 .map(|metadata| (*metadata).clone()));
         let failure = ~"about:failure";
         let url = make_url(failure, None);
         pipeline.load(url);
@@ -394,16 +429,16 @@ impl Constellation {
     fn handle_init_load(&mut self, url: Url) {
         let pipeline = @mut Pipeline::create(self.get_next_pipeline_id(),
                                              None,
-                                             self.chan.clone(),
-                                             self.compositor_chan.clone(),
+                                             self.comm.get_constellation_chan(),
+                                             self.comm.clone(),
                                              self.image_cache_task.clone(),
                                              self.resource_task.clone(),
                                              self.profiler_chan.clone(),
                                              self.opts.clone(),
-                                             {
-                                                 let size = self.compositor_chan.get_size();
-                                                 Future::from_value(Size2D(size.width as uint, size.height as uint))
-                                             });
+                                             self.window_size,
+                                             self.graphics_metadata
+                                                 .as_ref()
+                                                 .map(|metadata| (*metadata).clone()));
         pipeline.load(url);
 
         self.pending_frames.push(FrameChange{
@@ -417,9 +452,21 @@ impl Constellation {
         });
         self.pipelines.insert(pipeline.id, pipeline);
     }
-    
-    fn handle_frame_rect_msg(&mut self, pipeline_id: PipelineId, subpage_id: SubpageId, rect: Rect<f32>) {
+
+    /// Handles a `FrameRectMsg`, which indicates that a particular frame changed size.
+    fn handle_frame_rect_msg(&mut self,
+                             pipeline_id: PipelineId,
+                             subpage_id: SubpageId,
+                             rect: Rect<f32>) {
         debug!("Received frame rect {} from {:?}, {:?}", rect, pipeline_id, subpage_id);
+
+        // If this `iframe` is not yet instantiated, instantiate it. An "uninstantiated iframe" is
+        // an `iframe` that is ready to go but for its initial size.
+        if self.iframes_waiting_on_initial_size.contains_key(&(pipeline_id, subpage_id)) {
+            self.instantiate_iframe(pipeline_id, subpage_id, Size2D(rect.size.width as uint,
+                                                                    rect.size.height as uint));
+        }
+
         let mut already_sent = HashSet::new();
 
         // Returns true if a child frame tree's subpage id matches the given subpage id
@@ -442,7 +489,7 @@ impl Constellation {
                         width:  width  as uint,
                         height: height as uint
                     }));
-                    self.compositor_chan.send(SetLayerClipRect(pipeline.id, rect));
+                    self.comm.send(SetLayerClipRect(pipeline.id, rect));
                 } else {
                     pipeline.script_chan.send(ResizeInactiveMsg(pipeline.id,
                                                                 Size2D(width as uint, height as uint)));
@@ -477,12 +524,36 @@ impl Constellation {
         }
     }
 
+    /// Handles a message to load an `iframe` URL. This does not load the `iframe` immediately,
+    /// since its size is not yet known. Instead, it saves the data in a list of pending `iframe`s
+    /// and waits for the size to come in.
     fn handle_load_iframe_url_msg(&mut self,
                                   url: Url,
                                   source_pipeline_id: PipelineId,
                                   subpage_id: SubpageId,
-                                  size_future: Future<Size2D<uint>>,
                                   sandbox: IFrameSandboxState) {
+        self.iframes_waiting_on_initial_size.insert((source_pipeline_id, subpage_id), IframeInfo {
+            url: url,
+            sandbox: sandbox,
+        });
+    }
+
+    /// Instantiates an iframe now that its initial size is known.
+    fn instantiate_iframe(&mut self,
+                          pipeline_id: PipelineId,
+                          subpage_id: SubpageId,
+                          size: Size2D<uint>) {
+        let id = (pipeline_id, subpage_id);
+        let iframe_info = match self.iframes_waiting_on_initial_size.pop(&id) {
+            None => fail!("expected iframe to in the `iframes_waiting_on_initial_size` list"),
+            Some(iframe_info) => iframe_info,
+        };
+
+        let IframeInfo {
+            url,
+            sandbox
+        } = iframe_info;
+
         // A message from the script associated with pipeline_id that it has
         // parsed an iframe during html parsing. This iframe will result in a
         // new pipeline being spawned and a frame tree being added to pipeline_id's
@@ -491,9 +562,9 @@ impl Constellation {
         //     Start by finding the frame trees matching the pipeline id,
         // and add the new pipeline to their sub frames.
         let frame_trees: ~[@mut FrameTree] = {
-            let matching_navi_frames = self.navigation_context.find_all(source_pipeline_id);
+            let matching_navi_frames = self.navigation_context.find_all(pipeline_id);
             let matching_pending_frames = do self.pending_frames.iter().filter_map |frame_change| {
-                frame_change.after.find(source_pipeline_id)
+                frame_change.after.find(pipeline_id)
             };
             matching_navi_frames.move_iter().chain(matching_pending_frames).collect()
         };
@@ -508,7 +579,7 @@ impl Constellation {
 
         // Compare the pipeline's url to the new url. If the origin is the same,
         // then reuse the script task in creating the new pipeline
-        let source_pipeline = *self.pipelines.find(&source_pipeline_id).expect("Constellation:
+        let source_pipeline = *self.pipelines.find(&pipeline_id).expect("Constellation:
             source Id of LoadIframeUrlMsg does have an associated pipeline in
             constellation. This should be impossible.");
 
@@ -524,30 +595,36 @@ impl Constellation {
             // Reuse the script task if same-origin url's
             Pipeline::with_script(next_pipeline_id,
                                   Some(subpage_id),
-                                  self.chan.clone(),
-                                  self.compositor_chan.clone(),
+                                  self.comm.get_constellation_chan(),
+                                  self.comm.clone(),
                                   self.image_cache_task.clone(),
                                   self.profiler_chan.clone(),
                                   self.opts.clone(),
                                   source_pipeline,
-                                  size_future)
+                                  size,
+                                  self.graphics_metadata
+                                      .as_ref()
+                                      .map(|metadata| (*metadata).clone()))
         } else {
             debug!("Constellation: loading cross-origin iframe at {:?}", url);
             // Create a new script task if not same-origin url's
             Pipeline::create(next_pipeline_id,
                              Some(subpage_id),
-                             self.chan.clone(),
-                             self.compositor_chan.clone(),
+                             self.comm.get_constellation_chan(),
+                             self.comm.clone(),
                              self.image_cache_task.clone(),
                              self.resource_task.clone(),
                              self.profiler_chan.clone(),
                              self.opts.clone(),
-                             size_future)
+                             size,
+                             self.graphics_metadata
+                                 .as_ref()
+                                 .map(|metadata| (*metadata).clone()))
         };
 
         debug!("Constellation: sending load msg to pipeline {:?}", pipeline.id);
         pipeline.load(url);
-        let rect = self.pending_sizes.pop(&(source_pipeline_id, subpage_id));
+        let rect = self.pending_sizes.pop(&(pipeline_id, subpage_id));
         for frame_tree in frame_trees.iter() {
             frame_tree.children.push(ChildFrameTree {
                 frame_tree: @mut FrameTree {
@@ -561,7 +638,8 @@ impl Constellation {
         self.pipelines.insert(pipeline.id, pipeline);
     }
 
-    fn handle_load_url_msg(&mut self, source_id: PipelineId, url: Url, size_future: Future<Size2D<uint>>) {
+    /// Handles a request to load a URL.
+    fn handle_load_url_msg(&mut self, source_id: PipelineId, url: Url, size: Size2D<uint>) {
         debug!("Constellation: received message to load {:s}", url.to_str());
         // Make sure no pending page would be overridden.
         let source_frame = self.current_frame().get_ref().find(source_id).expect(
@@ -590,13 +668,16 @@ impl Constellation {
 
         let pipeline = @mut Pipeline::create(next_pipeline_id,
                                              subpage_id,
-                                             self.chan.clone(),
-                                             self.compositor_chan.clone(),
+                                             self.comm.get_constellation_chan(),
+                                             self.comm.clone(),
                                              self.image_cache_task.clone(),
                                              self.resource_task.clone(),
                                              self.profiler_chan.clone(),
                                              self.opts.clone(),
-                                             size_future);
+                                             size,
+                                             self.graphics_metadata
+                                                 .as_ref()
+                                                 .map(|metadata| (*metadata).clone()));
 
         pipeline.load(url);
 
@@ -650,8 +731,8 @@ impl Constellation {
             let pipeline = &frame.pipeline;
             pipeline.reload();
         }
-        self.grant_paint_permission(destination_frame, constellation_msg::Navigate);
 
+        self.perform_navigation(destination_frame, constellation_msg::Navigate);
     }
     
     fn handle_renderer_ready_msg(&mut self, pipeline_id: PipelineId) {
@@ -728,7 +809,8 @@ impl Constellation {
                     }
                 }
             }
-        self.grant_paint_permission(next_frame_tree, frame_change.navigation_type);
+
+            self.perform_navigation(next_frame_tree, frame_change.navigation_type);
         }
     }
 
@@ -746,6 +828,7 @@ impl Constellation {
                 already_seen.insert(pipeline.id);
             }
         }
+        self.window_size = new_size;
     }
 
     // Close all pipelines at and beneath a given frame
@@ -770,9 +853,9 @@ impl Constellation {
         }
     }
 
-    // Grants a frame tree permission to paint; optionally updates navigation to reflect a new page
-    fn grant_paint_permission(&mut self, frame_tree: @mut FrameTree, navigation_type: NavigationType) {
-        // Give permission to paint to the new frame and all child frames
+    /// Performs navigation.
+    fn perform_navigation(&mut self, frame_tree: @mut FrameTree, navigation_type: NavigationType) {
+        // Tell the compositor to start rendering this frame tree.
         self.set_ids(frame_tree);
 
         // Don't call navigation_context.load() on a Navigate type (or None, as in the case of
@@ -786,12 +869,64 @@ impl Constellation {
         }
     }
 
-    fn set_ids(&self, frame_tree: @mut FrameTree) {
-        let (port, chan) = comm::stream();
-        self.compositor_chan.send(SetIds(frame_tree.to_sendable(), chan, self.chan.clone()));
-        port.try_recv();
-        for frame in frame_tree.iter() {
-            frame.pipeline.grant_paint_permission();
+    fn grant_paint_permission(&mut self) {
+        match self.pending_frame_tree {
+            None => {
+                debug!("trying to grant paint permission, but no frame tree present; dropping");
+            }
+            Some(pending_frame_tree) => {
+                for frame in pending_frame_tree.iter() {
+                    frame.pipeline.grant_paint_permission();
+                }
+            }
+        }
+        self.pending_frame_tree = None
+    }
+
+    fn set_ids(&mut self, frame_tree: @mut FrameTree) {
+        self.comm.send(SetIds(frame_tree.to_sendable()));
+
+        // If there is a pending frame tree, then we messed up the logic and there's a race
+        // somewhere.
+        assert!(self.pending_frame_tree.is_none());
+
+        self.pending_frame_tree = Some(frame_tree);
+    }
+}
+
+/// A task that exists solely to allow messages from the compositor to be multiplexed into the
+/// stream of messages to the constellation.
+pub struct ConstellationMsgDeliveryTask {
+    /// The IPC connection to the compositor.
+    stream: ConstellationStream,
+
+    /// A channel to the constellation.
+    chan: SharedChan<Msg>,
+}
+
+impl ConstellationMsgDeliveryTask {
+    /// Creates a new delivery task that delivers messages from the given stream to the given
+    /// channel.
+    pub fn init(stream: ConstellationStream, chan: SharedChan<Msg>)
+                -> ConstellationMsgDeliveryTask {
+        ConstellationMsgDeliveryTask {
+            stream: stream,
+            chan: chan,
+        }
+    }
+
+    /// Runs until an exit message is received.
+    pub fn run(&mut self) {
+        loop {
+            let msg = self.stream.recv();
+            let is_exit = match msg {
+                ExitMsg => true,
+                _ => false,
+            };
+            self.chan.send(msg);
+            if is_exit {
+                break
+            }
         }
     }
 }

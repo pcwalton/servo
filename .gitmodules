@@ -43,9 +43,6 @@
 [submodule "src/platform/macos/rust-io-surface"]
 	path = src/platform/macos/rust-io-surface
 	url = https://github.com/mozilla-servo/rust-io-surface.git
-[submodule "src/support/sharegl/sharegl"]
-	path = src/support/sharegl/sharegl
-	url = https://github.com/mozilla-servo/sharegl.git
 [submodule "src/platform/macos/rust-core-graphics"]
 	path = src/platform/macos/rust-core-graphics
 	url = https://github.com/mozilla-servo/rust-core-graphics.git
@@ -106,3 +103,6 @@
 [submodule "src/support/http/rust-http"]
 	path = src/support/http/rust-http
 	url = https://github.com/mozilla-servo/rust-http
+[submodule "src/support/sandbox/rust-sandbox"]
+	path = src/support/sandbox/rust-sandbox
+	url = https://github.com/pcwalton/rust-sandbox.git

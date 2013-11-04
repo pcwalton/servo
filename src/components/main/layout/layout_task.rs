@@ -16,45 +16,45 @@ use layout::flow::{PostorderFlowTraversal};
 use layout::flow;
 use layout::incremental::{RestyleDamage, BubbleWidths};
 
-use std::cast::transmute;
-use std::cell::Cell;
-use std::comm::{Port};
-use std::task;
 use extra::arc::{Arc, RWArc};
+use extra::url::Url;
 use geom::point::Point2D;
 use geom::rect::Rect;
 use geom::size::Size2D;
 use gfx::display_list::DisplayList;
 use gfx::font_context::FontContext;
-use servo_util::geometry::Au;
 use gfx::opts::Opts;
 use gfx::render_task::{RenderMsg, RenderChan, RenderLayer};
 use gfx::render_task;
-use style::Stylist;
-use style::Stylesheet;
-use style::AuthorOrigin;
-use script::dom::event::ReflowEvent;
 use script::dom::node::{AbstractNode, LayoutView};
 use script::layout_interface::{AddStylesheetMsg, ContentBoxQuery};
-use script::layout_interface::{HitTestQuery, ContentBoxResponse, HitTestResponse};
 use script::layout_interface::{ContentBoxesQuery, ContentBoxesResponse, ExitMsg, LayoutQuery};
+use script::layout_interface::{HitTestQuery, ContentBoxResponse, HitTestResponse};
 use script::layout_interface::{MatchSelectorsDocumentDamage, Msg};
 use script::layout_interface::{QueryMsg, Reflow, ReflowDocumentDamage};
 use script::layout_interface::{ReflowForDisplay, ReflowMsg};
 use script::script_task::{ReflowCompleteMsg, ScriptChan, SendEventMsg};
-use servo_msg::constellation_msg::{ConstellationChan, PipelineId};
+use servo_msg::constellation_msg::{PipelineId, ReflowEvent};
+use servo_msg::constellation_msg;
 use servo_net::image_cache_task::{ImageCacheTask, ImageResponseMsg};
 use servo_net::local_image_cache::{ImageResponder, LocalImageCache};
-use servo_util::tree::TreeNodeRef;
+use servo_util::geometry::Au;
+use servo_util::range::Range;
 use servo_util::time::{ProfilerChan, profile};
 use servo_util::time;
-use servo_util::range::Range;
-use extra::url::Url;
+use servo_util::tree::TreeNodeRef;
+use std::cast::transmute;
+use std::cell::Cell;
+use std::comm::{Port, SharedChan};
+use std::task;
+use style::AuthorOrigin;
+use style::Stylesheet;
+use style::Stylist;
 
 struct LayoutTask {
     id: PipelineId,
     port: Port<Msg>,
-    constellation_chan: ConstellationChan,
+    constellation_chan: SharedChan<constellation_msg::Msg>,
     script_chan: ScriptChan,
     render_chan: RenderChan<AbstractNode<()>>,
     image_cache_task: ImageCacheTask,
@@ -196,7 +196,7 @@ impl ImageResponder for LayoutImageResponder {
 impl LayoutTask {
     pub fn create(id: PipelineId,
                   port: Port<Msg>,
-                  constellation_chan: ConstellationChan,
+                  constellation_chan: SharedChan<constellation_msg::Msg>,
                   script_chan: ScriptChan,
                   render_chan: RenderChan<AbstractNode<()>>,
                   img_cache_task: ImageCacheTask,
@@ -218,7 +218,7 @@ impl LayoutTask {
 
     fn new(id: PipelineId,
            port: Port<Msg>,
-           constellation_chan: ConstellationChan,
+           constellation_chan: SharedChan<constellation_msg::Msg>,
            script_chan: ScriptChan,
            render_chan: RenderChan<AbstractNode<()>>, 
            image_cache_task: ImageCacheTask,
