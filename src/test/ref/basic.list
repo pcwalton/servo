@@ -55,3 +55,7 @@
 == position_relative_top_percentage_a.html position_relative_top_percentage_b.html
 == background_none_a.html background_none_b.html
 == background_position_a.html background_position_b.html
+== background_repeat_x_a.html background_repeat_x_b.html
+== background_repeat_y_a.html background_repeat_y_b.html
+== background_repeat_none_a.html background_repeat_none_b.html
+== background_repeat_both_a.html background_repeat_both_b.html
