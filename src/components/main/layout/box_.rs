@@ -16,6 +16,7 @@ use gfx::display_list::{TextDisplayItemClass, TextDisplayItemFlags, ClipDisplayI
 use gfx::display_list::{ClipDisplayItemClass, DisplayListCollection};
 use gfx::font::FontStyle;
 use gfx::text::text_run::TextRun;
+use layout::model;
 use servo_msg::constellation_msg::{FrameRectMsg, PipelineId, SubpageId};
 use servo_net::image::holder::ImageHolder;
 use servo_net::local_image_cache::LocalImageCache;
@@ -928,11 +929,19 @@ impl Box {
                     Some(image) => {
                         debug!("(building display list) building background image");
 
+                        let mut bounds = *absolute_bounds;
+                        bounds.origin.x = bounds.origin.x +
+                            model::specified(style.Background.get().background_position.horizontal,
+                                             bounds.size.width);
+                        bounds.origin.y = bounds.origin.y +
+                            model::specified(style.Background.get().background_position.vertical,
+                                             bounds.size.height);
+
                         // Place the image into the display list.
                         lists.with_mut(|lists| {
                             let image_display_item = ~ImageDisplayItem {
                                 base: BaseDisplayItem {
-                                    bounds: *absolute_bounds,
+                                    bounds: bounds,
                                     extra: ExtraDisplayListData::new(self),
                                 },
                                 image: image.clone(),
