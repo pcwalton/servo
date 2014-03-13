@@ -631,6 +631,8 @@ pub mod longhands {
 
     ${single_keyword("background-repeat", "repeat repeat-x repeat-y no-repeat")}
 
+    ${single_keyword("background-attachment", "scroll fixed")}
+
     ${new_style_struct("Color", is_inherited=True)}
 
     <%self:raw_longhand name="color">
@@ -970,10 +972,11 @@ pub mod shorthands {
 
     // TODO: other background-* properties
     <%self:shorthand name="background"
-                     sub_properties="background-color background-position background-repeat background-image">
+                     sub_properties="background-color background-position background-repeat background-attachment background-image">
                 use std::util;
 
-                let (mut color, mut image, mut position, mut repeat) = (None, None, None, None);
+                let (mut color, mut image, mut position, mut repeat, mut attachment) =
+                    (None, None, None, None, None);
                 let mut last_component_value = None;
                 let mut any = false;
 
@@ -995,6 +998,14 @@ pub mod shorthands {
                     if repeat.is_none() {
                         match background_repeat::from_component_value(component_value, base_url) {
                             Some(v) => { repeat = Some(v); any = true; continue },
+                            None => ()
+                        }
+                    }
+
+                    if attachment.is_none() {
+                        match background_attachment::from_component_value(component_value,
+                                                                          base_url) {
+                            Some(v) => { attachment = Some(v); any = true; continue },
                             None => ()
                         }
                     }
@@ -1026,6 +1037,7 @@ pub mod shorthands {
                         background_image: image,
                         background_position: position,
                         background_repeat: repeat,
+                        background_attachment: attachment,
                     })
                 } else {
                     None
