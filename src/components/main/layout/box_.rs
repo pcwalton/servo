@@ -32,8 +32,9 @@ use std::cmp::ApproxEq;
 use std::num::Zero;
 use style::{ComputedValues, TElement, TNode};
 use style::computed_values::{LengthOrPercentage, LengthOrPercentageOrAuto, overflow, LPA_Auto};
-use style::computed_values::{border_style, clear, font_family, line_height, position};
-use style::computed_values::{text_align, text_decoration, vertical_align, visibility, white_space};
+use style::computed_values::{background_repeat, border_style, clear, font_family, line_height};
+use style::computed_values::{position, text_align, text_decoration, vertical_align, visibility};
+use style::computed_values::{white_space};
 
 use css::node_style::StyledNode;
 use layout::construct::FlowConstructor;
@@ -946,6 +947,7 @@ impl Box {
                     Some(image) => {
                         debug!("(building display list) building background image");
 
+                        // Adjust bounds for `background-position`.
                         let mut bounds = *absolute_bounds;
                         bounds.origin.x = bounds.origin.x +
                             model::specified(style.Background.get().background_position.horizontal,
@@ -953,6 +955,21 @@ impl Box {
                         bounds.origin.y = bounds.origin.y +
                             model::specified(style.Background.get().background_position.vertical,
                                              bounds.size.height);
+
+                        // Adjust sizes for `background-repeat`.
+                        match style.Background.get().background_repeat {
+                            background_repeat::no_repeat => {
+                                bounds.size.width = Au::from_px(image.get().width as int);
+                                bounds.size.height = Au::from_px(image.get().height as int)
+                            }
+                            background_repeat::repeat_x => {
+                                bounds.size.height = Au::from_px(image.get().height as int)
+                            }
+                            background_repeat::repeat_y => {
+                                bounds.size.width = Au::from_px(image.get().width as int)
+                            }
+                            background_repeat::repeat => {}
+                        };
 
                         // Place the image into the display list.
                         lists.with_mut(|lists| {
@@ -962,6 +979,8 @@ impl Box {
                                     extra: ExtraDisplayListData::new(self),
                                 },
                                 image: image.clone(),
+                                stretch_size: Size2D(Au::from_px(image.get().width as int),
+                                                     Au::from_px(image.get().height as int)),
                             };
                             lists.lists[index].append_item(ImageDisplayItemClass(image_display_item));
                         });
@@ -1225,6 +1244,7 @@ impl Box {
                                     extra: ExtraDisplayListData::new(self),
                                 },
                                 image: image.clone(),
+                                stretch_size: bounds.size,
                             };
                             lists.lists[index].append_item(ImageDisplayItemClass(image_display_item));
                         });

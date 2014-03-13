@@ -629,6 +629,8 @@ pub mod longhands {
             }
     </%self:longhand>
 
+    ${single_keyword("background-repeat", "repeat repeat-x repeat-y no-repeat")}
+
     ${new_style_struct("Color", is_inherited=True)}
 
     <%self:raw_longhand name="color">
@@ -968,10 +970,10 @@ pub mod shorthands {
 
     // TODO: other background-* properties
     <%self:shorthand name="background"
-                     sub_properties="background-color background-position background-image">
+                     sub_properties="background-color background-position background-repeat background-image">
                 use std::util;
 
-                let (mut color, mut image, mut position) = (None, None, None);
+                let (mut color, mut image, mut position, mut repeat) = (None, None, None, None);
                 let mut last_component_value = None;
                 let mut any = false;
 
@@ -987,6 +989,13 @@ pub mod shorthands {
                         match background_image::from_component_value(component_value, base_url) {
                             Some(v) => { image = Some(v); any = true; continue },
                             None => (),
+                        }
+                    }
+
+                    if repeat.is_none() {
+                        match background_repeat::from_component_value(component_value, base_url) {
+                            Some(v) => { repeat = Some(v); any = true; continue },
+                            None => ()
                         }
                     }
 
@@ -1016,6 +1025,7 @@ pub mod shorthands {
                         background_color: color,
                         background_image: image,
                         background_position: position,
+                        background_repeat: repeat,
                     })
                 } else {
                     None

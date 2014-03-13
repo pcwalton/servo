@@ -191,6 +191,11 @@ bitfield!(TextDisplayItemFlags, override_line_through, set_override_line_through
 pub struct ImageDisplayItem<E> {
     base: BaseDisplayItem<E>,
     image: Arc<~Image>,
+
+    /// The dimensions to which the image display item should be stretched. If this is smaller than
+    /// the bounds of this display item, then the image will be repeated in the appropriate
+    /// direction to tile the entire bounds.
+    stretch_size: Size2D<Au>,
 }
 
 /// Renders a border.
@@ -306,7 +311,22 @@ impl<E> DisplayItem<E> {
             ImageDisplayItemClass(ref image_item) => {
                 debug!("Drawing image at {:?}.", image_item.base.bounds);
 
-                render_context.draw_image(image_item.base.bounds, image_item.image.clone())
+                let mut y_offset = Au(0);
+                while y_offset < image_item.base.bounds.size.height {
+                    let mut x_offset = Au(0);
+                    while x_offset < image_item.base.bounds.size.width {
+                        let mut bounds = image_item.base.bounds;
+                        bounds.origin.x = bounds.origin.x + x_offset;
+                        bounds.origin.y = bounds.origin.y + y_offset;
+                        bounds.size = image_item.stretch_size;
+
+                        render_context.draw_image(bounds, image_item.image.clone());
+
+                        x_offset = x_offset + image_item.stretch_size.width;
+                    }
+
+                    y_offset = y_offset + image_item.stretch_size.height;
+                }
             }
 
             BorderDisplayItemClass(ref border) => {
