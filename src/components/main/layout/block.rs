@@ -620,8 +620,13 @@ impl BlockFlow {
             left_offset = box_.offset();
         }
 
-        // Note: Ignoring floats for absolute flow as of now.
-        if inorder && !self.is_absolutely_positioned() {
+        if inorder {
+            // Absolute positioning establishes a block formatting context. Don't propagate floats
+            // in or out. (But do propagate them between kids.)
+            if self.is_absolutely_positioned() {
+                self.base.floats = Floats::new();
+            }
+
             // Floats for blocks work like this:
             // self.floats -> child[0].floats
             // visit child[0]
@@ -636,7 +641,10 @@ impl BlockFlow {
                 kid.assign_height_inorder(ctx);
                 floats = flow::mut_base(kid).floats.clone();
             }
-            self.base.floats = floats;
+
+            if !self.is_absolutely_positioned() {
+                self.base.floats = floats;
+            }
         }
 
         // The amount of margin that we can potentially collapse with
