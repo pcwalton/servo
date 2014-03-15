@@ -336,6 +336,15 @@ enum CandidateHeightIteratorStatus {
     FoundCandidateHeightStatus,
 }
 
+// The handling for negative margins with margin collapse as specified in CSS 2.1 § 8.3.1.
+fn combine_margins_for_collapse(margin_a: Au, margin_b: Au) -> Au {
+    match (margin_a > Au(0), margin_b > Au(0)) {
+        (true, true) => geometry::max(margin_a, margin_b),
+        (false, false) => geometry::min(margin_a, margin_b),
+        (true, false) | (false, true) => margin_a + margin_b,
+    }
+}
+
 /// The real assign-heights traversal for flows with position 'absolute'.
 ///
 /// This is a traversal of an Absolute Flow tree.
@@ -667,28 +676,32 @@ impl BlockFlow {
     fn assign_height_block_base(&mut self, ctx: &mut LayoutContext, inorder: bool) {
         let mut cur_y = Au::new(0);
         let mut clearance = Au::new(0);
-        // Offset to content edge of box_
+        let mut margin_top = Au::new(0);
+
+        // This is the offset from the margin edge to the top content edge of the box.
         let mut top_offset = Au::new(0);
         let mut bottom_offset = Au::new(0);
         let mut left_offset = Au::new(0);
 
         for box_ in self.box_.iter() {
+            // Translate any floats past our top margin, since it is the *border box* that we
+            // want to clear, not the margin box.
+            left_offset = box_.offset();
+            margin_top = box_.margin.get().top;
+            self.base.floats.translate(Point2D(-left_offset, -margin_top));
+
             // Note: Ignoring clearance for absolute flows as of now.
             if !self.is_absolutely_positioned() {
                 clearance = match box_.clear() {
                     None => Au::new(0),
-                    Some(clear) => {
-                        self.base.floats.clearance(clear)
-                    }
+                    Some(clear) => self.base.floats.clearance(clear),
                 };
             }
 
-            top_offset = clearance + box_.margin.get().top + box_.border.get().top +
-                box_.padding.get().top;
+            top_offset = clearance + margin_top + box_.border.get().top + box_.padding.get().top;
             cur_y = cur_y + top_offset;
             bottom_offset = box_.margin.get().bottom + box_.border.get().bottom +
                 box_.padding.get().bottom;
-            left_offset = box_.offset();
         }
 
         if inorder {
@@ -698,6 +711,11 @@ impl BlockFlow {
                 self.base.floats = Floats::new();
             }
 
+            // Line floats up with our top content edge. Note that the floats were already
+            // translated down to the top margin edge above. Thus the remaining distance we need to
+            // translate floats is (`top_offset` - `margin_top`).
+            self.base.floats.translate(Point2D(Au(0), -(top_offset - margin_top)));
+
             // Floats for blocks work like this:
             // self.floats -> child[0].floats
             // visit child[0]
@@ -705,7 +723,6 @@ impl BlockFlow {
             // visit child[i]
             // repeat until all children are visited.
             // last_child.floats -> self.floats (done at the end of this method)
-            self.base.floats.translate(Point2D(-left_offset, -top_offset));
             let mut floats = self.base.floats.clone();
             for kid in self.base.child_iter() {
                 flow::mut_base(kid).floats = floats;
@@ -728,7 +745,6 @@ impl BlockFlow {
         // to move up by 12px to get to our top margin edge. So, `collapsing`
         // will be set to 12px
         let mut collapsing;
-        let mut margin_top = Au::new(0);
         let mut margin_bottom = Au::new(0);
         let mut top_margin_collapsible = false;
         let mut bottom_margin_collapsible = false;
@@ -747,7 +763,6 @@ impl BlockFlow {
                     box_.padding.get().bottom == Au(0) {
                     bottom_margin_collapsible = true;
                 }
-                margin_top = box_.margin.get().top;
                 margin_bottom = box_.margin.get().bottom;
             }
         }
@@ -786,14 +801,13 @@ impl BlockFlow {
         // if the parent has no bottom border, no bottom padding.
         // The bottom margin for an absolutely positioned element does not
         // collapse even with its children.
-        collapsing = if bottom_margin_collapsible && !self.is_absolutely_positioned() {
-            if margin_bottom < collapsible {
-                margin_bottom = collapsible;
-            }
-            collapsible
-        } else {
-            Au::new(0)
-        };
+        if bottom_margin_collapsible && !self.is_absolutely_positioned() {
+            margin_bottom = combine_margins_for_collapse(collapsible, margin_bottom);
+
+            // Move `cur_y` up to the bottom *border* edge of the last kid if we collapsed its
+            // bottom margin, since the kid's margin is now accounted for by our own.
+            cur_y = cur_y - collapsible;
+        }
 
         // TODO: A box's own margins collapse if the 'min-height' property is zero, and it has neither
         // top or bottom borders nor top or bottom padding, and it has a 'height' of either 0 or 'auto',
@@ -812,7 +826,7 @@ impl BlockFlow {
             // the bottom-most child.
             // top_offset: top margin-edge of the topmost child.
             // hence, height = content height
-            cur_y - top_offset - collapsing
+            cur_y - top_offset
         };
 
         if self.is_absolutely_positioned() {
@@ -1061,12 +1075,6 @@ impl BlockFlow {
                                         dirty, index, lists);
         }
 
-        // FIXME: Shouldn't this be the abs_rect _after_ relative positioning?
-        let abs_rect = Rect(self.base.abs_position, self.base.position.size);
-        if !abs_rect.intersects(dirty) {
-            return index;
-        }
-
         debug!("build_display_list_block: adding display element");
 
         let rel_offset = match self.box_ {
@@ -1105,11 +1113,6 @@ impl BlockFlow {
                                     index: uint,
                                     lists: &RefCell<DisplayListCollection<E>>)
                                     -> bool {
-        let abs_rect = Rect(self.base.abs_position, self.base.position.size);
-        if !abs_rect.intersects(dirty) {
-            return true;
-        }
-
         // position:relative
         let rel_offset = match self.box_ {
             Some(ref box_) => {
@@ -1264,10 +1267,6 @@ impl BlockFlow {
         // Set the absolute position, which will be passed down later as part
         // of containing block details for absolute descendants.
         self.base.abs_position = flow_origin;
-        let abs_rect = Rect(flow_origin, self.base.position.size);
-        if !abs_rect.intersects(dirty) {
-            return index;
-        }
 
         for box_ in self.box_.iter() {
             box_.build_display_list(builder, dirty, flow_origin, (&*self) as &Flow, index, lists);
@@ -1539,13 +1538,7 @@ impl Flow for BlockFlow {
             *first_in_flow = false;
 
             // Determine the total size of the margin we want to leave between the two boxes.
-            let margin_size = if *collapsible > Au(0) && this_margin > Au(0) {
-                geometry::max(*collapsible, this_margin)
-            } else {
-                // The complicated handling for negative margins given in CSS 2.1 § 8.3.1 simply
-                // reduces to this closed form formula, as near as I can tell.
-                *collapsible + this_margin
-            };
+            let margin_size = combine_margins_for_collapse(*collapsible, this_margin);
 
             // The difference between the margin we would have created if we hadn't collapsed
             // (`*collapsible + this_margin`) and the margin we want to create (`margin_size`)
