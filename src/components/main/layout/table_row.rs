@@ -9,18 +9,18 @@ use layout::block::BlockFlow;
 use layout::block::WidthAndMarginsComputer;
 use layout::construct::FlowConstructor;
 use layout::context::LayoutContext;
-use layout::display_list_builder::{DisplayListBuilder, ExtraDisplayListData};
+use layout::display_list_builder::{DisplayListBuilder, DisplayListBuildingInfo};
 use layout::flow::{TableRowFlowClass, FlowClass, Flow, ImmutableFlowUtils};
 use layout::flow;
 use layout::table::InternalTable;
 use layout::model::{MaybeAuto, Specified, Auto};
 use layout::wrapper::ThreadSafeLayoutNode;
 
-use std::cell::RefCell;
 use geom::{Point2D, Rect, Size2D};
-use gfx::display_list::DisplayListCollection;
+use gfx::display_list::StackingContext;
 use servo_util::geometry::Au;
 use servo_util::geometry;
+use std::cell::RefCell;
 
 /// A table formatting context.
 pub struct TableRowFlow {
@@ -66,14 +66,14 @@ impl TableRowFlow {
 
     /// Assign height for table-row flow.
     ///
+    /// TODO(pcwalton): This doesn't handle floats and positioned elements right.
+    ///
     /// inline(always) because this is only ever called by in-order or non-in-order top-level
     /// methods
     #[inline(always)]
     fn assign_height_table_row_base(&mut self, ctx: &mut LayoutContext, inorder: bool) {
         let (top_offset, bottom_offset, left_offset) = self.initialize_offsets();
 
-        self.block_flow.handle_children_floats_if_necessary(ctx, inorder,
-                                                            left_offset, top_offset);
         let mut cur_y = top_offset;
 
         // Per CSS 2.1 § 17.5.3, find max_y = max( computed `height`, minimum height of all cells )
@@ -118,24 +118,14 @@ impl TableRowFlow {
             let child_node = flow::mut_base(kid);
             child_node.position.size.height = height;
         }
-
-        self.block_flow.set_floats_out_if_inorder(inorder, height, cur_y,
-                                                  top_offset, bottom_offset, left_offset);
     }
 
-    pub fn build_display_list_table_row<E:ExtraDisplayListData>(
-                                        &mut self,
-                                        builder: &DisplayListBuilder,
-                                        container_block_size: &Size2D<Au>,
-                                        absolute_cb_abs_position: Point2D<Au>,
-                                        dirty: &Rect<Au>,
-                                        index: uint,
-                                        lists: &RefCell<DisplayListCollection<E>>)
-                                        -> uint {
+    pub fn build_display_list_table_row(&mut self,
+                                        stacking_context: &mut StackingContext,
+                                        builder: &mut DisplayListBuilder,
+                                        info: &DisplayListBuildingInfo) {
         debug!("build_display_list_table_row: same process as block flow");
-        self.block_flow.build_display_list_block(builder, container_block_size,
-                                                 absolute_cb_abs_position,
-                                                 dirty, index, lists)
+        self.block_flow.build_display_list_block(stacking_context, builder, info)
     }
 }
 
@@ -203,12 +193,6 @@ impl Flow for TableRowFlow {
     fn assign_height(&mut self, ctx: &mut LayoutContext) {
         debug!("assign_height: assigning height for table_row");
         self.assign_height_table_row_base(ctx, false);
-    }
-
-    /// TableRowBox and their parents(TableBox) do not have margins.
-    /// Therefore, margins to be collapsed do not exist.
-    fn collapse_margins(&mut self, _: bool, _: &mut bool, _: &mut Au,
-                        _: &mut Au, _: &mut Au, _: &mut Au) {
     }
 
     fn debug_str(&self) -> ~str {

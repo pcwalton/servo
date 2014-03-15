@@ -7,15 +7,15 @@
 use layout::box_::Box;
 use layout::block::{BlockFlow, WidthAndMarginsComputer};
 use layout::context::LayoutContext;
-use layout::display_list_builder::{DisplayListBuilder, ExtraDisplayListData};
+use layout::display_list_builder::{DisplayListBuilder, DisplayListBuildingInfo};
 use layout::flow::{TableCellFlowClass, FlowClass, Flow};
 use layout::table::InternalTable;
 use layout::wrapper::ThreadSafeLayoutNode;
 
-use std::cell::RefCell;
 use geom::{Point2D, Rect, Size2D};
-use gfx::display_list::{DisplayListCollection};
+use gfx::display_list::StackingContext;
 use servo_util::geometry::Au;
+use std::cell::RefCell;
 
 /// A table formatting context.
 pub struct TableCellFlow {
@@ -42,25 +42,15 @@ impl TableCellFlow {
 
     /// Assign height for table-cell flow.
     ///
+    /// TODO(pcwalton): This doesn't handle floats right.
+    ///
     /// inline(always) because this is only ever called by in-order or non-in-order top-level
     /// methods
     #[inline(always)]
     fn assign_height_table_cell_base(&mut self, ctx: &mut LayoutContext, inorder: bool) {
-        let (_, mut top_offset, bottom_offset, left_offset) = self.block_flow
-                                                                  .initialize_offsets(true);
+        let (_, mut top_offset, bottom_offset, left_offset) = (Au(0), Au(0), Au(0), Au(0));
 
-        self.block_flow.handle_children_floats_if_necessary(ctx, inorder,
-                                                            left_offset, top_offset);
         let mut cur_y = top_offset;
-        // Since table cell does not have `margin`, the first child's top margin and
-        // the last child's bottom margin do not collapse.
-        self.block_flow.compute_margin_collapse(&mut cur_y,
-                                                &mut top_offset,
-                                                &mut Au(0),
-                                                &mut Au(0),
-                                                false,
-                                                false);
-
         // CSS 2.1 § 17.5.3. Table cell box height is the minimum height required by the content.
         let height = cur_y - top_offset;
 
@@ -79,25 +69,14 @@ impl TableCellFlow {
         }
 
         self.block_flow.base.position.size.height = height + noncontent_height;
-
-        self.block_flow.set_floats_out_if_inorder(inorder, height, cur_y, top_offset,
-                                                  bottom_offset, left_offset);
-        self.block_flow.assign_height_absolute_flows(ctx);
     }
 
-    pub fn build_display_list_table_cell<E:ExtraDisplayListData>(
-                                           &mut self,
-                                           builder: &DisplayListBuilder,
-                                           container_block_size: &Size2D<Au>,
-                                           absolute_cb_abs_position: Point2D<Au>,
-                                           dirty: &Rect<Au>,
-                                           index: uint,
-                                           lists: &RefCell<DisplayListCollection<E>>)
-                                           -> uint {
-        debug!("build_display_list_table_cell: same process as block flow");
-        self.block_flow.build_display_list_block(builder, container_block_size,
-                                                 absolute_cb_abs_position,
-                                                 dirty, index, lists)
+    pub fn build_display_list_table_cell(&mut self,
+                                         stacking_context: &mut StackingContext,
+                                         builder: &mut DisplayListBuilder,
+                                         info: &DisplayListBuildingInfo) {
+        debug!("build_display_list_table: same process as block flow");
+        self.block_flow.build_display_list_block(stacking_context, builder, info)
     }
 }
 
@@ -154,12 +133,6 @@ impl Flow for TableCellFlow {
     fn assign_height(&mut self, ctx: &mut LayoutContext) {
         debug!("assign_height: assigning height for table_cell");
         self.assign_height_table_cell_base(ctx, false);
-    }
-
-    /// TableCellBox and their parents(TableRowBox) do not have margins.
-    /// Therefore, margins to be collapsed do not exist.
-    fn collapse_margins(&mut self, _: bool, _: &mut bool, _: &mut Au,
-                        _: &mut Au, _: &mut Au, _: &mut Au) {
     }
 
     fn debug_str(&self) -> ~str {

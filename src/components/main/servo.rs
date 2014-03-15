@@ -7,6 +7,7 @@
 #[license = "MPL"];
 
 #[feature(globs, macro_rules, managed_boxes, phase, thread_local)];
+#[allow(unused_imports)];
 
 extern crate alert;
 extern crate azure;

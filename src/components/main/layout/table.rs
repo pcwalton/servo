@@ -9,18 +9,18 @@ use layout::block::BlockFlow;
 use layout::block::{WidthAndMarginsComputer, WidthConstraintInput, WidthConstraintSolution};
 use layout::construct::FlowConstructor;
 use layout::context::LayoutContext;
-use layout::display_list_builder::{DisplayListBuilder, ExtraDisplayListData};
+use layout::display_list_builder::{DisplayListBuilder, DisplayListBuildingInfo};
 use layout::floats::{FloatKind};
 use layout::flow::{TableFlowClass, FlowClass, Flow, ImmutableFlowUtils};
 use layout::flow;
 use layout::table_wrapper::{TableLayout, FixedLayout, AutoLayout};
 use layout::wrapper::ThreadSafeLayoutNode;
 
+use geom::{Point2D, Rect, Size2D};
+use gfx::display_list::StackingContext;
+use servo_util::geometry::Au;
 use std::cell::RefCell;
 use style::computed_values::table_layout;
-use geom::{Point2D, Rect, Size2D};
-use gfx::display_list::DisplayListCollection;
-use servo_util::geometry::Au;
 
 /// A table flow corresponded to the table's internal table box under a table wrapper flow.
 /// The properties `position`, `float`, and `margin-*` are used on the table wrapper box,
@@ -95,57 +95,21 @@ impl TableFlow {
 
     /// Assign height for table flow.
     ///
+    /// TODO(pcwalton): This probably doesn't handle margin collapse right.
+    ///
     /// inline(always) because this is only ever called by in-order or non-in-order top-level
     /// methods
     #[inline(always)]
     fn assign_height_table_base(&mut self, ctx: &mut LayoutContext, inorder: bool) {
-
-        let (_, top_offset, bottom_offset, left_offset) = self.block_flow.initialize_offsets(true);
-
-        self.block_flow.handle_children_floats_if_necessary(ctx, inorder,
-                                                            left_offset, top_offset);
-
-        let mut cur_y = top_offset;
-        for kid in self.block_flow.base.child_iter() {
-            let child_node = flow::mut_base(kid);
-            child_node.position.origin.y = cur_y;
-            cur_y = cur_y + child_node.position.size.height;
-        }
-
-        let height = cur_y - top_offset;
-
-        let mut noncontent_height = Au::new(0);
-        for box_ in self.block_flow.box_.iter() {
-            let mut position = box_.border_box.get();
-
-            // noncontent_height = border_top/bottom + padding_top/bottom of box
-            noncontent_height = box_.noncontent_height();
-
-            position.origin.y = Au(0);
-            position.size.height = height + noncontent_height;
-
-            box_.border_box.set(position);
-        }
-
-        self.block_flow.base.position.size.height = height + noncontent_height;
-
-        self.block_flow.set_floats_out_if_inorder(inorder, height, cur_y,
-                                                  top_offset, bottom_offset, left_offset);
+        self.block_flow.assign_height_block_base(ctx, inorder)
     }
 
-    pub fn build_display_list_table<E:ExtraDisplayListData>(
-                                    &mut self,
-                                    builder: &DisplayListBuilder,
-                                    container_block_size: &Size2D<Au>,
-                                    absolute_cb_abs_position: Point2D<Au>,
-                                    dirty: &Rect<Au>,
-                                    index: uint,
-                                    lists: &RefCell<DisplayListCollection<E>>)
-                                    -> uint {
+    pub fn build_display_list_table(&mut self,
+                                    stacking_context: &mut StackingContext,
+                                    builder: &mut DisplayListBuilder,
+                                    info: &DisplayListBuildingInfo) {
         debug!("build_display_list_table: same process as block flow");
-        self.block_flow.build_display_list_block(builder, container_block_size,
-                                                 absolute_cb_abs_position,
-                                                 dirty, index, lists)
+        self.block_flow.build_display_list_block(stacking_context, builder, info)
     }
 }
 
@@ -273,20 +237,6 @@ impl Flow for TableFlow {
     fn assign_height(&mut self, ctx: &mut LayoutContext) {
         debug!("assign_height: assigning height for table");
         self.assign_height_table_base(ctx, false);
-    }
-
-    // CSS Section 8.3.1 - Collapsing Margins
-    // Since `margin` is not used on table box, `collapsing` and `collapsible` are set to 0
-    fn collapse_margins(&mut self,
-                        _: bool,
-                        _: &mut bool,
-                        _: &mut Au,
-                        _: &mut Au,
-                        collapsing: &mut Au,
-                        collapsible: &mut Au) {
-        // `margin` is not used on table box.
-        *collapsing = Au::new(0);
-        *collapsible = Au::new(0);
     }
 
     fn debug_str(&self) -> ~str {
