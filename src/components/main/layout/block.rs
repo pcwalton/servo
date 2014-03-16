@@ -338,10 +338,12 @@ enum CandidateHeightIteratorStatus {
 
 // The handling for negative margins with margin collapse as specified in CSS 2.1 § 8.3.1.
 fn combine_margins_for_collapse(margin_a: Au, margin_b: Au) -> Au {
-    match (margin_a > Au(0), margin_b > Au(0)) {
-        (true, true) => geometry::max(margin_a, margin_b),
-        (false, false) => geometry::min(margin_a, margin_b),
-        (true, false) | (false, true) => margin_a + margin_b,
+    if margin_a > Au(0) && margin_b > Au(0) {
+        geometry::max(margin_a, margin_b)
+    } else if margin_a < Au(0) && margin_b < Au(0) {
+        geometry::min(margin_a, margin_b)
+    } else {
+        margin_a + margin_b
     }
 }
 
@@ -684,9 +686,10 @@ impl BlockFlow {
         let mut left_offset = Au::new(0);
 
         for box_ in self.box_.iter() {
+            left_offset = box_.offset();
+
             // Translate any floats past our top margin, since it is the *border box* that we
             // want to clear, not the margin box.
-            left_offset = box_.offset();
             margin_top = box_.margin.get().top;
             self.base.floats.translate(Point2D(-left_offset, -margin_top));
 
@@ -749,20 +752,28 @@ impl BlockFlow {
         let mut top_margin_collapsible = false;
         let mut bottom_margin_collapsible = false;
         let mut first_in_flow = true;
+
         // Margins for an absolutely positioned element do not collapse with
         // its children.
         if !self.is_absolutely_positioned() {
             for box_ in self.box_.iter() {
-                if !self.is_root() && box_.border.get().top == Au(0)
-                    && box_.padding.get().top == Au(0) {
+                // Explicitly specified height disallows margin collapse.
+                match MaybeAuto::from_style(box_.style().Box.get().height, Au(0)) {
+                    Auto | Specified(Au(0)) if !self.is_root() => {
+                        if box_.border.get().top == Au(0)
+                            && box_.padding.get().top == Au(0) {
 
-                    collapsible = box_.margin.get().top;
-                    top_margin_collapsible = true;
+                            collapsible = box_.margin.get().top;
+                            top_margin_collapsible = true;
+                        }
+                        if !self.is_root() && box_.border.get().bottom == Au(0) &&
+                            box_.padding.get().bottom == Au(0) {
+                            bottom_margin_collapsible = true;
+                        }
+                    }
+                    _ => {}
                 }
-                if !self.is_root() && box_.border.get().bottom == Au(0) &&
-                    box_.padding.get().bottom == Au(0) {
-                    bottom_margin_collapsible = true;
-                }
+
                 margin_bottom = box_.margin.get().bottom;
             }
         }
@@ -802,10 +813,10 @@ impl BlockFlow {
         // The bottom margin for an absolutely positioned element does not
         // collapse even with its children.
         if bottom_margin_collapsible && !self.is_absolutely_positioned() {
+            // If we collapsed the last kid's bottom margin, then move `cur_y` up to the bottom
+            // *border* edge of the last kid, since the kid's margin is now accounted for by our
+            // own.
             margin_bottom = combine_margins_for_collapse(collapsible, margin_bottom);
-
-            // Move `cur_y` up to the bottom *border* edge of the last kid if we collapsed its
-            // bottom margin, since the kid's margin is now accounted for by our own.
             cur_y = cur_y - collapsible;
         }
 
@@ -967,6 +978,8 @@ impl BlockFlow {
             margin_height = box_.margin.get().top + box_.margin.get().bottom;
         }
 
+        println!("added float with margin height {}, height {}", margin_height, height);
+
         let info = PlacementInfo {
             size: Size2D(self.base.position.size.width + full_noncontent_width,
                          height + margin_height),
@@ -1045,6 +1058,7 @@ impl BlockFlow {
         }
 
         let content_height = candidate_height_iterator.candidate_value;
+        println!("content height = {}, noncontent height = {}", content_height, noncontent_height);
 
         debug!("assign_height_float -- height: {}", content_height + noncontent_height);
 

@@ -883,13 +883,14 @@ impl Flow for InlineFlow {
 
     fn collapse_margins(&mut self,
                         _: bool,
-                        _: &mut bool,
+                        first_in_flow: &mut bool,
                         _: &mut Au,
                         _: &mut Au,
                         collapsible: &mut Au)
                         -> Au {
         // Non-empty inline flows prevent collapsing between the previous margion and the next.
         if self.base.position.size.height > Au::new(0) {
+            *first_in_flow = false;
             *collapsible = Au::new(0);
         }
 
