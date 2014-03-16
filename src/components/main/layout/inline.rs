@@ -8,7 +8,7 @@ use layout::box_::{SpacerBox, SplitDidFit, SplitDidNotFit, UnscannedTextBox};
 use layout::context::LayoutContext;
 use layout::display_list_builder::{DisplayListBuilder, ExtraDisplayListData};
 use layout::floats::{FloatLeft, Floats, PlacementInfo};
-use layout::flow::{BaseFlow, FlowClass, Flow, InlineFlowClass};
+use layout::flow::{BaseFlow, FlowClass, Flow, InlineFlowClass, MarginCalculationInfo};
 use layout::flow;
 use layout::util::ElementMapping;
 use layout::wrapper::ThreadSafeLayoutNode;
@@ -881,17 +881,12 @@ impl Flow for InlineFlow {
         self.base.floats.translate(Point2D(Au::new(0), -self.base.position.size.height));
     }
 
-    fn collapse_margins(&mut self,
-                        _: bool,
-                        first_in_flow: &mut bool,
-                        _: &mut Au,
-                        _: &mut Au,
-                        collapsible: &mut Au)
-                        -> Au {
+    fn collapse_margins(&mut self, info: &mut MarginCalculationInfo) -> Au {
         // Non-empty inline flows prevent collapsing between the previous margion and the next.
         if self.base.position.size.height > Au::new(0) {
-            *first_in_flow = false;
-            *collapsible = Au::new(0);
+            info.first_in_flow = false;
+            info.collapsible_is_own = false;
+            info.collapsible = Au::new(0);
         }
 
         Au(0)

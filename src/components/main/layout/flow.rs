@@ -107,13 +107,7 @@ pub trait Flow {
     }
 
     /// Collapses margins with the parent flow. This runs as part of assign-heights.
-    fn collapse_margins(&mut self,
-                        _top_margin_collapsible: bool,
-                        _first_in_flow: &mut bool,
-                        _margin_top: &mut Au,
-                        _top_offset: &mut Au,
-                        _collapsible: &mut Au)
-                        -> Au {
+    fn collapse_margins(&mut self, _info: &mut MarginCalculationInfo) -> Au {
         fail!("collapse_margins not yet implemented")
     }
 
@@ -1123,3 +1117,46 @@ impl MutableOwnedFlowUtils for ~Flow {
         self_borrowed.destroy();
     }
 }
+
+pub struct MarginCalculationInfo {
+    /// The amount of margin that we can potentially collapse with.
+    collapsible: Au,
+
+    /// How much to move up by to get to the beginning of current kid flow.
+    ///
+    /// Example: if previous sibling's margin-bottom is 20px and your margin-top is 12px, the
+    /// collapsed margin will be 20px. Since cur_y will be at the bottom margin edge of the
+    /// previous sibling, we have to move up by 12px to get to our top margin edge. So,
+    /// `collapsing` will be set to 12px.
+    collapsing: Au,
+
+    /// The current top margin for the outer box.
+    margin_top: Au,
+
+    /// The offset from the margin edge to the top content edge of the box.
+    top_offset: Au,
+
+    /// Whether the top margin of the outer box is collapsible.
+    top_margin_collapsible: bool,
+
+    /// Set to true if this is the first in-flow child flow to be processed.
+    first_in_flow: bool,
+
+    /// Whether `collapsible` represents the outer box's own margin.
+    collapsible_is_own: bool,
+}
+
+impl MarginCalculationInfo {
+    pub fn new() -> MarginCalculationInfo {
+        MarginCalculationInfo {
+            collapsible: Au(0),
+            collapsing: Au(0),
+            margin_top: Au(0),
+            top_offset: Au(0),
+            top_margin_collapsible: false,
+            first_in_flow: true,
+            collapsible_is_own: false,
+        }
+    }
+}
+

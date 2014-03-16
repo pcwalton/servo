@@ -18,7 +18,8 @@ use layout::context::LayoutContext;
 use layout::display_list_builder::{DisplayListBuilder, ExtraDisplayListData};
 use layout::floats::{FloatKind, Floats, PlacementInfo};
 use layout::flow::{BaseFlow, BlockFlowClass, FlowClass, Flow, ImmutableFlowUtils};
-use layout::flow::{mut_base, PreorderFlowTraversal, PostorderFlowTraversal, MutableFlowUtils};
+use layout::flow::{MarginCalculationInfo, MutableFlowUtils, PreorderFlowTraversal};
+use layout::flow::{PostorderFlowTraversal, mut_base};
 use layout::flow;
 use layout::model::{MaybeAuto, Specified, Auto, specified_or_none, specified};
 use layout::wrapper::ThreadSafeLayoutNode;
@@ -678,10 +679,7 @@ impl BlockFlow {
     fn assign_height_block_base(&mut self, ctx: &mut LayoutContext, inorder: bool) {
         let mut cur_y = Au::new(0);
         let mut clearance = Au::new(0);
-        let mut margin_top = Au::new(0);
-
-        // This is the offset from the margin edge to the top content edge of the box.
-        let mut top_offset = Au::new(0);
+        let mut margin_info = MarginCalculationInfo::new();
         let mut bottom_offset = Au::new(0);
         let mut left_offset = Au::new(0);
 
@@ -690,8 +688,8 @@ impl BlockFlow {
 
             // Translate any floats past our top margin, since it is the *border box* that we
             // want to clear, not the margin box.
-            margin_top = box_.margin.get().top;
-            self.base.floats.translate(Point2D(-left_offset, -margin_top));
+            margin_info.margin_top = box_.margin.get().top;
+            self.base.floats.translate(Point2D(-left_offset, -margin_info.margin_top));
 
             // Note: Ignoring clearance for absolute flows as of now.
             if !self.is_absolutely_positioned() {
@@ -701,11 +699,18 @@ impl BlockFlow {
                 };
             }
 
-            top_offset = clearance + margin_top + box_.border.get().top + box_.padding.get().top;
-            cur_y = cur_y + top_offset;
+            margin_info.top_offset = clearance + margin_info.margin_top + box_.border.get().top +
+                box_.padding.get().top;
+            cur_y = cur_y + margin_info.top_offset;
             bottom_offset = box_.margin.get().bottom + box_.border.get().bottom +
                 box_.padding.get().bottom;
         }
+
+        // Line floats up with our top content edge. Note that the floats were already
+        // translated down to the top margin edge above. Thus the remaining distance we need to
+        // translate floats is (`top_offset` - `margin_top`).
+        self.base.floats.translate(Point2D(Au(0),
+                                           -(margin_info.top_offset - margin_info.margin_top)));
 
         if inorder {
             // Absolute positioning establishes a block formatting context. Don't propagate floats
@@ -713,11 +718,6 @@ impl BlockFlow {
             if self.is_absolutely_positioned() {
                 self.base.floats = Floats::new();
             }
-
-            // Line floats up with our top content edge. Note that the floats were already
-            // translated down to the top margin edge above. Thus the remaining distance we need to
-            // translate floats is (`top_offset` - `margin_top`).
-            self.base.floats.translate(Point2D(Au(0), -(top_offset - margin_top)));
 
             // Floats for blocks work like this:
             // self.floats -> child[0].floats
@@ -738,49 +738,47 @@ impl BlockFlow {
             }
         }
 
-        // The amount of margin that we can potentially collapse with
-        let mut collapsible = Au::new(0);
-        // How much to move up by to get to the beginning of
-        // current kid flow.
-        // Example: if previous sibling's margin-bottom is 20px and your
-        // margin-top is 12px, the collapsed margin will be 20px. Since cur_y
-        // will be at the bottom margin edge of the previous sibling, we have
-        // to move up by 12px to get to our top margin edge. So, `collapsing`
-        // will be set to 12px
-        let mut collapsing;
         let mut margin_bottom = Au::new(0);
-        let mut top_margin_collapsible = false;
         let mut bottom_margin_collapsible = false;
-        let mut first_in_flow = true;
+        let mut totally_collapsible = false;
 
         // Margins for an absolutely positioned element do not collapse with
         // its children.
         if !self.is_absolutely_positioned() {
             for box_ in self.box_.iter() {
-                // Explicitly specified height disallows margin collapse.
-                match MaybeAuto::from_style(box_.style().Box.get().height, Au(0)) {
-                    Auto | Specified(Au(0)) if !self.is_root() => {
-                        if box_.border.get().top == Au(0)
-                            && box_.padding.get().top == Au(0) {
-
-                            collapsible = box_.margin.get().top;
-                            top_margin_collapsible = true;
-                        }
-                        if !self.is_root() && box_.border.get().bottom == Au(0) &&
-                            box_.padding.get().bottom == Au(0) {
-                            bottom_margin_collapsible = true;
-                        }
-                    }
-                    _ => {}
+                if box_.border.get().top == Au(0) && box_.padding.get().top == Au(0) {
+                    margin_info.collapsible = box_.margin.get().top;
+                    margin_info.collapsible_is_own = true;
+                    margin_info.top_margin_collapsible = true
+                }
+                if box_.border.get().bottom == Au(0) && box_.padding.get().bottom == Au(0) {
+                    bottom_margin_collapsible = true;
                 }
 
                 margin_bottom = box_.margin.get().bottom;
+
+                // A box's own margins collapse if the `min-height` property is zero, and it has
+                // neither top or bottom borders nor top or bottom padding, and it has a `height`
+                // of either 0 or `auto`, and it does not contain a line box, and all of its
+                // in-flow children's margins (if any) collapse.
+                let box_style = &box_.style().Box;
+                totally_collapsible = match (MaybeAuto::from_style(box_style.get().height, Au(0)),
+                                             specified(box_style.get().min_height, Au(0))) {
+                    (Auto, Au(0)) | (Specified(Au(0)), Au(0)) if
+                            margin_info.top_margin_collapsible &&
+                            bottom_margin_collapsible => {
+                        true
+                    }
+                    _ => false,
+                }
             }
         }
 
         // At this point, cur_y is at the content edge of the flow's box_
         for kid in self.base.child_iter() {
-            // At this point, cur_y is at bottom margin edge of previous kid
+            // At this point, cur_y is at bottom margin edge of previous kid.
+            //
+            // TODO(pcwalton): Turn off `totally_collapsible` if the flow contains a line box.
 
             if kid.is_absolutely_positioned() {
                 // Assume that the `hypothetical box` for an absolute flow
@@ -790,14 +788,10 @@ impl BlockFlow {
                 // Skip the collapsing for absolute flow kids and continue
                 // with the next flow.
             } else {
-                collapsing = kid.collapse_margins(top_margin_collapsible,
-                                                  &mut first_in_flow,
-                                                  &mut margin_top,
-                                                  &mut top_offset,
-                                                  &mut collapsible);
+                margin_info.collapsing = kid.collapse_margins(&mut margin_info);
 
                 let child_node = flow::mut_base(kid);
-                cur_y = cur_y - collapsing;
+                cur_y = cur_y - margin_info.collapsing;
                 // At this point, after moving up by `collapsing`, cur_y is at the
                 // top margin edge of kid
                 child_node.position.origin.y = cur_y;
@@ -812,18 +806,21 @@ impl BlockFlow {
         // if the parent has no bottom border, no bottom padding.
         // The bottom margin for an absolutely positioned element does not
         // collapse even with its children.
-        if bottom_margin_collapsible && !self.is_absolutely_positioned() {
+        if bottom_margin_collapsible && !self.is_absolutely_positioned() &&
+                (!margin_info.collapsible_is_own || totally_collapsible) {
             // If we collapsed the last kid's bottom margin, then move `cur_y` up to the bottom
             // *border* edge of the last kid, since the kid's margin is now accounted for by our
             // own.
-            margin_bottom = combine_margins_for_collapse(collapsible, margin_bottom);
-            cur_y = cur_y - collapsible;
+            margin_bottom = combine_margins_for_collapse(margin_info.collapsible, margin_bottom);
+
+            if margin_info.collapsible_is_own {
+                println!("collapsing my own margins! bottom --> {}", margin_bottom);
+                margin_info.margin_top = Au(0)
+            }
+
+            cur_y = cur_y - margin_info.collapsible;
         }
-
-        // TODO: A box's own margins collapse if the 'min-height' property is zero, and it has neither
-        // top or bottom borders nor top or bottom padding, and it has a 'height' of either 0 or 'auto',
-        // and it does not contain a line box, and all of its in-flow children's margins (if any) collapse.
-
+        
         let screen_height = ctx.screen_size.height;
 
         let mut height = if self.is_root() {
@@ -837,7 +834,7 @@ impl BlockFlow {
             // the bottom-most child.
             // top_offset: top margin-edge of the topmost child.
             // hence, height = content height
-            cur_y - top_offset
+            cur_y - margin_info.top_offset
         };
 
         if self.is_absolutely_positioned() {
@@ -879,7 +876,7 @@ impl BlockFlow {
 
             // The associated box is the border box of this flow.
             // Margin after collapse
-            margin.top = margin_top;
+            margin.top = margin_info.margin_top;
             margin.bottom = margin_bottom;
 
             noncontent_height = box_.padding.get().top + box_.padding.get().bottom +
@@ -899,7 +896,7 @@ impl BlockFlow {
         self.base.position.size.height = height + noncontent_height;
 
         if inorder {
-            let extra_height = height - (cur_y - top_offset) + bottom_offset;
+            let extra_height = height - (cur_y - margin_info.top_offset) + bottom_offset;
             self.base.floats.translate(Point2D(left_offset, -extra_height));
         }
 
@@ -977,8 +974,6 @@ impl BlockFlow {
                 box_.margin.get().right;
             margin_height = box_.margin.get().top + box_.margin.get().bottom;
         }
-
-        println!("added float with margin height {}, height {}", margin_height, height);
 
         let info = PlacementInfo {
             size: Size2D(self.base.position.size.width + full_noncontent_width,
@@ -1058,7 +1053,6 @@ impl BlockFlow {
         }
 
         let content_height = candidate_height_iterator.candidate_value;
-        println!("content height = {}, noncontent height = {}", content_height, noncontent_height);
 
         debug!("assign_height_float -- height: {}", content_height + noncontent_height);
 
@@ -1510,23 +1504,7 @@ impl Flow for BlockFlow {
     // Handles collapsing margins per CSS 2.1 § 8.3.1. The return value specifies how much to move
     // up: i.e. the difference between the amount of space the two margins would have taken up had
     // they not collapsed and the total size of the collapsed margin.
-    //
-    // Arguments:
-    //
-    // * `self`: the flow whose kids' margins we want to collapse.
-    //
-    // * `collapsing`: A value to be set by this function. This tells us how much of the top margin
-    //   has collapsed with a previous margin.
-    //
-    // * `collapsible`: On entry, the potential collapsible margin at the bottom of the previous
-    //   box. On exit, the potential collapsible margin at the bottom of this box.
-    fn collapse_margins(&mut self,
-                        top_margin_collapsible: bool,
-                        first_in_flow: &mut bool,
-                        margin_top: &mut Au,
-                        top_offset: &mut Au,
-                        collapsible: &mut Au)
-                        -> Au {
+    fn collapse_margins(&mut self, info: &mut MarginCalculationInfo) -> Au {
         if self.is_float() {
             // Margins between a floated box and any other box do not collapse.
             return Au(0)
@@ -1537,28 +1515,29 @@ impl Flow for BlockFlow {
 
             // The top margin collapses with its first in-flow block-level child's
             // top margin if the parent has no top border, no top padding.
-            if *first_in_flow && top_margin_collapsible {
+            if info.first_in_flow && info.top_margin_collapsible {
                 // If top-margin of parent is less than top-margin of its first child,
                 // the parent box goes down until its top is aligned with the child.
-                if *margin_top < this_margin {
+                if info.margin_top < this_margin {
                     // TODO: The position of child floats should be updated and this
                     // would influence clearance as well. See #725
-                    let extra_margin = this_margin - *margin_top;
-                    *top_offset = *top_offset + extra_margin;
-                    *margin_top = this_margin;
+                    let extra_margin = this_margin - info.margin_top;
+                    info.top_offset = info.top_offset + extra_margin;
+                    info.margin_top = this_margin;
                 }
             }
 
-            *first_in_flow = false;
+            info.first_in_flow = false;
+            info.collapsible_is_own = false;
 
             // Determine the total size of the margin we want to leave between the two boxes.
-            let margin_size = combine_margins_for_collapse(*collapsible, this_margin);
+            let margin_size = combine_margins_for_collapse(info.collapsible, this_margin);
 
             // The difference between the margin we would have created if we hadn't collapsed
             // (`*collapsible + this_margin`) and the margin we want to create (`margin_size`)
             // is the amount we need to move up.
-            let result = *collapsible + this_margin - margin_size;
-            *collapsible = box_.margin.get().bottom;
+            let result = info.collapsible + this_margin - margin_size;
+            info.collapsible = box_.margin.get().bottom;
             return result
         }
 
