@@ -55,7 +55,7 @@ use std::sync::atomics::Relaxed;
 use std::vec::VecMutIterator;
 use std::iter::Zip;
 use style::ComputedValues;
-use style::computed_values::{text_align, position};
+use style::computed_values::{clear, position, text_align};
 
 /// Virtual methods that make up a float context.
 ///
@@ -647,6 +647,11 @@ pub struct BaseFlow {
     /// The collapsible margins for this flow, if any.
     collapsible_margins: CollapsibleMargins,
 
+    /// The type of clearance (left, right, or both) for this flow, if any.
+    ///
+    /// TODO(pcwalton): Pack into a bitfield to save space.
+    clear: clear::T,
+
     /// The position of this flow in page coordinates, computed during display list construction.
     abs_position: Point2D<Au>,
 
@@ -722,6 +727,7 @@ impl BaseFlow {
             floats: Floats::new(),
             num_floats: 0,
             collapsible_margins: CollapsibleMargins::new(),
+            clear: clear::none,
             abs_position: Point2D(Au::new(0), Au::new(0)),
             abs_descendants: Descendants::new(),
             fixed_descendants: Descendants::new(),

@@ -103,6 +103,14 @@ impl MarginCollapseInfo {
         if fragment.border.get().bottom != Au(0) || fragment.padding.get().bottom != Au(0) {
             self.state = AccumulatingMarginIn
         }
+        match MaybeAuto::from_style(fragment.style().Box.get().height, Au(0)) {
+            Auto | Specified(Au(0)) => {}
+            Specified(_) => {
+                // If the box has an explicitly specified height, margins may not collapse
+                // through it.
+                self.state = AccumulatingMarginIn
+            }
+        }
 
         let bottom_margin = fragment.margin.get().bottom;
         match self.state {

@@ -16,7 +16,7 @@ use layout::box_::{Box, ImageBox, MainBoxKind, ScannedTextBox};
 use layout::construct::FlowConstructor;
 use layout::context::LayoutContext;
 use layout::display_list_builder::{DisplayListBuilder, ExtraDisplayListData};
-use layout::floats::{FloatKind, Floats, PlacementInfo};
+use layout::floats::{ClearBoth, ClearLeft, ClearRight, FloatKind, Floats, PlacementInfo};
 use layout::flow::{BaseFlow, BlockFlowClass, FlowClass, Flow, ImmutableFlowUtils};
 use layout::flow::{MutableFlowUtils, PreorderFlowTraversal, PostorderFlowTraversal, mut_base};
 use layout::flow;
@@ -24,7 +24,7 @@ use layout::model::{Auto, MarginCollapseInfo, MarginsCollapse, MarginsCollapseTh
 use layout::model::{NoCollapsibleMargins, Specified, specified, specified_or_none};
 use layout::wrapper::ThreadSafeLayoutNode;
 use style::ComputedValues;
-use style::computed_values::position;
+use style::computed_values::{clear, position};
 
 use std::cell::RefCell;
 use geom::{Point2D, Rect, Size2D};
@@ -676,10 +676,13 @@ impl BlockFlow {
             }
         }
 
+        self.base.position.size.height = self.base.position.size.height + top_margin_value +
+            bottom_margin_value;
+
         for fragment in self.box_.iter() {
             let mut position = fragment.border_box.get();
             position.size.height = position.size.height + top_margin_value + bottom_margin_value;
-            fragment.border_box.set(position)
+            fragment.border_box.set(position);
         }
     }
 
@@ -699,57 +702,26 @@ impl BlockFlow {
     #[inline(always)]
     fn assign_height_block_base(&mut self, ctx: &mut LayoutContext, inorder: bool) {
         let mut cur_y = Au::new(0);
-        let mut clearance = Au::new(0);
-        let mut bottom_offset = Au::new(0);
         let mut left_offset = Au::new(0);
         let mut margin_collapse_info = MarginCollapseInfo::new();
 
         for fragment in self.box_.iter() {
             left_offset = fragment.offset();
+            self.base.floats.translate(Point2D(-left_offset, Au(0)));
+            self.base.clear = fragment.style().Box.get().clear;
 
-            // Note: Ignoring clearance for absolute flows as of now.
-            if !self.is_absolutely_positioned() {
-                clearance = match fragment.clear() {
-                    None => Au::new(0),
-                    Some(clear) => self.base.floats.clearance(clear),
-                };
-            }
-
-            cur_y = clearance + fragment.border.get().top + fragment.padding.get().top;
-            bottom_offset = fragment.border.get().bottom + fragment.padding.get().bottom;
-
-            self.base.floats.translate(Point2D(-left_offset, -cur_y));
-
+            cur_y = fragment.border.get().top + fragment.padding.get().top;
             margin_collapse_info = MarginCollapseInfo::from_fragment(fragment);
         }
 
-        if inorder {
-            // Absolute positioning establishes a block formatting context. Don't propagate floats
-            // in or out. (But do propagate them between kids.)
-            if self.is_absolutely_positioned() {
-                self.base.floats = Floats::new();
-            }
-
-            // Floats for blocks work like this:
-            // self.floats -> child[0].floats
-            // visit child[0]
-            // child[i-1].floats -> child[i].floats
-            // visit child[i]
-            // repeat until all children are visited.
-            // last_child.floats -> self.floats (done at the end of this method)
-            let mut floats = self.base.floats.clone();
-            for kid in self.base.child_iter() {
-                flow::mut_base(kid).floats = floats;
-                kid.assign_height_inorder(ctx);
-                floats = flow::mut_base(kid).floats.clone();
-            }
-
-            if !self.is_absolutely_positioned() {
-                self.base.floats = floats;
-            }
+        // Absolute positioning establishes a block formatting context. Don't propagate floats
+        // in or out. (But do propagate them between kids.)
+        if inorder && self.is_absolutely_positioned() {
+            self.base.floats = Floats::new();
         }
 
         // At this point, cur_y is at the content edge of the flow's box.
+        let mut floats = self.base.floats.clone();
         for kid in self.base.child_iter() {
             if kid.is_absolutely_positioned() {
                 // Assume that the `hypothetical box` for an absolute flow
@@ -758,22 +730,48 @@ impl BlockFlow {
                 kid.as_block().base.position.origin.y = cur_y;
                 // Skip the collapsing for absolute flow kids and continue
                 // with the next flow.
-            } else {
-                let kid_base = flow::mut_base(kid);
-
-                // Handle (possibly collapsed) top margin.
-                cur_y = cur_y + margin_collapse_info.advance_top_margin(
-                    &kid_base.collapsible_margins);
-
-                // At this point, after moving up by `collapsing`, cur_y is at the border edge of
-                // `kid`.
-                kid_base.position.origin.y = cur_y;
-                cur_y = cur_y + kid_base.position.size.height;
-
-                // Handle (possibly collapsed) bottom margin.
-                cur_y = cur_y + margin_collapse_info.advance_bottom_margin(
-                    &kid_base.collapsible_margins);
+                continue
             }
+
+            {
+                // Handle any (possibly collapsed) top margin.
+                let kid_base = flow::mut_base(kid);
+                let delta = margin_collapse_info.advance_top_margin(&kid_base.collapsible_margins);
+                cur_y = cur_y + delta;
+
+                // Handle floats.
+                if inorder {
+                    floats.translate(Point2D(Au(0), -delta));
+
+                    let clearance = match kid_base.clear {
+                        clear::none => Au(0),
+                        clear::left => floats.clearance(ClearLeft),
+                        clear::right => floats.clearance(ClearRight),
+                        clear::both => floats.clearance(ClearBoth),
+                    };
+                    cur_y = cur_y + clearance;
+                    floats.translate(Point2D(Au(0), -clearance))
+                }
+            }
+
+            // Assign height now for the child if it was impacted by floats and we couldn't before.
+            if inorder {
+                flow::mut_base(kid).floats = floats;
+                kid.assign_height_inorder(ctx);
+                floats = flow::mut_base(kid).floats.clone();
+            }
+
+            // At this point, after moving up by `collapsing`, cur_y is at the border edge of the
+            // child.
+            let kid_base = flow::mut_base(kid);
+            kid_base.position.origin.y = cur_y;
+
+            // Move past the child's border box.
+            cur_y = cur_y + kid_base.position.size.height;
+
+            // Handle any (possibly collapsed) bottom margin.
+            let delta = margin_collapse_info.advance_bottom_margin(&kid_base.collapsible_margins);
+            cur_y = cur_y + delta
         }
 
         self.collect_static_y_offsets_from_kids();
@@ -784,16 +782,12 @@ impl BlockFlow {
                 margin_collapse_info.finish_and_compute_collapsible_margins(fragment)
         }
 
-        self.adjust_boxes_for_collapsed_margins_if_root();
-
-        let screen_height = ctx.screen_size.height;
-
         let mut height = if self.is_root() {
             // FIXME(pcwalton): The max is taken here so that you can scroll the page, but this is
             // not correct behavior according to CSS 2.1 § 10.5. Instead I think we should treat
             // the root element as having `overflow: scroll` and use the layers-based scrolling
             // infrastructure to make it scrollable.
-            Au::max(screen_height, cur_y)
+            Au::max(ctx.screen_size.height, cur_y)
         } else {
             cur_y
         };
@@ -806,18 +800,16 @@ impl BlockFlow {
                 temp_position.size.height = height;
                 box_.border_box.set(temp_position);
             }
-            return;
+            return
         }
 
-        for box_ in self.box_.iter() {
-            let style = box_.style();
-
+        for fragment in self.box_.iter() {
             // At this point, `height` is the height of the containing block, so this makes
             // percentages relative to the containing block per CSS 2.1 § 10.5.
             let containing_block_height = height;
 
             let mut candidate_height_iterator =
-                CandidateHeightIterator::new(style, containing_block_height);
+                CandidateHeightIterator::new(fragment.style(), containing_block_height);
             for (candidate_height, new_candidate_height) in candidate_height_iterator {
                 *new_candidate_height = match candidate_height {
                     Auto => height,
@@ -825,30 +817,30 @@ impl BlockFlow {
                 }
             }
 
-            height = candidate_height_iterator.candidate_value
+            // Compute content height and noncontent height.
+            let noncontent_height = fragment.padding.get().top + fragment.padding.get().bottom +
+                fragment.border.get().top + fragment.border.get().bottom;
+            height = candidate_height_iterator.candidate_value;
+
+            // Compute the final border box position.
+            let mut border_box = fragment.border_box.get();
+            border_box.size.height = height + noncontent_height;
+            border_box.origin.y = Au(0);
+            fragment.border_box.set(border_box);
+
+            self.base.position.size.height = border_box.size.height;
+
+            // Translate floats if necessary.
+            if inorder {
+                let bottom_offset = fragment.border.get().bottom + fragment.padding.get().bottom;
+                let extra_height = height - cur_y + bottom_offset;
+                floats.translate(Point2D(left_offset, -extra_height));
+            }
+
+            self.base.floats = floats.clone();
         }
 
-        // Here, height is content height of the box.
-        let mut noncontent_height = Au::new(0);
-        for box_ in self.box_.iter() {
-            let mut position = box_.border_box.get();
-
-            noncontent_height = box_.padding.get().top + box_.padding.get().bottom +
-                box_.border.get().top + box_.border.get().bottom;
-
-            // This is the border box height.
-            position.size.height = height + noncontent_height;
-            position.origin.y = clearance;
-
-            box_.border_box.set(position);
-        }
-
-        self.base.position.size.height = height + noncontent_height;
-
-        if inorder {
-            let extra_height = height - cur_y + bottom_offset;
-            self.base.floats.translate(Point2D(left_offset, -extra_height));
-        }
+        self.adjust_boxes_for_collapsed_margins_if_root();
 
         if self.is_root_of_absolute_flow_tree() {
             // Assign heights for all flows in this Absolute flow tree.
