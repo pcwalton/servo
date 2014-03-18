@@ -11,7 +11,7 @@ use servo_util::geometry::Au;
 use servo_util::geometry;
 
 /// A collapsible margin. See CSS 2.1 § 8.3.1.
-pub struct CollapsibleMargin {
+pub struct AdjoiningMargins {
     /// The value of the greatest positive margin.
     most_positive: Au,
 
@@ -20,29 +20,29 @@ pub struct CollapsibleMargin {
     most_negative: Au,
 }
 
-impl CollapsibleMargin {
-    pub fn new() -> CollapsibleMargin {
-        CollapsibleMargin {
+impl AdjoiningMargins {
+    pub fn new() -> AdjoiningMargins {
+        AdjoiningMargins {
             most_positive: Au(0),
             most_negative: Au(0),
         }
     }
 
-    pub fn from_margin(margin_value: Au) -> CollapsibleMargin {
+    pub fn from_margin(margin_value: Au) -> AdjoiningMargins {
         if margin_value >= Au(0) {
-            CollapsibleMargin {
+            AdjoiningMargins {
                 most_positive: margin_value,
                 most_negative: Au(0),
             }
         } else {
-            CollapsibleMargin {
+            AdjoiningMargins {
                 most_positive: Au(0),
                 most_negative: margin_value,
             }
         }
     }
 
-    pub fn union(&mut self, other: CollapsibleMargin) {
+    pub fn union(&mut self, other: AdjoiningMargins) {
         self.most_positive = geometry::max(self.most_positive, other.most_positive);
         self.most_negative = geometry::min(self.most_negative, other.most_negative)
     }
@@ -59,10 +59,10 @@ pub enum CollapsibleMargins {
 
     /// Both the top and bottom margins (specified here in that order) may collapse, but the
     /// margins do not collapse through this flow.
-    MarginsCollapse(CollapsibleMargin, CollapsibleMargin),
+    MarginsCollapse(AdjoiningMargins, AdjoiningMargins),
 
     /// Margins collapse *through* this flow. This means, essentially, that the flow is empty.
-    MarginsCollapseThrough(CollapsibleMargin),
+    MarginsCollapseThrough(AdjoiningMargins),
 }
 
 impl CollapsibleMargins {
@@ -73,8 +73,8 @@ impl CollapsibleMargins {
 
 pub struct MarginCollapseInfo {
     state: MarginCollapseState,
-    top_margin: CollapsibleMargin,
-    margin_in: CollapsibleMargin,
+    top_margin: AdjoiningMargins,
+    margin_in: AdjoiningMargins,
 }
 
 impl MarginCollapseInfo {
@@ -82,33 +82,24 @@ impl MarginCollapseInfo {
     pub fn new() -> MarginCollapseInfo {
         MarginCollapseInfo {
             state: AccumulatingCollapsibleTopMargin,
-            top_margin: CollapsibleMargin::new(),
-            margin_in: CollapsibleMargin::new(),
+            top_margin: AdjoiningMargins::new(),
+            margin_in: AdjoiningMargins::new(),
         }
     } 
 
-    // TODO(pcwalton): May not be necessary, revert to what was before?
-    pub fn add_top_margin(&mut self, fragment: &Box) -> Au {
+    pub fn initialize_top_margin(&mut self, fragment: &Box) {
         if fragment.border.get().top != Au(0) || fragment.padding.get().top != Au(0) {
-            self.state = AccumulatingMarginIn;
-            return 
+            self.state = AccumulatingMarginIn
         }
 
-        MarginCollapseInfo {
-            state: if fragment.border.get().top == Au(0) && fragment.padding.get().top == Au(0) {
-                AccumulatingCollapsibleTopMargin
-            } else {
-                AccumulatingMarginIn
-            },
-            top_margin: CollapsibleMargin::from_margin(fragment.margin.get().top),
-            margin_in: CollapsibleMargin::new(),
-        }
+        self.top_margin = AdjoiningMargins::from_margin(fragment.margin.get().top)
     }
 
     pub fn finish_and_compute_collapsible_margins(mut self, fragment: &Box) -> CollapsibleMargins {
         if fragment.border.get().bottom != Au(0) || fragment.padding.get().bottom != Au(0) {
             self.state = AccumulatingMarginIn
         }
+
         match MaybeAuto::from_style(fragment.style().Box.get().height, Au(0)) {
             Auto | Specified(Au(0)) => {}
             Specified(_) => {
@@ -122,11 +113,11 @@ impl MarginCollapseInfo {
         match self.state {
             AccumulatingCollapsibleTopMargin => {
                 // Collapse through.
-                self.top_margin.union(CollapsibleMargin::from_margin(bottom_margin));
+                self.top_margin.union(AdjoiningMargins::from_margin(bottom_margin));
                 MarginsCollapseThrough(self.top_margin)
             }
             AccumulatingMarginIn => {
-                self.margin_in.union(CollapsibleMargin::from_margin(bottom_margin));
+                self.margin_in.union(AdjoiningMargins::from_margin(bottom_margin));
                 MarginsCollapse(self.top_margin, self.margin_in)
             }
         }
@@ -148,13 +139,13 @@ impl MarginCollapseInfo {
             }
             (AccumulatingMarginIn, NoCollapsibleMargins(top, _)) => {
                 let previous_margin_value = self.margin_in.collapse();
-                self.margin_in = CollapsibleMargin::new();
+                self.margin_in = AdjoiningMargins::new();
                 previous_margin_value + top
             }
             (AccumulatingMarginIn, MarginsCollapse(top, _)) => {
                 self.margin_in.union(top);
                 let margin_value = self.margin_in.collapse();
-                self.margin_in = CollapsibleMargin::new();
+                self.margin_in = AdjoiningMargins::new();
                 margin_value
             }
             (_, MarginsCollapseThrough(_)) => {

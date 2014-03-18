@@ -722,82 +722,79 @@ impl BlockFlow {
             self.base.floats = Floats::new();
         }
 
-        let mut margin_collapse_info = if !self.inorder {
-            MarginCollapseInfo::new()
-        } else {
-            // The parent set this.
-            self.base.margin_collapse_info
-        };
-
+        let mut margin_collapse_info = MarginCollapseInfo::new();
         for fragment in self.box_.iter() {
             self.base.floats.translate(Point2D(-fragment.offset(), Au(0)));
 
             top_offset = fragment.border.get().top + fragment.padding.get().top;
             cur_y = top_offset;
 
-            margin_collapse_info.add_top_margin(fragment);
-
-            // Perform clearance if applicable.
-            if inorder {
-                let clearance = match fragment.style().Box.get().clear {
-                    clear::none => Au(0),
-                    clear::left => self.base.floats.clearance(ClearLeft),
-                    clear::right => self.base.floats.clearance(ClearRight),
-                    clear::both => self.base.floats.clearance(ClearBoth),
-                };
-
-                translate(&mut cur_y, clearance, inorder, &mut self.base.floats);
-            }
+            margin_collapse_info.initialize_top_margin(fragment);
         }
 
         // At this point, cur_y is at the content edge of the flow's box.
         let mut floats = self.base.floats.clone();
         for kid in self.base.child_iter() {
             if kid.is_absolutely_positioned() {
-                // Assume that the `hypothetical box` for an absolute flow
-                // starts immediately after the bottom margin edge of the
-                // previous flow.
+                // Assume that the *hypothetical box* for an absolute flow starts immediately after
+                // the bottom margin edge of the previous flow.
                 kid.as_block().base.position.origin.y = cur_y;
-                // Skip the collapsing for absolute flow kids and continue
-                // with the next flow.
+
+                // Skip the collapsing for absolute flow kids and continue with the next flow.
                 continue
             }
 
             // Assign height now for the child if it was impacted by floats and we couldn't before.
+            let mut floats_out = None;
             if inorder {
                 {
                     let kid_base = flow::mut_base(kid);
-                    kid_base.floats = floats;
-                    kid_base.margin_collapse_info = margin_collapse_info;
+
+                    if kid_base.clear != clear::none {
+                        // We have clearance, so assume there are no floats in and perform layout.
+                        //
+                        // FIXME(pcwalton): This could be wrong if we have `clear: left` or
+                        // `clear: right` and there are still floats to impact, of course. But this
+                        // gets complicated with margin collapse. Possibly the right thing to do is
+                        // to lay out the block again in this rare case. (Note that WebKit can lay
+                        // blocks out twice; this may be related, although I haven't looked into it
+                        // closely.)
+                        kid_base.floats = Floats::new()
+                    } else {
+                        kid_base.floats = floats.clone()
+                    }
                 }
 
                 kid.assign_height_inorder(layout_context);
 
                 let kid_base = flow::mut_base(kid);
-                floats = kid_base.floats.clone();
-                margin_collapse_info = kid_base.margin_collapse_info;
-               
-                // TODO(pcwalton): Try using `y` nonzero below as a flag to indicate that clearance
-                // happened.
+                floats_out = Some(kid_base.floats.clone())
+            }
 
-                // This is a bit of a hack: in the in-order case, if the kid performed top margin
-                // collapse and/or clearance, then we don't have enough information as the parent
-                // to know how far we need to advance. In this case, the child can just store the Y
-                // delta in its `position` field, and we can fetch it from there. (In all other
-                // cases, `position.origin.y` is ignored, and is overwritten below.)
-                cur_y = cur_y + kid_base.position.origin.y;
-            } else {
-                // Handle any (possibly collapsed) top margin.
-                let kid_base = flow::mut_base(kid);
-                let delta = margin_collapse_info.advance_top_margin(&kid_base.collapsible_margins);
-                translate(&mut cur_y, delta, inorder, &mut floats);
+            // Handle any (possibly collapsed) top margin.
+            let kid_base = flow::mut_base(kid);
+            let delta = margin_collapse_info.advance_top_margin(&kid_base.collapsible_margins);
+            translate_including_floats(&mut cur_y, delta, inorder, &mut floats);
 
-                assert!(kid_base.position.origin.y == Au(0));
+            // Clear past floats, if necessary.
+            if inorder {
+                let clearance = match kid_base.clear {
+                    clear::none => Au(0),
+                    clear::left => floats.clearance(ClearLeft),
+                    clear::right => floats.clearance(ClearRight),
+                    clear::both => floats.clearance(ClearBoth),
+                };
+                cur_y = cur_y + clearance
             }
 
             // At this point, `cur_y` is at the border edge of the child.
-            let kid_base = flow::mut_base(kid);
+            assert!(kid_base.position.origin.y == Au(0));
             kid_base.position.origin.y = cur_y;
+
+            // If this was an inorder traversal, grab the child's floats now.
+            if inorder {
+                floats = floats_out.take_unwrap()
+            }
 
             // Move past the child's border box. Do not use the `translate_including_floats`
             // function here because the child has already translated floats past its border box.
@@ -805,7 +802,7 @@ impl BlockFlow {
 
             // Handle any (possibly collapsed) bottom margin.
             let delta = margin_collapse_info.advance_bottom_margin(&kid_base.collapsible_margins);
-            translate(&mut cur_y, delta, inorder, &mut floats);
+            translate_including_floats(&mut cur_y, delta, inorder, &mut floats);
         }
 
         self.collect_static_y_offsets_from_kids();
@@ -852,11 +849,11 @@ impl BlockFlow {
             // Adjust `cur_y` as necessary to account for the explicitly-specified height.
             height = candidate_height_iterator.candidate_value;
             let delta = height - (cur_y - top_offset);
-            translate(&mut cur_y, delta, inorder, &mut floats);
+            translate_including_floats(&mut cur_y, delta, inorder, &mut floats);
 
             // Compute content height and noncontent height.
             let bottom_offset = fragment.border.get().bottom + fragment.padding.get().bottom;
-            translate(&mut cur_y, bottom_offset, inorder, &mut floats);
+            translate_including_floats(&mut cur_y, bottom_offset, inorder, &mut floats);
 
             // Now that `cur_y` is at the bottom of the border box, compute the final border box
             // position.
@@ -883,7 +880,7 @@ impl BlockFlow {
         }
 
         if self.is_root() {
-            self.assign_height_store_overflow_fixed_flows(ctx);
+            self.assign_height_store_overflow_fixed_flows(layout_context);
         }
     }
 
@@ -1371,6 +1368,10 @@ impl Flow for BlockFlow {
         width_computer.compute_used_width(self, ctx, containing_block_width);
 
         for box_ in self.box_.iter() {
+            // Assign `clear` now so that the assign-heights pass will have the correct value for
+            // it.
+            self.base.clear = box_.style().Box.get().clear;
+
             // Move in from the left border edge
             left_content_edge = box_.border_box.get().origin.x
                 + box_.padding.get().left + box_.border.get().left;

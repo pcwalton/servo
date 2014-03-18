@@ -55,7 +55,7 @@ use std::sync::atomics::Relaxed;
 use std::vec::VecMutIterator;
 use std::iter::Zip;
 use style::ComputedValues;
-use style::computed_values::{position, text_align};
+use style::computed_values::{clear, position, text_align};
 
 /// Virtual methods that make up a float context.
 ///
@@ -105,6 +105,12 @@ pub trait Flow {
     /// In-order version of pass 3a of reflow: computes heights with floats present.
     fn assign_height_inorder(&mut self, _ctx: &mut LayoutContext) {
         fail!("assign_height_inorder not yet implemented")
+    }
+
+    fn compute_collapsible_top_margin(&mut self,
+                                      _layout_context: &mut LayoutContext,
+                                      _margin_collapse_info: &mut MarginCollapseInfo) {
+        // The default implementation is a no-op.
     }
 
     /// Marks this flow as the root flow. The default implementation is a no-op.
@@ -637,9 +643,8 @@ pub struct BaseFlow {
     /// The floats next to this flow.
     floats: Floats,
 
-    /// Margin collapse information. This is only used when floats impact this flow and we must
-    /// perform in-order sequential tree traversals.
-    margin_collapse_info: MarginCollapseInfo,
+    /// The value of this flow's `clear` property, if any.
+    clear: clear::T,
 
     /// For normal flows, this is the number of floated descendants that are
     /// not contained within any other floated descendant of this flow. For
@@ -726,7 +731,7 @@ impl BaseFlow {
             floats: Floats::new(),
             num_floats: 0,
             collapsible_margins: CollapsibleMargins::new(),
-            margin_collapse_info: MarginCollapseInfo::new(),
+            clear: clear::none,
             abs_position: Point2D(Au::new(0), Au::new(0)),
             abs_descendants: Descendants::new(),
             fixed_descendants: Descendants::new(),
