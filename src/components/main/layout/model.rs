@@ -4,8 +4,184 @@
 
 //! Borders, padding, and margins.
 
-use servo_util::geometry::Au;
+use layout::box_::Box;
+
 use computed = style::computed_values;
+use servo_util::geometry::Au;
+use servo_util::geometry;
+
+/// A collapsible margin. See CSS 2.1 § 8.3.1.
+pub struct CollapsibleMargin {
+    /// The value of the greatest positive margin.
+    most_positive: Au,
+
+    /// The actual value (not the absolute value) of the negative margin with the largest absolute
+    /// value. Since this is not the absolute value, this is always zero or negative.
+    most_negative: Au,
+}
+
+impl CollapsibleMargin {
+    pub fn new() -> CollapsibleMargin {
+        CollapsibleMargin {
+            most_positive: Au(0),
+            most_negative: Au(0),
+        }
+    }
+
+    pub fn from_margin(margin_value: Au) -> CollapsibleMargin {
+        if margin_value >= Au(0) {
+            CollapsibleMargin {
+                most_positive: margin_value,
+                most_negative: Au(0),
+            }
+        } else {
+            CollapsibleMargin {
+                most_positive: Au(0),
+                most_negative: margin_value,
+            }
+        }
+    }
+
+    pub fn union(&mut self, other: CollapsibleMargin) {
+        self.most_positive = geometry::max(self.most_positive, other.most_positive);
+        self.most_negative = geometry::min(self.most_negative, other.most_negative)
+    }
+
+    pub fn collapse(&self) -> Au {
+        self.most_positive + self.most_negative
+    }
+}
+
+/// Represents the top and bottom margins of a flow with collapsible margins. See CSS 2.1 § 8.3.1.
+pub enum CollapsibleMargins {
+    /// Margins may not collapse with this flow.
+    NoCollapsibleMargins(Au, Au),
+
+    /// Both the top and bottom margins (specified here in that order) may collapse, but the
+    /// margins do not collapse through this flow.
+    MarginsCollapse(CollapsibleMargin, CollapsibleMargin),
+
+    /// Margins collapse *through* this flow. This means, essentially, that the flow is empty.
+    MarginsCollapseThrough(CollapsibleMargin),
+}
+
+impl CollapsibleMargins {
+    pub fn new() -> CollapsibleMargins {
+        NoCollapsibleMargins(Au(0), Au(0))
+    }
+}
+
+pub struct MarginCollapseInfo {
+    state: MarginCollapseState,
+    top_margin: CollapsibleMargin,
+    margin_in: CollapsibleMargin,
+}
+
+impl MarginCollapseInfo {
+    /// TODO(pcwalton): Remove this method once `box_` is not an Option.
+    pub fn new() -> MarginCollapseInfo {
+        MarginCollapseInfo {
+            state: AccumulatingCollapsibleTopMargin,
+            top_margin: CollapsibleMargin::new(),
+            margin_in: CollapsibleMargin::new(),
+        }
+    } 
+    
+    pub fn from_fragment(fragment: &Box) -> MarginCollapseInfo {
+        MarginCollapseInfo {
+            state: if fragment.border.get().top == Au(0) && fragment.padding.get().top == Au(0) {
+                AccumulatingCollapsibleTopMargin
+            } else {
+                AccumulatingMarginIn
+            },
+            top_margin: CollapsibleMargin::from_margin(fragment.margin.get().top),
+            margin_in: CollapsibleMargin::new(),
+        }
+    }
+
+    pub fn finish_and_compute_collapsible_margins(mut self, fragment: &Box) -> CollapsibleMargins {
+        if fragment.border.get().bottom != Au(0) || fragment.padding.get().bottom != Au(0) {
+            self.state = AccumulatingMarginIn
+        }
+
+        let bottom_margin = fragment.margin.get().bottom;
+        match self.state {
+            AccumulatingCollapsibleTopMargin => {
+                // Collapse through.
+                self.top_margin.union(CollapsibleMargin::from_margin(bottom_margin));
+                MarginsCollapseThrough(self.top_margin)
+            }
+            AccumulatingMarginIn => {
+                self.margin_in.union(CollapsibleMargin::from_margin(bottom_margin));
+                MarginsCollapse(self.top_margin, self.margin_in)
+            }
+        }
+    }
+
+    /// Adds the child's potentially collapsible top margin to the current margin state and
+    /// advances the Y offset by the appropriate amount to handle that margin. Returns the amount
+    /// that should be added to the Y offset during block layout.
+    pub fn advance_top_margin(&mut self, child_collapsible_margins: &CollapsibleMargins) -> Au {
+        match (self.state, *child_collapsible_margins) {
+            (AccumulatingCollapsibleTopMargin, NoCollapsibleMargins(top, _)) => {
+                self.state = AccumulatingMarginIn;
+                top
+            }
+            (AccumulatingCollapsibleTopMargin, MarginsCollapse(top, _)) => {
+                self.top_margin.union(top);
+                self.state = AccumulatingMarginIn;
+                Au(0)
+            }
+            (AccumulatingMarginIn, NoCollapsibleMargins(top, _)) => {
+                let previous_margin_value = self.margin_in.collapse();
+                self.margin_in = CollapsibleMargin::new();
+                previous_margin_value + top
+            }
+            (AccumulatingMarginIn, MarginsCollapse(top, _)) => {
+                self.margin_in.union(top);
+                let margin_value = self.margin_in.collapse();
+                self.margin_in = CollapsibleMargin::new();
+                margin_value
+            }
+            (_, MarginsCollapseThrough(_)) => {
+                // For now, we ignore this; this will be handled by `advance_bottom_margin` below.
+                Au(0)
+            }
+        }
+    }
+
+    /// Adds the child's potentially collapsible bottom margin to the current margin state and
+    /// advances the Y offset by the appropriate amount to handle that margin. Returns the amount
+    /// that should be added to the Y offset during block layout.
+    pub fn advance_bottom_margin(&mut self, child_collapsible_margins: &CollapsibleMargins) -> Au {
+        match (self.state, *child_collapsible_margins) {
+            (AccumulatingCollapsibleTopMargin, NoCollapsibleMargins(..)) |
+            (AccumulatingCollapsibleTopMargin, MarginsCollapse(..)) => {
+                // Can't happen because the state will have been replaced with
+                // `AccumulatingMarginIn` above.
+                fail!("should not be accumulating collapsible top margins anymore!")
+            }
+            (AccumulatingCollapsibleTopMargin, MarginsCollapseThrough(margin)) => {
+                self.top_margin.union(margin);
+                Au(0)
+            }
+            (AccumulatingMarginIn, NoCollapsibleMargins(_, bottom)) => {
+                // Margin-in should have been set to zero above.
+                bottom
+            }
+            (AccumulatingMarginIn, MarginsCollapse(_, bottom)) |
+            (AccumulatingMarginIn, MarginsCollapseThrough(bottom)) => {
+                self.margin_in.union(bottom);
+                Au(0)
+            }
+        }
+    }
+}
+
+enum MarginCollapseState {
+    AccumulatingCollapsibleTopMargin,
+    AccumulatingMarginIn,
+}
 
 /// Useful helper data type when computing values for blocks and positioned elements.
 pub enum MaybeAuto {

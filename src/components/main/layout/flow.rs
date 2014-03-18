@@ -34,6 +34,7 @@ use layout::display_list_builder::{DisplayListBuilder, ExtraDisplayListData};
 use layout::floats::Floats;
 use layout::incremental::RestyleDamage;
 use layout::inline::InlineFlow;
+use layout::model::CollapsibleMargins;
 use layout::parallel::FlowParallelInfo;
 use layout::parallel;
 use layout::wrapper::ThreadSafeLayoutNode;
@@ -104,11 +105,6 @@ pub trait Flow {
     /// In-order version of pass 3a of reflow: computes heights with floats present.
     fn assign_height_inorder(&mut self, _ctx: &mut LayoutContext) {
         fail!("assign_height_inorder not yet implemented")
-    }
-
-    /// Collapses margins with the parent flow. This runs as part of assign-heights.
-    fn collapse_margins(&mut self, _info: &mut MarginCalculationInfo) -> Au {
-        fail!("collapse_margins not yet implemented")
     }
 
     /// Marks this flow as the root flow. The default implementation is a no-op.
@@ -619,9 +615,14 @@ pub struct BaseFlow {
     min_width: Au,
     pref_width: Au,
 
-    /// The upper left corner of the box representing this flow, relative to
-    /// the box representing its parent flow.
-    /// For absolute flows, this represents the position wrt to its Containing Block.
+    /// The upper left corner of the box representing this flow, relative to the box representing
+    /// its parent flow.
+    ///
+    /// For absolute flows, this represents the position with respect to its *containing block*.
+    ///
+    /// This does not include margins in the block flow direction, because those can collapse. So
+    /// for the block direction (usually vertical), this represents the *border box*. For the
+    /// inline direction (usually horizontal), this represents the *margin box*.
     position: Rect<Au>,
 
     /// The amount of overflow of this flow, relative to the containing block. Must include all the
@@ -642,6 +643,9 @@ pub struct BaseFlow {
     /// It is used to allocate float data if necessary and to
     /// decide whether to do an in-order traversal for assign_height.
     num_floats: uint,
+
+    /// The collapsible margins for this flow, if any.
+    collapsible_margins: CollapsibleMargins,
 
     /// The position of this flow in page coordinates, computed during display list construction.
     abs_position: Point2D<Au>,
@@ -717,6 +721,7 @@ impl BaseFlow {
 
             floats: Floats::new(),
             num_floats: 0,
+            collapsible_margins: CollapsibleMargins::new(),
             abs_position: Point2D(Au::new(0), Au::new(0)),
             abs_descendants: Descendants::new(),
             fixed_descendants: Descendants::new(),
@@ -1115,48 +1120,6 @@ impl MutableOwnedFlowUtils for ~Flow {
     fn destroy(&mut self) {
         let self_borrowed: &mut Flow = *self;
         self_borrowed.destroy();
-    }
-}
-
-pub struct MarginCalculationInfo {
-    /// The amount of margin that we can potentially collapse with.
-    collapsible: Au,
-
-    /// How much to move up by to get to the beginning of current kid flow.
-    ///
-    /// Example: if previous sibling's margin-bottom is 20px and your margin-top is 12px, the
-    /// collapsed margin will be 20px. Since cur_y will be at the bottom margin edge of the
-    /// previous sibling, we have to move up by 12px to get to our top margin edge. So,
-    /// `collapsing` will be set to 12px.
-    collapsing: Au,
-
-    /// The current top margin for the outer box.
-    margin_top: Au,
-
-    /// The offset from the margin edge to the top content edge of the box.
-    top_offset: Au,
-
-    /// Whether the top margin of the outer box is collapsible.
-    top_margin_collapsible: bool,
-
-    /// Set to true if this is the first in-flow child flow to be processed.
-    first_in_flow: bool,
-
-    /// Whether `collapsible` represents the outer box's own margin.
-    collapsible_is_own: bool,
-}
-
-impl MarginCalculationInfo {
-    pub fn new() -> MarginCalculationInfo {
-        MarginCalculationInfo {
-            collapsible: Au(0),
-            collapsing: Au(0),
-            margin_top: Au(0),
-            top_offset: Au(0),
-            top_margin_collapsible: false,
-            first_in_flow: true,
-            collapsible_is_own: false,
-        }
     }
 }
 
