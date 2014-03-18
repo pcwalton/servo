@@ -78,7 +78,7 @@ pub struct MarginCollapseInfo {
 }
 
 impl MarginCollapseInfo {
-    /// TODO(pcwalton): Remove this method once `box_` is not an Option.
+    /// TODO(pcwalton): Remove this method once `box_` is not an `Option`.
     pub fn new() -> MarginCollapseInfo {
         MarginCollapseInfo {
             state: AccumulatingCollapsibleTopMargin,
@@ -86,8 +86,14 @@ impl MarginCollapseInfo {
             margin_in: CollapsibleMargin::new(),
         }
     } 
-    
-    pub fn from_fragment(fragment: &Box) -> MarginCollapseInfo {
+
+    // TODO(pcwalton): May not be necessary, revert to what was before?
+    pub fn add_top_margin(&mut self, fragment: &Box) -> Au {
+        if fragment.border.get().top != Au(0) || fragment.padding.get().top != Au(0) {
+            self.state = AccumulatingMarginIn;
+            return 
+        }
+
         MarginCollapseInfo {
             state: if fragment.border.get().top == Au(0) && fragment.padding.get().top == Au(0) {
                 AccumulatingCollapsibleTopMargin
@@ -106,8 +112,8 @@ impl MarginCollapseInfo {
         match MaybeAuto::from_style(fragment.style().Box.get().height, Au(0)) {
             Auto | Specified(Au(0)) => {}
             Specified(_) => {
-                // If the box has an explicitly specified height, margins may not collapse
-                // through it.
+                // If the box has an explicitly specified height, margins may not collapse through
+                // it.
                 self.state = AccumulatingMarginIn
             }
         }
