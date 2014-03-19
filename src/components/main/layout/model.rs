@@ -146,6 +146,13 @@ impl MarginCollapseInfo {
         }
     }
 
+    pub fn current_float_ceiling(&mut self) -> Au {
+        match self.state {
+            AccumulatingCollapsibleTopMargin => self.top_margin.collapse(),
+            AccumulatingMarginIn => self.margin_in.collapse(),
+        }
+    }
+
     /// Adds the child's potentially collapsible top margin to the current margin state and
     /// advances the Y offset by the appropriate amount to handle that margin. Returns the amount
     /// that should be added to the Y offset during block layout.

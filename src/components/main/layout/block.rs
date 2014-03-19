@@ -737,7 +737,7 @@ impl BlockFlow {
         for kid in self.base.child_iter() {
             if kid.is_absolutely_positioned() {
                 // Assume that the *hypothetical box* for an absolute flow starts immediately after
-                // the bottom margin edge of the previous flow.
+                // the bottom border edge of the previous flow.
                 kid.as_block().base.position.origin.y = cur_y;
 
                 if inorder {
@@ -768,14 +768,19 @@ impl BlockFlow {
                     }
                 } else {
                     let kid_base = flow::mut_base(kid);
-                    kid_base.position.origin.y = cur_y;
+                    kid_base.position.origin.y = margin_collapse_info.current_float_ceiling();
                     kid_base.floats = floats.clone()
                 }
 
                 kid.assign_height_inorder(layout_context);
 
-                let kid_base = flow::mut_base(kid);
-                floats_out = Some(kid_base.floats.clone())
+                floats_out = Some(flow::mut_base(kid).floats.clone());
+
+                // FIXME(pcwalton): A horrible hack that has to do with the fact that `origin.y`
+                // is used for something else later (containing block for float).
+                if kid.is_float() {
+                    flow::mut_base(kid).position.origin.y = cur_y;
+                }
             }
 
             // If the child was a float, stop here.
@@ -964,7 +969,7 @@ impl BlockFlow {
         let info = PlacementInfo {
             size: Size2D(self.base.position.size.width + full_noncontent_width,
                          height + margin_height),
-            ceiling: clearance,
+            ceiling: clearance + self.base.position.origin.y,
             max_width: self.float.get_ref().containing_width,
             kind: self.float.get_ref().float_kind,
         };
