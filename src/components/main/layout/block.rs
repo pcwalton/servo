@@ -727,7 +727,7 @@ impl BlockFlow {
             self.base.floats.translate(Point2D(-fragment.offset(), Au(0)));
 
             top_offset = fragment.border.get().top + fragment.padding.get().top;
-            cur_y = top_offset;
+            translate_including_floats(&mut cur_y, top_offset, inorder, &mut self.base.floats);
 
             margin_collapse_info.initialize_top_margin(fragment);
         }
@@ -740,6 +740,10 @@ impl BlockFlow {
                 // the bottom margin edge of the previous flow.
                 kid.as_block().base.position.origin.y = cur_y;
 
+                if inorder {
+                    kid.assign_height_inorder(layout_context)
+                }
+
                 // Skip the collapsing for absolute flow kids and continue with the next flow.
                 continue
             }
@@ -747,9 +751,8 @@ impl BlockFlow {
             // Assign height now for the child if it was impacted by floats and we couldn't before.
             let mut floats_out = None;
             if inorder {
-                {
+                if !kid.is_float() {
                     let kid_base = flow::mut_base(kid);
-
                     if kid_base.clear != clear::none {
                         // We have clearance, so assume there are no floats in and perform layout.
                         //
@@ -763,12 +766,24 @@ impl BlockFlow {
                     } else {
                         kid_base.floats = floats.clone()
                     }
+                } else {
+                    let kid_base = flow::mut_base(kid);
+                    kid_base.position.origin.y = cur_y;
+                    kid_base.floats = floats.clone()
                 }
 
                 kid.assign_height_inorder(layout_context);
 
                 let kid_base = flow::mut_base(kid);
                 floats_out = Some(kid_base.floats.clone())
+            }
+
+            // If the child was a float, stop here.
+            if kid.is_float() {
+                if inorder {
+                    floats = floats_out.take_unwrap();
+                }
+                continue
             }
 
             // Handle any (possibly collapsed) top margin.
@@ -809,8 +824,10 @@ impl BlockFlow {
 
         // Add in our bottom margin and compute our collapsible margins.
         for fragment in self.box_.iter() {
-            self.base.collapsible_margins =
-                margin_collapse_info.finish_and_compute_collapsible_margins(fragment)
+            let (collapsible_margins, delta) =
+                margin_collapse_info.finish_and_compute_collapsible_margins(fragment);
+            self.base.collapsible_margins = collapsible_margins;
+            translate_including_floats(&mut cur_y, delta, inorder, &mut floats);
         }
 
         // FIXME(pcwalton): The max is taken here so that you can scroll the page, but this is not

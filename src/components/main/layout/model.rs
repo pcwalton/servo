@@ -71,6 +71,11 @@ impl CollapsibleMargins {
     }
 }
 
+enum FinalMarginState {
+    MarginsCollapseThroughFinalMarginState,
+    BottomMarginCollapsesFinalMarginState,
+}
+
 pub struct MarginCollapseInfo {
     state: MarginCollapseState,
     top_margin: AdjoiningMargins,
@@ -95,30 +100,48 @@ impl MarginCollapseInfo {
         self.top_margin = AdjoiningMargins::from_margin(fragment.margin.get().top)
     }
 
-    pub fn finish_and_compute_collapsible_margins(mut self, fragment: &Box) -> CollapsibleMargins {
-        if fragment.border.get().bottom != Au(0) || fragment.padding.get().bottom != Au(0) {
-            self.state = AccumulatingMarginIn
-        }
-
-        match MaybeAuto::from_style(fragment.style().Box.get().height, Au(0)) {
-            Auto | Specified(Au(0)) => {}
-            Specified(_) => {
-                // If the box has an explicitly specified height, margins may not collapse through
-                // it.
-                self.state = AccumulatingMarginIn
-            }
-        }
-
-        let bottom_margin = fragment.margin.get().bottom;
-        match self.state {
+    pub fn finish_and_compute_collapsible_margins(mut self, fragment: &Box)
+                                                  -> (CollapsibleMargins, Au) {
+        let state = match self.state {
             AccumulatingCollapsibleTopMargin => {
-                // Collapse through.
-                self.top_margin.union(AdjoiningMargins::from_margin(bottom_margin));
-                MarginsCollapseThrough(self.top_margin)
+                match MaybeAuto::from_style(fragment.style().Box.get().height, Au(0)) {
+                    Auto | Specified(Au(0)) => MarginsCollapseThroughFinalMarginState,
+                    Specified(_) => {
+                        // If the box has an explicitly specified height, margins may not collapse
+                        // through it.
+                        BottomMarginCollapsesFinalMarginState
+                    }
+                }
             }
-            AccumulatingMarginIn => {
-                self.margin_in.union(AdjoiningMargins::from_margin(bottom_margin));
-                MarginsCollapse(self.top_margin, self.margin_in)
+            AccumulatingMarginIn => BottomMarginCollapsesFinalMarginState,
+        };
+
+        // If there is bottom border or padding, the margin can still collapse--but only with the
+        // flow's own margin, not with `margin_in`.
+        let bottom_margin = fragment.margin.get().bottom;
+        if fragment.border.get().bottom != Au(0) || fragment.padding.get().bottom != Au(0) {
+            match state {
+                MarginsCollapseThroughFinalMarginState => {
+                    let advance = self.top_margin.collapse();
+                    self.margin_in.union(AdjoiningMargins::from_margin(bottom_margin));
+                    (MarginsCollapse(self.top_margin, self.margin_in), advance)
+                }
+                BottomMarginCollapsesFinalMarginState => {
+                    let advance = self.margin_in.collapse();
+                    self.margin_in.union(AdjoiningMargins::from_margin(bottom_margin));
+                    (MarginsCollapse(self.top_margin, self.margin_in), advance)
+                }
+            }
+        } else {
+            match state {
+                MarginsCollapseThroughFinalMarginState => {
+                    self.top_margin.union(AdjoiningMargins::from_margin(bottom_margin));
+                    (MarginsCollapseThrough(self.top_margin), Au(0))
+                }
+                BottomMarginCollapsesFinalMarginState => {
+                    self.margin_in.union(AdjoiningMargins::from_margin(bottom_margin));
+                    (MarginsCollapse(self.top_margin, self.margin_in), Au(0))
+                }
             }
         }
     }
