@@ -16,7 +16,6 @@ use gfx::display_list::{TextDisplayItemClass, TextDisplayItemFlags, ClipDisplayI
 use gfx::display_list::{ClipDisplayItemClass, DisplayListCollection};
 use gfx::font::FontStyle;
 use gfx::text::text_run::TextRun;
-use layout::model;
 use servo_msg::constellation_msg::{FrameRectMsg, PipelineId, SubpageId};
 use servo_net::image::holder::ImageHolder;
 use servo_net::local_image_cache::LocalImageCache;
@@ -25,7 +24,6 @@ use servo_util::geometry;
 use servo_util::range::*;
 use servo_util::namespace;
 use servo_util::str::is_whitespace;
-
 use std::cast;
 use std::cell::RefCell;
 use std::cmp::ApproxEq;
@@ -43,7 +41,8 @@ use layout::display_list_builder::{DisplayListBuilder, ExtraDisplayListData, ToG
 use layout::floats::{ClearBoth, ClearLeft, ClearRight, ClearType};
 use layout::flow::{Flow, FlowFlagsInfo};
 use layout::flow;
-use layout::model::{MaybeAuto, specified, Auto, Specified};
+use layout::model::{Auto, IntrinsicWidths, MaybeAuto, Specified, specified};
+use layout::model;
 use layout::util::OpaqueNode;
 use layout::wrapper::{TLayoutNode, ThreadSafeLayoutNode};
 
@@ -548,13 +547,15 @@ impl Box {
         }
     }
 
-    /// Returns the shared part of the width for computation of minimum and preferred width per
-    /// CSS 2.1.
-    fn guess_width(&self) -> Au {
+    /// Uses the style only to estimate the intrinsic widths. These may be modified for text or
+    /// replaced elements.
+    fn style_specified_intrinsic_width(&self) -> IntrinsicWidths {
         match self.specific {
             GenericBox | IframeBox(_) | ImageBox(_) => {}
-            SpacerBox(width) => return width,
-            ScannedTextBox(_) | UnscannedTextBox(_) => return Au(0),
+            SpacerBox(_) | ScannedTextBox(_) | UnscannedTextBox(_) => {
+                // Styles are irrelevant for these kinds of boxes.
+                return IntrinsicWidths::new()
+            }
         }
 
         let style = self.style();
@@ -566,9 +567,14 @@ impl Box {
 
         let padding_left = self.compute_padding_length(style.Padding.get().padding_left, Au(0));
         let padding_right = self.compute_padding_length(style.Padding.get().padding_right, Au(0));
+        let surround_width = margin_left + margin_right + padding_left + padding_right +
+                self.border.get().left + self.border.get().right;
 
-        width + margin_left + margin_right + padding_left + padding_right +
-            self.border.get().left + self.border.get().right
+        IntrinsicWidths {
+            minimum_width: width,
+            preferred_width: width,
+            surround_width: surround_width,
+        }
     }
 
     pub fn calculate_line_height(&self, font_size: Au) -> Au {
@@ -1298,14 +1304,20 @@ impl Box {
 
     }
 
-    /// Returns the *minimum width* and *preferred width* of this box as defined by CSS 2.1.
-    pub fn minimum_and_preferred_widths(&self) -> (Au, Au) {
-        let guessed_width = self.guess_width();
-        let (additional_minimum, additional_preferred) = match self.specific {
-            GenericBox | IframeBox(_) | SpacerBox(_) => (Au(0), Au(0)),
+    /// Returns the intrinsic widths of this fragment.
+    pub fn intrinsic_widths(&self) -> IntrinsicWidths {
+        let mut result = self.style_specified_intrinsic_width();
+
+        match self.specific {
+            GenericBox | IframeBox(_) => {}
+            SpacerBox(width) => {
+                result.minimum_width = geometry::max(result.minimum_width, width);
+                result.preferred_width = geometry::max(result.preferred_width, width)
+            }
             ImageBox(ref image_box_info) => {
                 let image_width = image_box_info.image_width();
-                (image_width, image_width)
+                result.minimum_width = geometry::max(result.minimum_width, image_width);
+                result.preferred_width = geometry::max(result.preferred_width, image_width);
             }
             ScannedTextBox(ref text_box_info) => {
                 let range = &text_box_info.range;
@@ -1317,11 +1329,13 @@ impl Box {
                     max_line_width = Au::max(max_line_width, line_metrics.advance_width);
                 }
 
-                (min_line_width, max_line_width)
+                result.minimum_width = geometry::max(result.minimum_width, min_line_width);
+                result.preferred_width = geometry::max(result.preferred_width, max_line_width)
             }
             UnscannedTextBox(..) => fail!("Unscanned text boxes should have been scanned by now!"),
-        };
-        (guessed_width + additional_minimum, guessed_width + additional_preferred)
+        }
+
+        result
     }
 
 

@@ -26,34 +26,33 @@
 ///   similar methods.
 
 use css::node_style::StyledNode;
-use layout::block::{BlockFlow};
+use layout::block::BlockFlow;
 use layout::box_::Box;
-use layout::context::LayoutContext;
 use layout::construct::OptVector;
-use layout::display_list_builder::{DisplayListBuilder, ExtraDisplayListData};
+use layout::context::LayoutContext;
+use layout::display_list_builder::{DisplayListBuilder, ExtraDisplayListData, ToGfxColor};
 use layout::floats::Floats;
+use layout::flow_list::{FlowList, Link, Rawlink, FlowListIterator, MutFlowListIterator};
 use layout::incremental::RestyleDamage;
 use layout::inline::InlineFlow;
-use layout::model::{CollapsibleMargins, MarginCollapseInfo};
+use layout::model::{CollapsibleMargins, IntrinsicWidths, MarginCollapseInfo};
 use layout::parallel::FlowParallelInfo;
 use layout::parallel;
 use layout::wrapper::ThreadSafeLayoutNode;
-use layout::flow_list::{FlowList, Link, Rawlink, FlowListIterator, MutFlowListIterator};
 
 use extra::container::Deque;
-use geom::point::Point2D;
 use geom::Size2D;
+use geom::point::Point2D;
 use geom::rect::Rect;
-use gfx::display_list::{ClipDisplayItemClass, DisplayListCollection, DisplayList};
-use layout::display_list_builder::ToGfxColor;
 use gfx::color::Color;
-use servo_util::smallvec::{SmallVec, SmallVec0};
+use gfx::display_list::{ClipDisplayItemClass, DisplayListCollection, DisplayList};
 use servo_util::geometry::Au;
+use servo_util::smallvec::{SmallVec, SmallVec0};
 use std::cast;
 use std::cell::RefCell;
+use std::iter::Zip;
 use std::sync::atomics::Relaxed;
 use std::vec::VecMutIterator;
-use std::iter::Zip;
 use style::ComputedValues;
 use style::computed_values::{clear, position, text_align};
 
@@ -618,8 +617,7 @@ pub struct BaseFlow {
     /* layout computations */
     // TODO: min/pref and position are used during disjoint phases of
     // layout; maybe combine into a single enum to save space.
-    min_width: Au,
-    pref_width: Au,
+    intrinsic_widths: IntrinsicWidths,
 
     /// The upper left corner of the box representing this flow, relative to the box representing
     /// its parent flow.
@@ -721,8 +719,7 @@ impl BaseFlow {
             next_sibling: None,
             prev_sibling: Rawlink::none(),
 
-            min_width: Au::new(0),
-            pref_width: Au::new(0),
+            intrinsic_widths: IntrinsicWidths::new(),
             position: Au::zero_rect(),
             overflow: Au::zero_rect(),
 

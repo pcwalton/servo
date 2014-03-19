@@ -218,6 +218,35 @@ enum MarginCollapseState {
     AccumulatingMarginIn,
 }
 
+/// Intrinsic widths, which consist of minimum and preferred.
+pub struct IntrinsicWidths {
+    /// The *minimum width* of the content.
+    minimum_width: Au,
+    /// The *preferred width* of the content.
+    preferred_width: Au,
+    /// The estimated sum of borders, padding, and margins. Some calculations use this information
+    /// when computing intrinsic widths.
+    surround_width: Au,
+}
+
+impl IntrinsicWidths {
+    pub fn new() -> IntrinsicWidths {
+        IntrinsicWidths {
+            minimum_width: Au(0),
+            preferred_width: Au(0),
+            surround_width: Au(0),
+        }
+    }
+
+    pub fn total_minimum_width(&self) -> Au {
+        self.minimum_width + self.surround_width
+    }
+
+    pub fn total_preferred_width(&self) -> Au {
+        self.preferred_width + self.surround_width
+    }
+}
+
 /// Useful helper data type when computing values for blocks and positioned elements.
 pub enum MaybeAuto {
     Auto,
