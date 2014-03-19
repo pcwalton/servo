@@ -1068,10 +1068,14 @@ impl BlockFlow {
         if self.is_float() {
             self.build_display_list_float(builder, container_block_size, dirty, index, lists);
             return index;
-        } else if self.is_absolutely_positioned() {
-            return self.build_display_list_abs(builder, container_block_size,
-                                        absolute_cb_abs_position,
-                                        dirty, index, lists);
+        }
+        if self.is_absolutely_positioned() {
+            return self.build_display_list_abs(builder,
+                                               container_block_size,
+                                               absolute_cb_abs_position,
+                                               dirty,
+                                               index,
+                                               lists)
         }
 
         debug!("build_display_list_block: adding display element");

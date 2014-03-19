@@ -971,7 +971,9 @@ impl<'a> MutableFlowUtils for &'a mut Flow {
                     container_block_size = box_.content_box_size();
 
                     abs_cb_position = if block.is_positioned() {
-                        block.base.abs_position + block.generated_cb_position()
+                        block.base.abs_position +
+                            block.generated_cb_position() +
+                            box_.relative_position(&container_block_size)
                     } else {
                         absolute_cb_abs_position
                     };
