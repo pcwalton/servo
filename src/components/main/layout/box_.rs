@@ -564,10 +564,8 @@ impl Box {
 
         let padding_left = self.compute_padding_length(style.Padding.get().padding_left, Au(0));
         let padding_right = self.compute_padding_length(style.Padding.get().padding_right, Au(0));
-        let border_left = style.Border.get().border_left_width;
-        let border_right = style.Border.get().border_right_width;
         let surround_width = margin_left + margin_right + padding_left + padding_right +
-                border_left + border_right;
+                self.border.get().left + self.border.get().right;
 
         IntrinsicWidths {
             minimum_width: width,
