@@ -598,13 +598,8 @@ impl BlockFlow {
     /// This is where we use the preferred widths and minimum widths
     /// calculated in the bubble-widths traversal.
     fn get_shrink_to_fit_width(&self, available_width: Au) -> Au {
-        let width = geometry::min(self.base.intrinsic_widths.preferred_width,
-                      geometry::max(self.base.intrinsic_widths.minimum_width, available_width));
-        println!("shrink to fit width is {}, pref width={}, min width={}",
-                 width,
-                 self.base.intrinsic_widths.preferred_width,
-                 self.base.intrinsic_widths.minimum_width);
-        width
+        geometry::min(self.base.intrinsic_widths.preferred_width,
+                      geometry::max(self.base.intrinsic_widths.minimum_width, available_width))
     }
 
     /// Collect and update static y-offsets bubbled up by kids.
