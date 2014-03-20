@@ -4,7 +4,7 @@
 
 use css::node_style::StyledNode;
 use layout::box_::{Box, CannotSplit, GenericBox, IframeBox, ImageBox, InlineInfo, ScannedTextBox};
-use layout::box_::{SpacerBox, SplitDidFit, SplitDidNotFit, UnscannedTextBox};
+use layout::box_::{SplitDidFit, SplitDidNotFit, UnscannedTextBox};
 use layout::context::LayoutContext;
 use layout::display_list_builder::{DisplayListBuilder, ExtraDisplayListData};
 use layout::floats::{FloatLeft, Floats, PlacementInfo};
@@ -765,7 +765,7 @@ impl Flow for InlineFlow {
 
                         (text_offset, line_height - text_offset, text_ascent)
                     },
-                    GenericBox | IframeBox(_) | SpacerBox(_) => {
+                    GenericBox | IframeBox(_) => {
                         let height = cur_box.border_box.get().size.height;
                         (height, Au::new(0), height)
                     },

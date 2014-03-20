@@ -35,7 +35,7 @@ use servo_util::geometry::Au;
 use servo_util::geometry;
 use servo_util::range::*;
 use servo_util::namespace;
-use servo_util::smallvec::SmallVec0;
+use servo_util::smallvec::{SmallVec, SmallVec0};
 use servo_util::str::is_whitespace;
 use std::cast;
 use std::cell::RefCell;
@@ -61,8 +61,6 @@ use style::computed_values::{white_space};
 ///
 /// A `GenericBox` is an empty box that contributes only borders, margins, padding, and
 /// backgrounds. It is analogous to a CSS nonreplaced content box.
-///
-/// A `SpacerBox` is a box that represents space for borders and padding in an inline flow.
 ///
 /// A box's type influences how its styles are interpreted during layout. For example, replaced
 /// content such as images are resized differently from tables, text, or other content. Different
@@ -112,7 +110,6 @@ pub enum SpecificBoxInfo {
     ImageBox(ImageBoxInfo),
     IframeBox(IframeBoxInfo),
     ScannedTextBox(ScannedTextBoxInfo),
-    SpacerBox(Au),
     UnscannedTextBox(UnscannedTextBoxInfo),
 }
 
@@ -289,18 +286,21 @@ pub enum SplitBoxResult {
 }
 
 
-/// data for inline boxes
+/// Data for inline boxes.
+///
+/// FIXME(pcwalton): Copying `InlineParentInfo` vectors all the time is really inefficient. Use
+/// atomic reference counting instead.
 #[deriving(Clone)]
 pub struct InlineInfo {
-    parent_info: ~[InlineParentInfo],
+    parent_info: SmallVec0<InlineParentInfo>,
     baseline: Au,
 }
 
 impl InlineInfo {
     pub fn new() -> InlineInfo {
         InlineInfo {
-            parent_info: ~[],
-            baseline: Au::new(0),
+            parent_info: SmallVec0::new(),
+            baseline: Au(0),
         }
     }
 }
@@ -397,10 +397,6 @@ pub enum SubBoxKind {
     /// The main box for this node. All DOM nodes that are rendered at all have at least a main
     /// box.
     MainBoxKind,
-
-    /// A spacer box. This box represents the space for border and padding of inline nodes. The
-    /// parameter specifies the size.
-    SpacerBoxKind(Au),
 }
 
 impl Box {
@@ -553,7 +549,7 @@ impl Box {
     fn style_specified_intrinsic_width(&self) -> IntrinsicWidths {
         match self.specific {
             GenericBox | IframeBox(_) | ImageBox(_) => {}
-            SpacerBox(_) | ScannedTextBox(_) | UnscannedTextBox(_) => {
+            ScannedTextBox(_) | UnscannedTextBox(_) => {
                 // Styles are irrelevant for these kinds of boxes.
                 return IntrinsicWidths::new()
             }
@@ -568,8 +564,10 @@ impl Box {
 
         let padding_left = self.compute_padding_length(style.Padding.get().padding_left, Au(0));
         let padding_right = self.compute_padding_length(style.Padding.get().padding_right, Au(0));
+        let border_left = style.Border.get().border_left_width;
+        let border_right = style.Border.get().border_right_width;
         let surround_width = margin_left + margin_right + padding_left + padding_right +
-                self.border.get().left + self.border.get().right;
+                border_left + border_right;
 
         IntrinsicWidths {
             minimum_width: width,
@@ -849,7 +847,7 @@ impl Box {
         match info.get() {
             &Some(ref box_info) => {
                 let mut bg_rect = absolute_bounds.clone();
-                for info in box_info.parent_info.rev_iter() {
+                for info in box_info.parent_info.as_slice().rev_iter() {
                     // TODO (ksh8281) compute vertical-align, line-height
                     bg_rect.origin.y = box_info.baseline + offset.y - info.font_ascent;
                     bg_rect.size.height = info.font_ascent + info.font_descent;
@@ -888,21 +886,17 @@ impl Box {
                     let bottom_style = style.Border.get().border_bottom_style;
                     let left_style = style.Border.get().border_left_style;
 
-
                     let border_display_item = ~BorderDisplayItem {
                         base: BaseDisplayItem {
-                                  bounds: bg_rect,
-                                  extra: ExtraDisplayListData::new(self),
-                              },
-                              border: border.clone(),
-                              color: SideOffsets2D::new(top_color.to_gfx_color(),
-                              right_color.to_gfx_color(),
-                              bottom_color.to_gfx_color(),
-                              left_color.to_gfx_color()),
-                              style: SideOffsets2D::new(top_style,
-                              right_style,
-                              bottom_style,
-                              left_style)
+                            bounds: bg_rect,
+                            extra: ExtraDisplayListData::new(self),
+                        },
+                        border: border.clone(),
+                        color: SideOffsets2D::new(top_color.to_gfx_color(),
+                        right_color.to_gfx_color(),
+                        bottom_color.to_gfx_color(),
+                        left_color.to_gfx_color()),
+                        style: SideOffsets2D::new(top_style, right_style, bottom_style, left_style)
                     };
 
                     list.push(BorderDisplayItemClass(border_display_item));
@@ -1130,7 +1124,9 @@ impl Box {
         let box_bounds = self.border_box.get();
         let absolute_box_bounds = box_bounds.translate(&flow_origin);
         debug!("Box::build_display_list at rel={}, abs={}: {:s}",
-               box_bounds, absolute_box_bounds, self.debug_str());
+               box_bounds,
+               absolute_box_bounds,
+               self.debug_str());
         debug!("Box::build_display_list: dirty={}, flow_origin={}", *dirty, flow_origin);
 
         if self.style().InheritedBox.get().visibility != visibility::visible {
@@ -1175,7 +1171,7 @@ impl Box {
                 let inline_info = self.inline_info.borrow();
                 match inline_info.get() {
                     &Some(ref info) => {
-                        for data in info.parent_info.rev_iter() {
+                        for data in info.parent_info.as_slice().rev_iter() {
                             let parent_info = FlowFlagsInfo::new(data.style.get());
                             flow_flags.propagate_text_decoration_from_parent(&parent_info);
                         }
@@ -1219,7 +1215,7 @@ impl Box {
                                                                           flow_origin,
                                                                           text_box))
             },
-            GenericBox | IframeBox(..) | SpacerBox(..) => {
+            GenericBox | IframeBox(..) => {
                 let item = ~ClipDisplayItem {
                     base: BaseDisplayItem {
                         bounds: absolute_box_bounds,
@@ -1287,7 +1283,7 @@ impl Box {
             IframeBox(ref iframe_box) => {
                 self.finalize_position_and_size_of_iframe(iframe_box, flow_origin, builder.ctx)
             }
-            GenericBox | SpacerBox(_) | ImageBox(_) | ScannedTextBox(_) | UnscannedTextBox(_) => {}
+            GenericBox | ImageBox(_) | ScannedTextBox(_) | UnscannedTextBox(_) => {}
         }
     }
 
@@ -1297,10 +1293,6 @@ impl Box {
 
         match self.specific {
             GenericBox | IframeBox(_) => {}
-            SpacerBox(width) => {
-                result.minimum_width = geometry::max(result.minimum_width, width);
-                result.preferred_width = geometry::max(result.preferred_width, width)
-            }
             ImageBox(ref image_box_info) => {
                 let image_width = image_box_info.image_width();
                 result.minimum_width = geometry::max(result.minimum_width, image_width);
@@ -1317,9 +1309,25 @@ impl Box {
                 }
 
                 result.minimum_width = geometry::max(result.minimum_width, min_line_width);
-                result.preferred_width = geometry::max(result.preferred_width, max_line_width)
+                result.preferred_width = geometry::max(result.preferred_width, max_line_width);
             }
             UnscannedTextBox(..) => fail!("Unscanned text boxes should have been scanned by now!"),
+        }
+
+        // Take borders and padding for parent inline boxes into account.
+        let inline_info = self.inline_info.get();
+        match inline_info {
+            None => {}
+            Some(ref inline_info) => {
+                for inline_parent_info in inline_info.parent_info.iter() {
+                    let border_width = inline_parent_info.border.left +
+                        inline_parent_info.border.right;
+                    let padding_width = inline_parent_info.padding.left +
+                        inline_parent_info.padding.right;
+                    result.minimum_width = result.minimum_width + border_width + padding_width;
+                    result.preferred_width = result.preferred_width + border_width + padding_width;
+                }
+            }
         }
 
         result
@@ -1333,7 +1341,6 @@ impl Box {
             ImageBox(ref image_box_info) => {
                 image_box_info.computed_width()
             }
-            SpacerBox(width) => width,
             ScannedTextBox(ref text_box_info) => {
                 let (range, run) = (&text_box_info.range, &text_box_info.run);
                 let text_bounds = run.get().metrics_for_range(range).bounding_box;
@@ -1346,7 +1353,7 @@ impl Box {
     /// Returns, and computes, the height of this box.
     pub fn content_height(&self) -> Au {
         match self.specific {
-            GenericBox | IframeBox(_) | SpacerBox(_) => Au(0),
+            GenericBox | IframeBox(_) => Au(0),
             ImageBox(ref image_box_info) => {
                 image_box_info.computed_height()
             }
@@ -1371,7 +1378,7 @@ impl Box {
     /// Split box which includes new-line character
     pub fn split_by_new_line(&self) -> SplitBoxResult {
         match self.specific {
-            GenericBox | IframeBox(_) | ImageBox(_) | SpacerBox(_) => CannotSplit,
+            GenericBox | IframeBox(_) | ImageBox(_) => CannotSplit,
             UnscannedTextBox(_) => fail!("Unscanned text boxes should have been scanned by now!"),
             ScannedTextBox(ref text_box_info) => {
                 let mut new_line_pos = self.new_line_pos.clone();
@@ -1408,7 +1415,7 @@ impl Box {
     /// Attempts to split this box so that its width is no more than `max_width`.
     pub fn split_to_width(&self, max_width: Au, starts_line: bool) -> SplitBoxResult {
         match self.specific {
-            GenericBox | IframeBox(_) | ImageBox(_) | SpacerBox(_) => CannotSplit,
+            GenericBox | IframeBox(_) | ImageBox(_) => CannotSplit,
             UnscannedTextBox(_) => fail!("Unscanned text boxes should have been scanned by now!"),
             ScannedTextBox(ref text_box_info) => {
                 let mut pieces_processed_count: uint = 0;
@@ -1521,15 +1528,15 @@ impl Box {
         }
     }
 
-    /// Assigns replaced width for this box only if it is replaced content.
-    ///
-    /// This assigns only the width, not margin or anything else.
-    /// CSS 2.1 § 10.3.2.
+    /// Assigns replaced width, padding, and margins for this box only if it is replaced content
+    /// per CSS 2.1 § 10.3.2.
     pub fn assign_replaced_width_if_necessary(&self, container_width: Au) {
         match self.specific {
             GenericBox | IframeBox(_) => {}
             ImageBox(ref image_box_info) => {
-                // TODO(ksh8281): compute border,margin,padding
+                self.compute_padding(self.style(), container_width);
+
+                // TODO(ksh8281): compute border,margin
                 let width = ImageBoxInfo::style_length(self.style().Box.get().width,
                                                        image_box_info.dom_width,
                                                        container_width);
@@ -1559,9 +1566,6 @@ impl Box {
                     self.noncontent_inline_left() + self.noncontent_inline_right();
                 image_box_info.computed_width.set(Some(width));
             }
-            SpacerBox(width) => {
-                self.border_box.borrow_mut().get().size.width = width
-            }
             ScannedTextBox(_) => {
                 // Scanned text boxes will have already had their
                 // content_widths assigned by this point.
@@ -1578,8 +1582,7 @@ impl Box {
     /// Ideally, this should follow CSS 2.1 § 10.6.2
     pub fn assign_replaced_height_if_necessary(&self) {
         match self.specific {
-            GenericBox | IframeBox(_) | SpacerBox(_) => {
-            }
+            GenericBox | IframeBox(_) => {}
             ImageBox(ref image_box_info) => {
                 // TODO(ksh8281): compute border,margin,padding
                 let width = image_box_info.computed_width();
@@ -1651,7 +1654,6 @@ impl Box {
             GenericBox => "GenericBox",
             IframeBox(_) => "IframeBox",
             ImageBox(_) => "ImageBox",
-            SpacerBox(_) => "SpacerBox",
             ScannedTextBox(_) => "ScannedTextBox",
             UnscannedTextBox(_) => "UnscannedTextBox",
         };

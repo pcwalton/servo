@@ -23,15 +23,14 @@
 use css::node_style::StyledNode;
 use layout::block::BlockFlow;
 use layout::box_::{Box, GenericBox, IframeBox, IframeBoxInfo, ImageBox, ImageBoxInfo};
-use layout::box_::{InlineInfo, InlineParentInfo, MainBoxKind, SpacerBox, SpacerBoxKind};
-use layout::box_::{SpecificBoxInfo, SubBoxKind, UnscannedTextBox, UnscannedTextBoxInfo};
+use layout::box_::{InlineInfo, InlineParentInfo, MainBoxKind, SpecificBoxInfo, SubBoxKind};
+use layout::box_::{UnscannedTextBox, UnscannedTextBoxInfo};
 use layout::context::LayoutContext;
 use layout::floats::FloatKind;
 use layout::flow::{Flow, MutableOwnedFlowUtils};
 use layout::flow::{Descendants, AbsDescendants, FixedDescendants};
 use layout::flow_list::{Rawlink};
 use layout::inline::InlineFlow;
-use layout::model;
 use layout::text::TextRunScanner;
 use layout::util::{LayoutDataAccess, OpaqueNode};
 use layout::wrapper::{PostorderNodeMutTraversal, TLayoutNode, ThreadSafeLayoutNode};
@@ -49,9 +48,9 @@ use style::computed_values::{display, position, float, white_space};
 use style::ComputedValues;
 use servo_util::geometry::Au;
 use servo_util::namespace;
-use servo_util::url::parse_url;
-use servo_util::url::is_image_data;
+use servo_util::smallvec::SmallVec;
 use servo_util::str::is_whitespace;
+use servo_util::url::{is_image_data, parse_url};
 
 use extra::url::Url;
 use extra::arc::Arc;
@@ -227,12 +226,6 @@ impl<T> OptVector<T> for Option<~[T]> {
     }
 }
 
-/// The padding or border side: left or right.
-enum InlineSide {
-    LeftSide,
-    RightSide,
-}
-
 /// An object that knows how to create flows.
 pub struct FlowConstructor<'a> {
     /// The layout context.
@@ -293,7 +286,6 @@ impl<'a> FlowConstructor<'a> {
                                             sub_box_kind: SubBoxKind)
                                             -> SpecificBoxInfo {
         match (node.type_id(), sub_box_kind) {
-            (_, SpacerBoxKind(size)) => SpacerBox(size),
             (ElementNodeTypeId(HTMLImageElementTypeId), MainBoxKind) => {
                 self.build_box_info_for_image(node, node.image_url())
             }
@@ -483,29 +475,6 @@ impl<'a> FlowConstructor<'a> {
         self.build_block_flow_using_children(flow, node)
     }
 
-    /// Creates a box that represents the space that borders and/or padding for inline boxes take
-    /// up.
-    ///
-    /// TODO(pcwalton): Support percentage padding. This will probably need to be done by moving
-    /// the calculations for padding out of flow construction and into layout.
-    ///
-    /// TODO(pcwalton): Support borders.
-    fn create_inline_spacer_box_if_necessary(&mut self,
-                                             opt_box_accumulator: &mut Option<~[Box]>,
-                                             node: &ThreadSafeLayoutNode,
-                                             side: InlineSide) {
-        let value = match side {
-            LeftSide => node.style().get().Padding.get().padding_left,
-            RightSide => node.style().get().Padding.get().padding_right,
-        };
-        let length = model::specified(value, Au(0));
-        if length == Au(0) {
-            return
-        }
-
-        opt_box_accumulator.push(Box::new(self, node, SpacerBoxKind(length)))
-    }
-
     /// Concatenates the boxes of kids, adding in our own borders/padding/margins if necessary.
     /// Returns the `InlineBoxesConstructionResult`, if any. There will be no
     /// `InlineBoxesConstructionResult` if this node consisted entirely of ignorable whitespace.
@@ -515,9 +484,6 @@ impl<'a> FlowConstructor<'a> {
         let mut opt_box_accumulator = None;
         let mut abs_descendants = Descendants::new();
         let mut fixed_descendants = Descendants::new();
-
-        // First, create a border/padding spacer box on the left side if necessary.
-        self.create_inline_spacer_box_if_necessary(&mut opt_box_accumulator, node, LeftSide);
 
         // Concatenate all the boxes of our kids, creating {ib} splits as necessary.
         for kid in node.children() {
@@ -580,9 +546,6 @@ impl<'a> FlowConstructor<'a> {
             }
         }
 
-        // Next, create a border/padding spacer box on the right side if necessary.
-        self.create_inline_spacer_box_if_necessary(&mut opt_box_accumulator, node, RightSide);
-
         // fill inline info
         match opt_inline_block_splits {
             Some(ref splits) => {
@@ -598,7 +561,7 @@ impl<'a> FlowConstructor<'a> {
                         for box_ in boxes.iter() {
                             total.push(box_);
                         }
-                        self.set_inline_info_for_inline_child(&total, node);
+                        self.set_inline_info_for_inline_child(total, node);
 
                     },
                     None => {
@@ -608,7 +571,7 @@ impl<'a> FlowConstructor<'a> {
                                 total.push(box_);
                             }
                         }
-                        self.set_inline_info_for_inline_child(&total, node);
+                        self.set_inline_info_for_inline_child(total, node);
                     }
                 }
             },
@@ -619,7 +582,7 @@ impl<'a> FlowConstructor<'a> {
                         for box_ in boxes.iter() {
                             total.push(box_);
                         }
-                        self.set_inline_info_for_inline_child(&total, node);
+                        self.set_inline_info_for_inline_child(total, node);
                     },
                     None => {}
                 }
@@ -644,7 +607,7 @@ impl<'a> FlowConstructor<'a> {
 
     // FIXME(pcwalton): Why does this function create a box only to throw it away???
     fn set_inline_info_for_inline_child(&mut self,
-                                        boxes: &~[&Box],
+                                        boxes: &[&Box],
                                         parent_node: &ThreadSafeLayoutNode) {
         let parent_box = Box::new(self, parent_node, MainBoxKind);
         let font_style = parent_box.font_style();
@@ -658,33 +621,42 @@ impl<'a> FlowConstructor<'a> {
         let boxes_len = boxes.len();
         parent_box.compute_borders(parent_box.style());
 
+        // FIXME(pcwalton): I suspect that `Au(0)` is not correct for the containing block width.
+        parent_box.compute_padding(parent_box.style(), Au(0));
+
         for (i,box_) in boxes.iter().enumerate() {
             if box_.inline_info.with( |data| data.is_none() ) {
                 box_.inline_info.set(Some(InlineInfo::new()));
             }
 
             let mut border = parent_box.border.get();
+            let mut padding = parent_box.padding.get();
             if i != 0 {
                 border.left = Zero::zero();
+                padding.left = Zero::zero()
             }
             if i != (boxes_len - 1) {
                 border.right = Zero::zero();
+                padding.right = Zero::zero()
+            }
+
+            if padding.left != Au(0) {
+                println!("inline padding is {:?}", padding.left);
             }
 
             let mut info = box_.inline_info.borrow_mut();
             match info.get() {
                 &Some(ref mut info) => {
-                    // TODO(ksh8281) compute margin,padding
-                    info.parent_info.push(
-                        InlineParentInfo {
-                            padding: Zero::zero(),
-                            border: border,
-                            margin: Zero::zero(),
-                            style: parent_box.style.clone(),
-                            font_ascent: font_ascent,
-                            font_descent: font_descent,
-                            node: OpaqueNode::from_thread_safe_layout_node(parent_node),
-                        });
+                    // TODO(ksh8281): Compute margins.
+                    info.parent_info.push(InlineParentInfo {
+                        padding: padding,
+                        border: border,
+                        margin: Zero::zero(),
+                        style: parent_box.style.clone(),
+                        font_ascent: font_ascent,
+                        font_descent: font_descent,
+                        node: OpaqueNode::from_thread_safe_layout_node(parent_node),
+                    })
                 },
                 &None => {}
             }
@@ -709,9 +681,7 @@ impl<'a> FlowConstructor<'a> {
         }
 
         let mut opt_box_accumulator = None;
-        self.create_inline_spacer_box_if_necessary(&mut opt_box_accumulator, node, LeftSide);
         opt_box_accumulator.push(Box::new(self, node, MainBoxKind));
-        self.create_inline_spacer_box_if_necessary(&mut opt_box_accumulator, node, RightSide);
 
         let construction_item = InlineBoxesConstructionItem(InlineBoxesConstructionResult {
             splits: None,
