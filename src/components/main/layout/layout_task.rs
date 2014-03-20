@@ -46,6 +46,7 @@ use servo_msg::constellation_msg::{ConstellationChan, PipelineId, Failure, Failu
 use servo_net::image_cache_task::{ImageCacheTask, ImageResponseMsg};
 use servo_net::local_image_cache::{ImageResponder, LocalImageCache};
 use servo_util::geometry::Au;
+use servo_util::geometry;
 use servo_util::opts::Opts;
 use servo_util::smallvec::SmallVec;
 use servo_util::time::{ProfilerChan, profile};
@@ -757,9 +758,12 @@ impl LayoutTask {
                     for item in list.rev_iter() {
                         match *item {
                             ClipDisplayItemClass(ref cc) => {
-                                let ret = hit_test(x, y, cc.child_list.as_slice());
-                                if !ret.is_none() {
-                                    return ret;
+                                if !cc.need_clip || geometry::rect_contains_point(cc.base.bounds,
+                                                                                  Point2D(x, y)) {
+                                    let ret = hit_test(x, y, cc.child_list.as_slice());
+                                    if !ret.is_none() {
+                                        return ret
+                                    }
                                 }
                             }
                             _ => {}

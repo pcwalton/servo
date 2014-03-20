@@ -43,9 +43,9 @@ use std::cmp::ApproxEq;
 use std::num::Zero;
 use style::{ComputedValues, TElement, TNode};
 use style::computed_values::{LengthOrPercentage, LengthOrPercentageOrAuto, overflow, LPA_Auto};
-use style::computed_values::{background_repeat, border_style, clear, font_family, line_height};
-use style::computed_values::{position, text_align, text_decoration, vertical_align, visibility};
-use style::computed_values::{white_space};
+use style::computed_values::{background_attachment, background_repeat, border_style, clear};
+use style::computed_values::{font_family, line_height, position, text_align, text_decoration};
+use style::computed_values::{vertical_align, visibility, white_space};
 
 /// Boxes (`struct Box`) are the leaves of the layout tree. They cannot position themselves. In
 /// general, boxes do not have a simple correspondence with CSS boxes in the specification:
@@ -942,16 +942,8 @@ impl Box {
                     Some(image) => {
                         debug!("(building display list) building background image");
 
-                        // Adjust bounds for `background-position`.
-                        let mut bounds = *absolute_bounds;
-                        bounds.origin.x = bounds.origin.x +
-                            model::specified(style.Background.get().background_position.horizontal,
-                                             bounds.size.width);
-                        bounds.origin.y = bounds.origin.y +
-                            model::specified(style.Background.get().background_position.vertical,
-                                             bounds.size.height);
-
                         // Adjust sizes for `background-repeat`.
+                        let mut bounds = *absolute_bounds;
                         match style.Background.get().background_repeat {
                             background_repeat::no_repeat => {
                                 bounds.size.width = Au::from_px(image.get().width as int);
@@ -966,8 +958,41 @@ impl Box {
                             background_repeat::repeat => {}
                         };
 
-                        // Place the image into the display list.
-                        let image_display_item = ~ImageDisplayItem {
+                        // Adjust bounds for `background-position` and `background-attachment`.
+                        let horizontal_position = model::specified(
+                            style.Background.get().background_position.horizontal,
+                            bounds.size.width);
+                        let vertical_position = model::specified(
+                            style.Background.get().background_position.vertical,
+                            bounds.size.height);
+                        let clip_display_item;
+                        match style.Background.get().background_attachment {
+                            background_attachment::scroll => {
+                                clip_display_item = None;
+                                bounds.origin.x = bounds.origin.x + horizontal_position;
+                                bounds.origin.y = bounds.origin.y + vertical_position;
+                                bounds.size.width = bounds.size.width - horizontal_position;
+                                bounds.size.height = bounds.size.height - vertical_position;
+                            }
+                            background_attachment::fixed => {
+                                clip_display_item = Some(~ClipDisplayItem {
+                                    base: BaseDisplayItem {
+                                        bounds: bounds,
+                                        extra: ExtraDisplayListData::new(self),
+                                    },
+                                    child_list: SmallVec0::new(),
+                                    need_clip: false,
+                                });
+
+                                bounds = Rect {
+                                    origin: Point2D(horizontal_position, vertical_position),
+                                    size: builder.ctx.screen_size,
+                                }
+                            }
+                        }
+
+                        // Create the image display item.
+                        let image_display_item = ImageDisplayItemClass(~ImageDisplayItem {
                             base: BaseDisplayItem {
                                 bounds: bounds,
                                 extra: ExtraDisplayListData::new(self),
@@ -975,8 +1000,15 @@ impl Box {
                             image: image.clone(),
                             stretch_size: Size2D(Au::from_px(image.get().width as int),
                                                  Au::from_px(image.get().height as int)),
-                        };
-                        list.push(ImageDisplayItemClass(image_display_item));
+                        });
+
+                        match clip_display_item {
+                            None => list.push(image_display_item),
+                            Some(mut clip_display_item) => {
+                                clip_display_item.child_list.push(image_display_item);
+                                list.push(ClipDisplayItemClass(clip_display_item))
+                            }
+                        }
                     }
                     None => {
                         // No image data at all? Do nothing.
