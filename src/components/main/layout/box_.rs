@@ -942,29 +942,15 @@ impl Box {
                     Some(image) => {
                         debug!("(building display list) building background image");
 
-                        // Adjust sizes for `background-repeat`.
-                        let mut bounds = *absolute_bounds;
-                        match style.Background.get().background_repeat {
-                            background_repeat::no_repeat => {
-                                bounds.size.width = Au::from_px(image.get().width as int);
-                                bounds.size.height = Au::from_px(image.get().height as int)
-                            }
-                            background_repeat::repeat_x => {
-                                bounds.size.height = Au::from_px(image.get().height as int)
-                            }
-                            background_repeat::repeat_y => {
-                                bounds.size.width = Au::from_px(image.get().width as int)
-                            }
-                            background_repeat::repeat => {}
-                        };
-
                         // Adjust bounds for `background-position` and `background-attachment`.
+                        let mut bounds = *absolute_bounds;
                         let horizontal_position = model::specified(
                             style.Background.get().background_position.horizontal,
                             bounds.size.width);
                         let vertical_position = model::specified(
                             style.Background.get().background_position.vertical,
                             bounds.size.height);
+
                         let clip_display_item;
                         match style.Background.get().background_attachment {
                             background_attachment::scroll => {
@@ -981,15 +967,31 @@ impl Box {
                                         extra: ExtraDisplayListData::new(self),
                                     },
                                     child_list: SmallVec0::new(),
-                                    need_clip: false,
+                                    need_clip: true,
                                 });
 
                                 bounds = Rect {
                                     origin: Point2D(horizontal_position, vertical_position),
-                                    size: builder.ctx.screen_size,
+                                    size: Size2D(bounds.origin.x + bounds.size.width,
+                                                 bounds.origin.y + bounds.size.height),
                                 }
                             }
                         }
+                        // Adjust sizes for `background-repeat`.
+                        match style.Background.get().background_repeat {
+                            background_repeat::no_repeat => {
+                                bounds.size.width = Au::from_px(image.get().width as int);
+                                bounds.size.height = Au::from_px(image.get().height as int)
+                            }
+                            background_repeat::repeat_x => {
+                                bounds.size.height = Au::from_px(image.get().height as int)
+                            }
+                            background_repeat::repeat_y => {
+                                bounds.size.width = Au::from_px(image.get().width as int)
+                            }
+                            background_repeat::repeat => {}
+                        };
+
 
                         // Create the image display item.
                         let image_display_item = ImageDisplayItemClass(~ImageDisplayItem {
