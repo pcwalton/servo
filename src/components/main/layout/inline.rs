@@ -17,11 +17,10 @@ use layout::wrapper::ThreadSafeLayoutNode;
 use extra::container::Deque;
 use extra::ringbuf::RingBuf;
 use geom::{Point2D, Rect, Size2D};
-use gfx::display_list::DisplayListCollection;
+use gfx::display_list::{ContentLevel, StackingContext};
 use servo_util::geometry::Au;
 use servo_util::geometry;
 use servo_util::range::Range;
-use std::cell::RefCell;
 use std::u16;
 use std::util;
 use style::computed_values::{text_align, vertical_align, white_space};
@@ -484,15 +483,13 @@ impl InlineFlow {
 
     pub fn build_display_list_inline<E:ExtraDisplayListData>(
                                      &self,
+                                     stacking_context: &mut StackingContext<E>,
                                      builder: &DisplayListBuilder,
                                      container_block_size: &Size2D<Au>,
-                                     dirty: &Rect<Au>,
-                                     index: uint,
-                                     lists: &RefCell<DisplayListCollection<E>>)
-                                     -> uint {
+                                     dirty: &Rect<Au>) {
         let abs_rect = Rect(self.base.abs_position, self.base.position.size);
         if !abs_rect.intersects(dirty) {
-            return index;
+            return
         }
 
         // TODO(#228): Once we form line boxes and have their cached bounds, we can be smarter and
@@ -501,14 +498,18 @@ impl InlineFlow {
 
         for box_ in self.boxes.iter() {
             let rel_offset: Point2D<Au> = box_.relative_position(container_block_size);
-            box_.build_display_list(builder, dirty, self.base.abs_position + rel_offset, (&*self) as &Flow, index, lists);
+            box_.build_display_list(stacking_context,
+                                    builder,
+                                    dirty,
+                                    self.base.abs_position + rel_offset,
+                                    (&*self) as &Flow,
+                                    ContentLevel);
         }
 
         // TODO(#225): Should `inline-block` elements have flows as children of the inline flow or
         // should the flow be nested inside the box somehow?
 
-        // For now, don't traverse the subtree rooted here
-        index
+        // For now, don't traverse the subtree rooted here.
     }
 
     /// Returns the relative offset from the baseline for this box, taking into account the value

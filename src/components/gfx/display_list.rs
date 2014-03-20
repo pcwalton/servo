@@ -19,53 +19,113 @@ use render_context::RenderContext;
 use text::TextRun;
 
 use extra::arc::Arc;
-use geom::{Point2D, Rect, Size2D, SideOffsets2D};
+use geom::{Point2D, Rect, SideOffsets2D, Size2D};
 use servo_net::image::base::Image;
 use servo_util::geometry::Au;
 use servo_util::range::Range;
+use servo_util::smallvec::{SmallVec, SmallVec0, SmallVecIterator};
 use std::cast::transmute_region;
+use std::util;
 use std::vec::VecIterator;
 use style::computed_values::border_style;
 
-pub struct DisplayListCollection<E> {
-    lists: ~[DisplayList<E>]
+/// A stacking context. See CSS 2.1 § E.2. "Steps" below refer to steps in that specification.
+///
+/// TODO(pcwalton): Outlines.
+pub struct StackingContext<E> {
+    /// The border and backgrounds for the root of this stacking context: steps 1 and 2.
+    background_and_borders: DisplayList<E>,
+    /// Borders and backgrounds for block-level descendants: step 4.
+    block_backgrounds_and_borders: DisplayList<E>,
+    /// Floats: step 5. These are treated as pseudo-stacking contexts.
+    floats: DisplayList<E>,
+    /// All other content.
+    content: DisplayList<E>,
+
+    /// Positioned descendant stacking contexts, along with their `z-index` levels.
+    ///
+    /// TODO(pcwalton): `z-index` should be the actual CSS property value in order to handle
+    /// `auto`, not just an integer. In this case we should store an actual stacking context, not
+    /// a flattened display list.
+    positioned_descendants: SmallVec0<(int, DisplayList<E>)>,
 }
 
-impl<E> DisplayListCollection<E> {
-    pub fn new() -> DisplayListCollection<E> {
-        DisplayListCollection {
-            lists: ~[]
+impl<E> StackingContext<E> {
+    pub fn new() -> StackingContext<E> {
+        StackingContext {
+            background_and_borders: DisplayList::new(),
+            block_backgrounds_and_borders: DisplayList::new(),
+            floats: DisplayList::new(),
+            content: DisplayList::new(),
+            positioned_descendants: SmallVec0::new(),
         }
     }
 
-    pub fn iter<'a>(&'a self) -> DisplayListIterator<'a,E> {
-        ParentDisplayListIterator(self.lists.iter())
-    }
-
-    pub fn add_list(&mut self, list: DisplayList<E>) {
-        self.lists.push(list);
-    }
-
-    pub fn draw_lists_into_context(&self, render_context: &mut RenderContext) {
-        for list in self.lists.iter() {
-            list.draw_into_context(render_context);
-        }
-        debug!("{:?}", self.dump());
-    }
-
-    fn dump(&self) {
-        let mut index = 0;
-        for list in self.lists.iter() {
-            debug!("dumping display list {:d}:", index);
-            list.dump();
-            index = index + 1;
+    pub fn list_for_background_and_border_level<'a>(
+                                                &'a mut self,
+                                                level: BackgroundAndBorderLevel)
+                                                -> &'a mut DisplayList<E> {
+        match level {
+            RootOfStackingContextLevel => &mut self.background_and_borders,
+            BlockLevel => &mut self.block_backgrounds_and_borders,
+            ContentLevel => &mut self.content,
         }
     }
+
+    /// Flattens a stacking context into a display list according to the steps in CSS 2.1 § E.2.
+    pub fn flatten(mut self) -> DisplayList<E> {
+        // Steps 1 and 2: Borders and background for the root.
+        let StackingContext {
+            background_and_borders: mut result,
+            block_backgrounds_and_borders,
+            floats,
+            content,
+            positioned_descendants: mut positioned_descendants
+        } = self;
+
+        // TODO(pcwalton): Sort positioned children according to z-index.
+
+        // Step 3: Positioned descendants with negative z-indices.
+        for &(ref mut z_index, ref mut list) in positioned_descendants.mut_iter() {
+            if *z_index < 0 {
+                result.push_all_move(util::replace(list, DisplayList::new()))
+            }
+        }
+
+        // Step 4: Block backgrounds and borders.
+        result.push_all_move(block_backgrounds_and_borders);
+
+        // Step 5: Floats.
+        result.push_all_move(floats);
+
+        // TODO(pcwalton): Step 6: Inlines that generate stacking contexts.
+
+        // Step 7: Content.
+        result.push_all_move(content);
+
+        // Steps 8 and 9: Positioned descendants with nonnegative z-indices.
+        for &(ref mut z_index, ref mut list) in positioned_descendants.mut_iter() {
+            if *z_index >= 0 {
+                result.push_all_move(util::replace(list, DisplayList::new()))
+            }
+        }
+
+        // TODO(pcwalton): Step 10: Outlines.
+
+        result
+    }
+}
+
+/// Which level to place backgrounds and borders in.
+pub enum BackgroundAndBorderLevel {
+    RootOfStackingContextLevel,
+    BlockLevel,
+    ContentLevel,
 }
 
 /// A list of rendering operations to be performed.
 pub struct DisplayList<E> {
-    list: ~[DisplayItem<E>]
+    list: SmallVec0<DisplayItem<E>>,
 }
 
 pub enum DisplayListIterator<'a,E> {
@@ -87,7 +147,7 @@ impl<E> DisplayList<E> {
     /// Creates a new display list.
     pub fn new() -> DisplayList<E> {
         DisplayList {
-            list: ~[]
+            list: SmallVec0::new(),
         }
     }
 
@@ -98,18 +158,20 @@ impl<E> DisplayList<E> {
     }
 
     /// Appends the given item to the display list.
-    pub fn append_item(&mut self, item: DisplayItem<E>) {
-        // FIXME(Issue #150): crashes
-        //debug!("Adding display item {:u}: {}", self.len(), item);
+    pub fn push(&mut self, item: DisplayItem<E>) {
         self.list.push(item)
+    }
+
+    /// Appends the given display list to this display list, consuming the other display list in
+    /// the process.
+    pub fn push_all_move(&mut self, other: DisplayList<E>) {
+        self.list.push_all_move(other.list)
     }
 
     /// Draws the display list into the given render context.
     pub fn draw_into_context(&self, render_context: &mut RenderContext) {
         debug!("Beginning display list.");
         for item in self.list.iter() {
-            // FIXME(Issue #150): crashes
-            //debug!("drawing {}", *item);
             item.draw_into_context(render_context)
         }
         debug!("Ending display list.");
@@ -225,13 +287,13 @@ pub struct LineDisplayItem<E> {
 
 pub struct ClipDisplayItem<E> {
     base: BaseDisplayItem<E>,
-    child_list: ~[DisplayItem<E>],
+    child_list: SmallVec0<DisplayItem<E>>,
     need_clip: bool
 }
 
 pub enum DisplayItemIterator<'a,E> {
     EmptyDisplayItemIterator,
-    ParentDisplayItemIterator(VecIterator<'a,DisplayItem<E>>),
+    ParentDisplayItemIterator(SmallVecIterator<'a,DisplayItem<E>>),
 }
 
 impl<'a,E> Iterator<&'a DisplayItem<E>> for DisplayItemIterator<'a,E> {

@@ -45,11 +45,10 @@ use geom::Size2D;
 use geom::point::Point2D;
 use geom::rect::Rect;
 use gfx::color::Color;
-use gfx::display_list::{ClipDisplayItemClass, DisplayListCollection, DisplayList};
+use gfx::display_list::StackingContext;
 use servo_util::geometry::Au;
 use servo_util::smallvec::{SmallVec, SmallVec0};
 use std::cast;
-use std::cell::RefCell;
 use std::iter::Zip;
 use std::sync::atomics::Relaxed;
 use std::vec::VecMutIterator;
@@ -259,16 +258,14 @@ pub trait MutableFlowUtils {
     /// Computes the overflow region for this flow.
     fn store_overflow(self, _: &mut LayoutContext);
 
-    /// builds the display lists
-    fn build_display_lists<E:ExtraDisplayListData>(
-                          self,
-                          builder: &DisplayListBuilder,
-                          container_block_size: &Size2D<Au>,
-                          absolute_cb_abs_position: Point2D<Au>,
-                          dirty: &Rect<Au>,
-                          index: uint,
-                          mut list: &RefCell<DisplayListCollection<E>>)
-                          -> bool;
+    /// Builds the display lists for this flow and its descendants.
+    fn build_display_list<E:ExtraDisplayListData>(
+                         self,
+                         stacking_context: &mut StackingContext<E>,
+                         builder: &DisplayListBuilder,
+                         container_block_size: &Size2D<Au>,
+                         absolute_cb_abs_position: Point2D<Au>,
+                         dirty: &Rect<Au>);
 
     /// Destroys the flow.
     fn destroy(self);
@@ -918,131 +915,46 @@ impl<'a> MutableFlowUtils for &'a mut Flow {
         mut_base(self).overflow = overflow;
     }
 
-    /// Push display items for current flow and its children onto `list`.
+    /// Push display items for current flow and its descendants onto the appropriate display lists
+    /// of the given stacking context.
     ///
-    /// For InlineFlow, add display items for all its boxes onto list`.
-    /// For BlockFlow, add a ClipDisplayItemClass for itself and its children,
-    /// plus any other display items like border.
+    /// Arguments:
     ///
-    /// `container_block_size`: Size of the Containing Block for the current
-    /// flow. This is used for relative positioning (which resolves percentage
-    /// values for 'top', etc. after all Containing Block heights have been computed.)
-    /// `absolute_cb_abs_position`: Absolute position of the Containing Block
-    /// for the flow if it is absolutely positioned.
-    fn build_display_lists<E:ExtraDisplayListData>(
+    /// * `stacking_context`: The parent stacking context that this flow belongs to and to which
+    ///   display items will be added.
+    ///
+    /// * `container_block_size`: The size of the *containing block* for the current flow. This is
+    ///   used for relative positioning (which resolves percentage values for `top`, etc. after all
+    ///   containing block heights have been computed).
+    ///
+    /// * `absolute_cb_abs_position`: The absolute position of the containing block for the flow if
+    ///   it is absolutely positioned.
+    ///
+    /// * `dirty`: The dirty rectangle. Display lists will not be created for blocks that do not
+    ///   intersect this rectangle.
+    fn build_display_list<E:ExtraDisplayListData>(
                           self,
+                          stacking_context: &mut StackingContext<E>,
                           builder: &DisplayListBuilder,
                           container_block_size: &Size2D<Au>,
                           absolute_cb_abs_position: Point2D<Au>,
-                          dirty: &Rect<Au>,
-                          mut index: uint,
-                          lists: &RefCell<DisplayListCollection<E>>)
-                          -> bool {
+                          dirty: &Rect<Au>) {
         debug!("Flow: building display list");
-        index = match self.class() {
-            BlockFlowClass => self.as_block().build_display_list_block(builder,
-                                                                       container_block_size,
-                                                                       absolute_cb_abs_position,
-                                                                       dirty,
-                                                                       index,
-                                                                       lists),
-            InlineFlowClass => self.as_inline().build_display_list_inline(builder, container_block_size, dirty, index, lists),
-        };
-
-        if lists.with_mut(|lists| lists.lists[index].list.len() == 0) {
-            return true;
+        match self.class() {
+            BlockFlowClass => {
+                self.as_block().build_display_list_block(stacking_context,
+                                                         builder,
+                                                         container_block_size,
+                                                         absolute_cb_abs_position,
+                                                         dirty)
+            }
+            InlineFlowClass => {
+                self.as_inline().build_display_list_inline(stacking_context,
+                                                           builder,
+                                                           container_block_size,
+                                                           dirty)
+            }
         }
-
-        if self.is_block_container() {
-            let block = self.as_block();
-            let mut child_lists = DisplayListCollection::new();
-            child_lists.add_list(DisplayList::new());
-            let child_lists = RefCell::new(child_lists);
-            let container_block_size;
-            let abs_cb_position;
-            // TODO(pradeep): Move this into a generated CB function and stuff in Flow.
-            match block.box_ {
-                Some(ref box_) => {
-                    // The Containing Block formed by a Block for relatively
-                    // positioned descendants is the content box.
-                    container_block_size = box_.content_box_size();
-
-                    abs_cb_position = if block.is_positioned() {
-                        block.base.abs_position +
-                            block.generated_cb_position() +
-                            box_.relative_position(&container_block_size)
-                    } else {
-                        absolute_cb_abs_position
-                    };
-                }
-                None => fail!("Flow: block container should have a box_")
-            }
-
-            for kid in block.base.child_iter() {
-                if kid.is_absolutely_positioned() {
-                    // All absolute flows will be handled by their CB.
-                    continue;
-                }
-                kid.build_display_lists(builder, &container_block_size,
-                                        abs_cb_position,
-                                        dirty, 0u, &child_lists);
-            }
-
-            // TODO: Maybe we should handle position 'absolute' and 'fixed'
-            // descendants before normal descendants just in case there is a
-            // problem when display-list building is parallel and both the
-            // original parent and this flow access the same absolute flow.
-            // Note that this can only be done once we have paint order
-            // working cos currently the later boxes paint over the absolute
-            // and fixed boxes :|
-            for abs_descendant_link in block.base.abs_descendants.iter() {
-                match abs_descendant_link.resolve() {
-                    Some(flow) => {
-                        // TODO(pradeep): Send in your abs_position directly.
-                        flow.build_display_lists(builder, &container_block_size,
-                                                 abs_cb_position,
-                                                 dirty, 0u, &child_lists);
-                    }
-                    None => fail!("empty Rawlink to a descendant")
-                }
-            }
-
-            if block.is_root() {
-                for fixed_descendant_link in block.base.fixed_descendants.iter() {
-                    match fixed_descendant_link.resolve() {
-                        Some(flow) => {
-                            flow.build_display_lists(builder, &container_block_size,
-                                                     abs_cb_position,
-                                                     dirty, 0u, &child_lists);
-                        }
-                        None => fail!("empty Rawlink to a descendant")
-                    }
-                }
-            }
-
-            let mut child_lists = Some(child_lists.unwrap());
-            // Find parent ClipDisplayItemClass and push all child display items
-            // under it
-            lists.with_mut(|lists| {
-                let mut child_lists = child_lists.take_unwrap();
-                let result = lists.lists[index].list.mut_rev_iter().position(|item| {
-                    match *item {
-                        ClipDisplayItemClass(ref mut item) => {
-                            item.child_list.push_all_move(child_lists.lists.shift().list);
-                            true
-                        },
-                        _ => false,
-                    }
-                });
-
-                if result.is_none() {
-                    fail!("fail to find parent item");
-                }
-
-                lists.lists.push_all_move(child_lists.lists);
-            });
-        }
-        true
     }
 
     /// Destroys the flow.
