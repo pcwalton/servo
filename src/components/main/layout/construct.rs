@@ -640,10 +640,6 @@ impl<'a> FlowConstructor<'a> {
                 padding.right = Zero::zero()
             }
 
-            if padding.left != Au(0) {
-                println!("inline padding is {:?}", padding.left);
-            }
-
             let mut info = box_.inline_info.borrow_mut();
             match info.get() {
                 &Some(ref mut info) => {
