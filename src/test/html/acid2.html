@@ -31,7 +31,7 @@
    .picture p + table + p { margin-top: 3em; /* should end up under the absolutely positioned table below, and thus not be visible */ }
 
    /* second line of face: attribute selectors, float positioning */
-   [class~=one].first.one { position: absolute; top: 0; margin: 36px 0 0 60px; padding: 0; /*border: black 2em; border-style: none solid; */ border-left: solid black 2em; border-right: solid black 2em; /* shrink wraps around float */ }
+   [class~=one].first.one { position: absolute; top: 0; margin: 36px 0 0 60px; padding: 0; border: black 2em; border-style: none solid; /* shrink wraps around float */ }
    [class~=one][class~=first] [class=second\ two][class="second two"] { float: right; width: 48px; height: 12px; background: yellow; margin: 0; padding: 0; } /* only content of abs pos block */
 
    /* third line of face: width and overflow */
