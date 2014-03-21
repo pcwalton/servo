@@ -92,15 +92,19 @@ impl MarginCollapseInfo {
         }
     } 
 
-    pub fn initialize_top_margin(&mut self, fragment: &Box) {
-        if fragment.border.get().top != Au(0) || fragment.padding.get().top != Au(0) {
+    pub fn initialize_top_margin(&mut self,
+                                 fragment: &Box,
+                                 can_collapse_top_margin_with_kids: bool) {
+        if !can_collapse_top_margin_with_kids {
             self.state = AccumulatingMarginIn
         }
 
         self.top_margin = AdjoiningMargins::from_margin(fragment.margin.get().top)
     }
 
-    pub fn finish_and_compute_collapsible_margins(mut self, fragment: &Box)
+    pub fn finish_and_compute_collapsible_margins(mut self,
+                                                  fragment: &Box,
+                                                  can_collapse_bottom_margin_with_kids: bool)
                                                   -> (CollapsibleMargins, Au) {
         let state = match self.state {
             AccumulatingCollapsibleTopMargin => {
@@ -116,10 +120,10 @@ impl MarginCollapseInfo {
             AccumulatingMarginIn => BottomMarginCollapsesFinalMarginState,
         };
 
-        // If there is bottom border or padding, the margin can still collapse--but only with the
-        // flow's own margin, not with `margin_in`.
+        // Different logic is needed here depending on whether this flow can collapse its bottom
+        // margin with its children.
         let bottom_margin = fragment.margin.get().bottom;
-        if fragment.border.get().bottom != Au(0) || fragment.padding.get().bottom != Au(0) {
+        if !can_collapse_bottom_margin_with_kids {
             match state {
                 MarginsCollapseThroughFinalMarginState => {
                     let advance = self.top_margin.collapse();

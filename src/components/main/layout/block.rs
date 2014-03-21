@@ -103,7 +103,7 @@ impl HeightConstraintSolution {
                                                   content_height: Au,
                                                   available_height: Au,
                                                   static_y_offset: Au)
-                                               -> HeightConstraintSolution {
+                                                  -> HeightConstraintSolution {
         // Distance from the top edge of the Absolute Containing Block to the
         // top margin edge of a hypothetical box that would have been the
         // first box of the element.
@@ -762,7 +762,12 @@ impl BlockFlow {
             top_offset = fragment.border.get().top + fragment.padding.get().top;
             translate_including_floats(&mut cur_y, top_offset, inorder, &mut self.base.floats);
 
-            margin_collapse_info.initialize_top_margin(fragment);
+            let can_collapse_top_margin_with_kids =
+                !self.is_absolutely_positioned() &&
+                fragment.border.get().top == Au(0) &&
+                fragment.padding.get().top == Au(0);
+            margin_collapse_info.initialize_top_margin(fragment,
+                                                       can_collapse_top_margin_with_kids);
         }
 
         // At this point, cur_y is at the content edge of the flow's box.
@@ -863,8 +868,14 @@ impl BlockFlow {
 
         // Add in our bottom margin and compute our collapsible margins.
         for fragment in self.box_.iter() {
+            let can_collapse_bottom_margin_with_kids =
+                !self.is_absolutely_positioned() &&
+                fragment.border.get().bottom == Au(0) &&
+                fragment.padding.get().bottom == Au(0);
             let (collapsible_margins, delta) =
-                margin_collapse_info.finish_and_compute_collapsible_margins(fragment);
+                margin_collapse_info.finish_and_compute_collapsible_margins(
+                    fragment,
+                    can_collapse_bottom_margin_with_kids);
             self.base.collapsible_margins = collapsible_margins;
             translate_including_floats(&mut cur_y, delta, inorder, &mut floats);
         }
@@ -1251,7 +1262,7 @@ impl BlockFlow {
 
         for box_ in self.box_.iter() {
             // This is the stored content height value from assign-height
-            let content_height = box_.border_box.get().size.height;
+            let content_height = box_.border_box.get().size.height - box_.noncontent_height();
 
             let style = box_.style();
 
@@ -1319,15 +1330,14 @@ impl BlockFlow {
             box_.margin.set(margin);
 
             let mut position = box_.border_box.get();
-            position.origin.y = box_.margin.get().top;
+            position.origin.y = Au(0);
             // Border box height
             let border_and_padding = box_.noncontent_height();
             position.size.height = solution.height + border_and_padding;
             box_.border_box.set(position);
 
-            self.base.position.origin.y = solution.top;
-            self.base.position.size.height = solution.height + border_and_padding
-                + solution.margin_top + solution.margin_bottom;
+            self.base.position.origin.y = solution.top + margin.top;
+            self.base.position.size.height = solution.height + border_and_padding;
         }
     }
 
