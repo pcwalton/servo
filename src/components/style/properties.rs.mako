@@ -1031,7 +1031,7 @@ pub mod shorthands {
                     }
                 }
                 
-                if any {
+                if any && last_component_value.is_none() {
                     Some(Longhands {
                         background_color: color,
                         background_image: image,
