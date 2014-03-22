@@ -50,6 +50,10 @@ use std::cast;
 use std::cell::{Ref, RefMut};
 use style::{PropertyDeclarationBlock, TElement, TNode, AttrSelector, SpecificNamespace};
 use style::{AnyNamespace};
+use style::computed_values::{content, display};
+use style::{After, Before, PseudoElement};
+use style::ComputedValues;
+use sync::Arc;
 
 use layout::util::LayoutDataWrapper;
 
@@ -441,6 +445,71 @@ impl<'ln> ThreadSafeLayoutNode<'ln> {
         }
     }
 
+    pub fn text_content_for_pseudo(&self, kind: PseudoElement) -> content::T {
+        let mut layout_data_ref = self.mutate_layout_data();
+        let node_ldw = layout_data_ref.get().get_mut_ref();
+
+        let content = match kind {
+            Before => {
+                let before_style = node_ldw.data.before_style.get_ref();
+                before_style.get().Box.get().content.clone()
+            }
+            After => {
+                let after_style = node_ldw.data.after_style.get_ref();
+                after_style.get().Box.get().content.clone()
+            }
+        };
+        content 
+    }
+
+    pub fn get_display_for_pseudo(&self, kind: PseudoElement) -> display::T {
+        let mut layout_data_ref = self.mutate_layout_data();
+        let node_ldw = layout_data_ref.get().get_mut_ref();
+
+        let display = match kind {
+            Before => {
+                let before_style = node_ldw.data.before_style.get_ref();
+                before_style.get().Box.get().display
+            }
+            After => {
+                let after_style = node_ldw.data.after_style.get_ref();
+                after_style.get().Box.get().display
+            }
+        };
+        display
+    }
+
+    pub fn style_for_pseudo(&self, kind: PseudoElement) -> Arc<ComputedValues> {
+        let mut layout_data_ref = self.mutate_layout_data();
+        let node_ldw = layout_data_ref.get().get_mut_ref();
+
+        let content = match kind {
+            Before => {
+                let before_style = node_ldw.data.before_style.get_ref();
+                before_style.clone()
+            }
+            After => {
+                let after_style = node_ldw.data.after_style.get_ref();
+                after_style.clone()
+            }
+        };
+        content
+    }
+
+    pub fn has_pseudo(&self, kind: PseudoElement) -> bool {
+        let ldw = self.borrow_layout_data();
+        let ldw_ref = ldw.get().get_ref();
+        let has_pseudo = match kind {
+            Before => {
+                ldw_ref.data.before_style.is_some()
+            }
+            After => {
+                ldw_ref.data.after_style.is_some()
+            }
+        };
+        has_pseudo
+    }
+
     /// Borrows the layout data immutably. Fails on a conflicting borrow.
     #[inline(always)]
     pub fn borrow_layout_data<'a>(&'a self) -> Ref<'a,Option<LayoutDataWrapper>> {
@@ -483,6 +552,22 @@ impl<'ln> ThreadSafeLayoutNode<'ln> {
 
         traversal.process(self)
     }
+
+    pub fn necessary_pseudo_elements(&self) -> ~[PseudoElement] {
+        let mut pseudo_elements = ~[];
+
+        let ldw = self.borrow_layout_data();
+        let ldw_ref = ldw.get().get_ref();
+
+        if ldw_ref.data.before_style.is_some() {
+            pseudo_elements.push(Before);
+        }
+        if ldw_ref.data.after_style.is_some() {
+            pseudo_elements.push(After);
+        }
+
+        return pseudo_elements
+    }
 }
 
 pub struct ThreadSafeLayoutNodeChildrenIterator<'a> {
@@ -518,6 +603,8 @@ impl<'le> ThreadSafeLayoutElement<'le> {
 pub trait PostorderNodeMutTraversal {
     /// The operation to perform. Return true to continue or false to stop.
     fn process<'a>(&'a mut self, node: &ThreadSafeLayoutNode<'a>) -> bool;
+
+    fn construct_pseudo_flow(&mut self, node: &ThreadSafeLayoutNode, kind: PseudoElement) -> bool;
 
     /// Returns true if this node should be pruned. If this returns true, we skip the operation
     /// entirely and do not process any descendant nodes. This is called *before* child nodes are

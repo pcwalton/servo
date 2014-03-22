@@ -43,8 +43,11 @@ use script::dom::node::{CommentNodeTypeId, DoctypeNodeTypeId, DocumentFragmentNo
 use script::dom::node::{DocumentNodeTypeId, ElementNodeTypeId, ProcessingInstructionNodeTypeId};
 use script::dom::node::{TextNodeTypeId};
 use script::dom::text::Text;
-use style::computed_values::{display, position, float, white_space};
+use style::computed_values::{display, content, position, float, white_space};
 use style::ComputedValues;
+use style::{After, Before, PseudoElement};
+
+
 use servo_util::namespace;
 use servo_util::url::parse_url;
 use servo_util::url::is_image_data;
@@ -224,6 +227,19 @@ impl<T> OptVector<T> for Option<~[T]> {
     }
 }
 
+fn get_content(content_list: &content::T) -> ~str{
+    match *content_list {
+        content::Content(ref value) => {
+            let iter = &mut value.clone().move_iter().peekable();
+            match iter.next() {
+                Some(content::StringContent(str)) => str,
+                _ => ~"",
+            }
+        }
+        _ => ~"",
+    }
+}
+
 /// An object that knows how to create flows.
 pub struct FlowConstructor<'a> {
     /// The layout context.
@@ -293,6 +309,24 @@ impl<'a> FlowConstructor<'a> {
         }
     }
 
+    pub fn build_specific_box_info_for_pseudo(&mut self, node: &ThreadSafeLayoutNode, kind: PseudoElement)
+                                              -> SpecificBoxInfo {
+        let layout_data_ref = node.borrow_layout_data();
+        let node_ldw = layout_data_ref.get().get_ref();
+        let content = match kind {
+            Before => {
+                let before_style = node_ldw.data.before_style.get_ref();
+                get_content(&before_style.get().Box.get().content)
+            }
+            After => {
+                let after_style = node_ldw.data.after_style.get_ref();
+                get_content(&after_style.get().Box.get().content)
+            }
+        };
+        
+        UnscannedTextBox(UnscannedTextBoxInfo::from_text(content))
+    }
+
     /// Creates an inline flow from a set of inline boxes and adds it as a child of the given flow.
     ///
     /// `#[inline(always)]` because this is performance critical and LLVM will not inline it
@@ -325,6 +359,111 @@ impl<'a> FlowConstructor<'a> {
         }
     }
 
+    fn build_block_flow_using_pseudo_construct_result(&mut self,
+                                       opt_boxes_for_inline_flow: &mut Option<~[Box]>,
+                                       node: &ThreadSafeLayoutNode,
+                                       kind: PseudoElement,
+                                       flow: &mut ~Flow)
+                                       -> ConstructionResult {
+        let pseudo_construct_result = self.get_block_flow_using_pseudo_construct_result(node, kind);
+
+        match pseudo_construct_result {
+            NoConstructionResult => {}
+            FlowConstructionResult(kid_flow, kid_abs_descendants, kid_fixed_descendants) => {
+                flow.add_new_child(kid_flow);
+            }
+            ConstructionItemConstructionResult(InlineBoxesConstructionItem(
+                    InlineBoxesConstructionResult {
+                        splits: opt_splits,
+                        boxes: boxes,
+                        abs_descendants: kid_abs_descendants,
+                        fixed_descendants: kid_fixed_descendants,
+                    })) => {
+                opt_boxes_for_inline_flow.push_all_move(boxes);
+            }
+            ConstructionItemConstructionResult(WhitespaceConstructionItem(..)) => {} 
+        }
+        
+        NoConstructionResult
+    }
+
+    fn get_block_flow_using_pseudo_construct_result(&mut self,
+                                                    node: &ThreadSafeLayoutNode,
+                                                    kind: PseudoElement)
+                                                    -> ConstructionResult {
+        if !node.has_pseudo(kind) {
+            return NoConstructionResult
+        }
+
+        let mut pseudo_construct_result = NoConstructionResult;
+
+        if node.get_display_for_pseudo(kind) == display::inline {
+            pseudo_construct_result = node.swap_out_pseudo_construction_result(kind);
+        } else if node.get_display_for_pseudo(kind) == display::block {
+            let pseudo_block_flow = ~BlockFlow::from_node(self, node) as ~Flow;
+            pseudo_construct_result = self.build_block_flow_using_pseudo_construction_result(pseudo_block_flow, node, kind);
+        }
+
+        pseudo_construct_result
+    }
+
+    fn build_block_flow_using_pseudo_construction_result(&mut self,
+                                       mut flow: ~Flow,
+                                       node: &ThreadSafeLayoutNode,
+                                       kind: PseudoElement)
+                                        -> ConstructionResult {
+        let mut opt_boxes_for_inline_flow = None;
+        let mut first_box = true;
+
+        let mut abs_descendants = Descendants::new();
+        let mut fixed_descendants = Descendants::new();
+        
+        match node.swap_out_pseudo_construction_result(kind) {
+            NoConstructionResult => {}
+            FlowConstructionResult(kid_flow, kid_abs_descendants, kid_fixed_descendants) => {}
+            ConstructionItemConstructionResult(InlineBoxesConstructionItem(
+                    InlineBoxesConstructionResult {
+                        splits: opt_splits,
+                        boxes: boxes,
+                        abs_descendants: kid_abs_descendants,
+                        fixed_descendants: kid_fixed_descendants,
+                    })) => {
+                opt_boxes_for_inline_flow.push_all_move(boxes);
+                abs_descendants.push_descendants(kid_abs_descendants);
+                fixed_descendants.push_descendants(kid_fixed_descendants);
+            }
+            ConstructionItemConstructionResult(WhitespaceConstructionItem(..)) => {}
+        }
+
+        // Perform a final flush of any inline boxes that we were gathering up to handle {ib}
+        // splits, after stripping ignorable whitespace.
+        strip_ignorable_whitespace_from_end(&mut opt_boxes_for_inline_flow);
+        self.flush_inline_boxes_to_flow_if_necessary(&mut opt_boxes_for_inline_flow,
+                                                     &mut flow,
+                                                     node);
+
+        // The flow is done.
+        flow.finish(self.layout_context);
+        let is_positioned = flow.as_block().is_positioned();
+        let is_fixed_positioned = flow.as_block().is_fixed();
+        let is_absolutely_positioned = flow.as_block().is_absolutely_positioned();
+        if is_positioned {
+            // This is the CB for all the absolute descendants.
+            flow.set_abs_descendants(abs_descendants);
+            abs_descendants = Descendants::new();
+
+            if is_fixed_positioned {
+                // Send itself along with the other fixed descendants.
+                fixed_descendants.push(Rawlink::some(flow));
+            } else if is_absolutely_positioned {
+                // This is now the only absolute flow in the subtree which hasn't yet
+                // reached its CB.
+                abs_descendants.push(Rawlink::some(flow));
+            }
+        }
+        FlowConstructionResult(flow, abs_descendants, fixed_descendants)
+    }
+
     /// Build block flow for current node using information from children nodes.
     ///
     /// Consume results from children and combine them, handling {ib} splits.
@@ -342,6 +481,9 @@ impl<'a> FlowConstructor<'a> {
         // List of absolute descendants, in tree order.
         let mut abs_descendants = Descendants::new();
         let mut fixed_descendants = Descendants::new();
+
+        self.build_block_flow_using_pseudo_construct_result(&mut opt_boxes_for_inline_flow, node, Before, &mut flow);
+
         for kid in node.children() {
             match kid.swap_out_construction_result() {
                 NoConstructionResult => {}
@@ -421,6 +563,8 @@ impl<'a> FlowConstructor<'a> {
                 }
             }
         }
+
+        self.build_block_flow_using_pseudo_construct_result(&mut opt_boxes_for_inline_flow, node, After, &mut flow);
 
         // Perform a final flush of any inline boxes that we were gathering up to handle {ib}
         // splits, after stripping ignorable whitespace.
@@ -672,6 +816,20 @@ impl<'a> FlowConstructor<'a> {
         ConstructionItemConstructionResult(construction_item)
     }
 
+    fn build_boxes_for_replaced_pseudo_inline_content(&mut self, node: &ThreadSafeLayoutNode, kind: PseudoElement)
+                                               -> ConstructionResult {
+         let construction_item = InlineBoxesConstructionItem(InlineBoxesConstructionResult {
+            splits: None,
+            boxes: ~[
+                Box::from_opaque_node_and_style(OpaqueNode::from_thread_safe_layout_node(node), node.style_for_pseudo(kind), self.build_specific_box_info_for_pseudo(node, kind))
+            ],
+            abs_descendants: Descendants::new(),
+            fixed_descendants: Descendants::new(),
+        });
+
+        ConstructionItemConstructionResult(construction_item)
+    }
+
     /// Builds one or more boxes for a node with `display: inline`. This yields an
     /// `InlineBoxesConstructionResult`.
     fn build_boxes_for_inline(&mut self, node: &ThreadSafeLayoutNode) -> ConstructionResult {
@@ -713,6 +871,13 @@ impl<'a> PostorderNodeMutTraversal for FlowConstructor<'a> {
         };
 
         debug!("building flow for node: {:?} {:?}", display, float);
+
+        // Check pseudo content. If have pseudo before and/or after, create flow result.
+        // And store layoutdata for pseudo node result.
+        let pseudo_elements = node.necessary_pseudo_elements();
+        for pseudo_element in pseudo_elements.iter() {
+            self.construct_pseudo_flow(node, *pseudo_element);
+        }    
 
         // Switch on display and floatedness.
         match (display, float, positioning) {
@@ -758,6 +923,14 @@ impl<'a> PostorderNodeMutTraversal for FlowConstructor<'a> {
 
         true
     }
+
+    fn construct_pseudo_flow(&mut self, node: &ThreadSafeLayoutNode, kind: PseudoElement) -> bool {
+        // TODO: construct pseudo flow using pseudo content. and store pseudo_flow_construction_result
+        // in LayoutNodeData for node
+        let pseudo_flow_construction_result = self.build_boxes_for_replaced_pseudo_inline_content(node, kind);
+        node.set_pseudo_flow_construction_result(pseudo_flow_construction_result, kind);
+        true
+    }
 }
 
 /// A utility trait with some useful methods for node queries.
@@ -771,9 +944,13 @@ trait NodeUtils {
     /// Sets the construction result of a flow.
     fn set_flow_construction_result(&self, result: ConstructionResult);
 
+    fn set_pseudo_flow_construction_result(&self, result: ConstructionResult, kind: PseudoElement);
+
     /// Replaces the flow construction result in a node with `NoConstructionResult` and returns the
     /// old value.
     fn swap_out_construction_result(&self) -> ConstructionResult;
+
+    fn swap_out_pseudo_construction_result(&self, kind: PseudoElement) -> ConstructionResult;
 }
 
 impl<'ln> NodeUtils for ThreadSafeLayoutNode<'ln> {
@@ -826,11 +1003,39 @@ impl<'ln> NodeUtils for ThreadSafeLayoutNode<'ln> {
     }
 
     #[inline(always)]
+    fn set_pseudo_flow_construction_result(&self, result: ConstructionResult, kind: PseudoElement) {
+        let mut layout_data_ref = self.mutate_layout_data();
+        match *layout_data_ref.get() {
+            Some(ref mut layout_data) => {
+                match kind {
+                    Before => layout_data.data.before_flow_construction_result = result,
+                    After => layout_data.data.after_flow_construction_result = result,
+                }
+            },
+            None => fail!("no layout data"),
+        }
+    }
+
+    #[inline(always)]
     fn swap_out_construction_result(&self) -> ConstructionResult {
         let mut layout_data_ref = self.mutate_layout_data();
         match *layout_data_ref.get() {
             Some(ref mut layout_data) => {
                 mem::replace(&mut layout_data.data.flow_construction_result, NoConstructionResult)
+            }
+            None => fail!("no layout data"),
+        }
+    }
+
+    #[inline(always)]
+    fn swap_out_pseudo_construction_result(&self, kind: PseudoElement) -> ConstructionResult {
+        let mut layout_data_ref = self.mutate_layout_data();
+        match *layout_data_ref.get() {
+            Some(ref mut layout_data) => {
+                match kind {
+                    Before => mem::replace(&mut layout_data.data.before_flow_construction_result, NoConstructionResult),
+                    After =>  mem::replace(&mut layout_data.data.after_flow_construction_result, NoConstructionResult),
+                }
             }
             None => fail!("no layout data"),
         }
