@@ -48,7 +48,7 @@ use servo_net::local_image_cache::{ImageResponder, LocalImageCache};
 use servo_util::geometry::Au;
 use servo_util::geometry;
 use servo_util::opts::Opts;
-use servo_util::smallvec::SmallVec;
+use servo_util::smallvec::{SmallVec, SmallVec1};
 use servo_util::time::{ProfilerChan, profile};
 use servo_util::time;
 use servo_util::task::send_on_failure;
@@ -671,6 +671,7 @@ impl LayoutTask {
                 }
 
                 let render_layer = RenderLayer {
+                    id: layout_root.layer_id(0),
                     display_list: display_list.clone(),
                     size: Size2D(root_size.width.to_nearest_px() as uint,
                                  root_size.height.to_nearest_px() as uint),
@@ -681,7 +682,9 @@ impl LayoutTask {
 
                 debug!("Layout done!");
 
-                self.render_chan.send(RenderMsg(render_layer));
+                let mut layers = SmallVec1::new();
+                layers.push(render_layer);
+                self.render_chan.send(RenderMsg(layers));
             });
         }
 

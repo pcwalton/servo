@@ -11,6 +11,7 @@ use gfx::render_task;
 use pipeline::{Pipeline, CompositionPipeline};
 use script::script_task::{ResizeMsg, ResizeInactiveMsg, ExitPipelineMsg};
 use script::layout_interface;
+use servo_msg::compositor_msg::LayerId;
 use servo_msg::constellation_msg::{ConstellationChan, ExitMsg, FailureMsg, Failure, FrameRectMsg};
 use servo_msg::constellation_msg::{IFrameSandboxState, IFrameUnsandboxed, InitLoadUrlMsg};
 use servo_msg::constellation_msg::{LoadCompleteMsg, LoadIframeUrlMsg, LoadUrlMsg, Msg, NavigateMsg};
@@ -97,15 +98,6 @@ pub struct SendableChildFrameTree {
     frame_tree: SendableFrameTree,
     rect: Option<Rect<f32>>,
 }
-
-// impl SendableFrameTree {
-//     fn contains(&self, id: PipelineId) -> bool {
-//         self.pipeline.id == id ||
-//         self.children.iter().any(|&SendableChildFrameTree { frame_tree: ref frame_tree, .. }| {
-//             frame_tree.contains(id)
-//         })
-//     }
-// }
 
 enum ReplaceResult {
     ReplacedNode(Rc<FrameTree>),
@@ -523,7 +515,9 @@ impl Constellation {
                         width:  width  as uint,
                         height: height as uint
                     }));
-                    self.compositor_chan.send(SetLayerClipRect(pipeline.id, rect));
+                    self.compositor_chan.send(SetLayerClipRect(pipeline.id,
+                                                               LayerId::null(),
+                                                               rect));
                 } else {
                     let pipeline = pipeline.get().borrow();
                     pipeline.script_chan.send(ResizeInactiveMsg(pipeline.id,

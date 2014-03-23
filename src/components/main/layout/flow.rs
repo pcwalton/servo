@@ -46,6 +46,7 @@ use geom::point::Point2D;
 use geom::rect::Rect;
 use gfx::color::Color;
 use gfx::display_list::StackingContext;
+use servo_msg::compositor_msg::LayerId;
 use servo_util::geometry::Au;
 use servo_util::smallvec::{SmallVec, SmallVec0};
 use std::cast;
@@ -230,6 +231,9 @@ pub trait ImmutableFlowUtils {
 
     /// Returns true if this flow is an inline flow.
     fn is_inline_flow(self) -> bool;
+
+    /// Returns a layer ID for the given fragment.
+    fn layer_id(self, box_id: uint) -> LayerId;
 
     /// Dumps the flow tree for debugging.
     fn dump(self);
@@ -793,6 +797,14 @@ impl<'a> ImmutableFlowUtils for &'a Flow {
         match self.class() {
             InlineFlowClass => true,
             BlockFlowClass => false,
+        }
+    }
+
+    /// Returns a layer ID for the given fragment.
+    fn layer_id(self, fragment_id: uint) -> LayerId {
+        unsafe {
+            let (_, pointer): (uint, uint) = cast::transmute(self);
+            LayerId(pointer, fragment_id)
         }
     }
 

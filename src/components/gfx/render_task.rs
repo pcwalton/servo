@@ -2,7 +2,12 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-// The task that handles all rendering/painting.
+//! The task that handles all rendering/painting.
+
+use buffer_map::BufferMap;
+use display_list::DisplayList;
+use font_context::{FontContext, FontContextInfo};
+use render_context::RenderContext;
 
 use azure::azure_hl::{B8G8R8A8, Color, DrawTarget, StolenGLResources};
 use azure::AzFloat;
@@ -12,34 +17,31 @@ use geom::size::Size2D;
 use layers::platform::surface::{NativePaintingGraphicsContext, NativeSurface};
 use layers::platform::surface::{NativeSurfaceMethods};
 use layers;
-use servo_msg::compositor_msg::{Epoch, IdleRenderState, LayerBuffer, LayerBufferSet};
-use servo_msg::compositor_msg::{RenderListener, RenderingRenderState};
+use servo_msg::compositor_msg::{DontResetScroll, Epoch, IdleRenderState, LayerBuffer};
+use servo_msg::compositor_msg::{LayerBufferSet, LayerId, LayerMetadata, RenderListener};
+use servo_msg::compositor_msg::{RenderingRenderState};
 use servo_msg::constellation_msg::{ConstellationChan, PipelineId, RendererReadyMsg};
 use servo_msg::constellation_msg::{Failure, FailureMsg};
 use servo_msg::platform::surface::NativeSurfaceAzureMethods;
 use servo_util::opts::Opts;
+use servo_util::smallvec::{SmallVec, SmallVec1};
 use servo_util::time::{ProfilerChan, profile};
 use servo_util::time;
 use servo_util::task::send_on_failure;
-
 use std::comm::{Chan, Port, SharedChan};
 use std::task;
 use extra::arc::Arc;
 
-use buffer_map::BufferMap;
-use display_list::DisplayList;
-use font_context::{FontContext, FontContextInfo};
-use render_context::RenderContext;
-
 pub struct RenderLayer<T> {
+    id: LayerId,
     display_list: Arc<DisplayList<T>>,
     size: Size2D<uint>,
     color: Color
 }
 
 pub enum Msg<T> {
-    RenderMsg(RenderLayer<T>),
-    ReRenderMsg(~[BufferRequest], f32, Epoch),
+    RenderMsg(SmallVec1<RenderLayer<T>>),
+    ReRenderMsg(~[BufferRequest], f32, LayerId, Epoch),
     UnusedBufferMsg(~[~LayerBuffer]),
     PaintPermissionGranted,
     PaintPermissionRevoked,
@@ -119,8 +121,8 @@ pub struct RenderTask<C,T> {
     /// The native graphics context.
     native_graphics_context: Option<NativePaintingGraphicsContext>,
 
-    /// The layer to be rendered
-    render_layer: Option<RenderLayer<T>>,
+    /// The layers to be rendered.
+    render_layers: SmallVec1<RenderLayer<T>>,
 
     /// Permission to send paint messages to the compositor
     paint_permission: bool,
@@ -139,6 +141,23 @@ macro_rules! native_graphics_context(
         $task.native_graphics_context.as_ref().expect("Need a graphics context to do rendering")
     )
 )
+
+fn initialize_layers<C:RenderListener,
+                     E>(
+                     compositor: &mut C,
+                     pipeline_id: PipelineId,
+                     epoch: Epoch,
+                     render_layers: &[RenderLayer<E>]) {
+    let metadata = render_layers.iter().map(|render_layer| {
+        println!(">>> renderer initialize_layers got ID {}", render_layer.id);
+        LayerMetadata {
+            id: render_layer.id,
+            size: render_layer.size,
+            color: render_layer.color,
+        }
+    }).collect();
+    compositor.initialize_layers_for_pipeline(pipeline_id, metadata, epoch, DontResetScroll);
+}
 
 impl<C: RenderListener + Send,T:Send+Freeze> RenderTask<C,T> {
     pub fn create(id: PipelineId,
@@ -181,7 +200,7 @@ impl<C: RenderListener + Send,T:Send+Freeze> RenderTask<C,T> {
 
                     native_graphics_context: native_graphics_context,
 
-                    render_layer: None,
+                    render_layers: SmallVec1::new(),
 
                     paint_permission: false,
                     epoch: Epoch(0),
@@ -205,19 +224,27 @@ impl<C: RenderListener + Send,T:Send+Freeze> RenderTask<C,T> {
 
         loop {
             match self.port.recv() {
-                RenderMsg(render_layer) => {
-                    if self.paint_permission {
-                        self.epoch.next();
-                        self.compositor.set_layer_page_size_and_color(self.id, render_layer.size, self.epoch, render_layer.color);
-                    } else {
+                RenderMsg(render_layers) => {
+                    for layer in render_layers.iter() {
+                        println!(">>> renderer got RenderMsg: {}", layer.id);
+                    }
+
+                    if !self.paint_permission {
                         debug!("render_task: render ready msg");
                         self.constellation_chan.send(RendererReadyMsg(self.id));
                     }
-                    self.render_layer = Some(render_layer);
+
+                    self.epoch.next();
+
+                    self.render_layers = render_layers;
+                    initialize_layers(&mut self.compositor,
+                                      self.id,
+                                      self.epoch,
+                                      self.render_layers.as_slice());
                 }
-                ReRenderMsg(tiles, scale, epoch) => {
+                ReRenderMsg(tiles, scale, layer_id, epoch) => {
                     if self.epoch == epoch {
-                        self.render(tiles, scale);
+                        self.render(tiles, scale, layer_id);
                     } else {
                         debug!("renderer epoch mismatch: {:?} != {:?}", self.epoch, epoch);
                     }
@@ -229,13 +256,18 @@ impl<C: RenderListener + Send,T:Send+Freeze> RenderTask<C,T> {
                     }
                 }
                 PaintPermissionGranted => {
+                    println!("renderer got PaintPermissionGranted");
                     self.paint_permission = true;
-                    match self.render_layer {
-                        Some(ref render_layer) => {
-                            self.epoch.next();
-                            self.compositor.set_layer_page_size_and_color(self.id, render_layer.size, self.epoch, render_layer.color);
-                        }
-                        None => {}
+
+                    // Here we assume that the main layer—the layer responsible for the page size—
+                    // is the first layer. This is a pretty fragile assumption. It will be fixed
+                    // once we use the layers-based scrolling infrastructure for all scrolling.
+                    if self.render_layers.len() > 1 {
+                        self.epoch.next();
+                        initialize_layers(&mut self.compositor,
+                                          self.id,
+                                          self.epoch,
+                                          self.render_layers.as_slice());
                     }
                 }
                 PaintPermissionRevoked => {
@@ -250,14 +282,24 @@ impl<C: RenderListener + Send,T:Send+Freeze> RenderTask<C,T> {
         }
     }
 
-    fn render(&mut self, tiles: ~[BufferRequest], scale: f32) {
-        let render_layer;
-        match self.render_layer {
-            Some(ref r_layer) => {
-                render_layer = r_layer;
-            }
-            _ => return, // nothing to do
+    /// Renders one layer and sends the tiles back to the layer.
+    ///
+    /// FIXME(pcwalton): We will probably want to eventually send all layers belonging to a page in
+    /// one transaction, to avoid the user seeing inconsistent states.
+    fn render(&mut self, tiles: ~[BufferRequest], scale: f32, layer_id: LayerId) {
+        // Find the appropriate render layer.
+        let mut render_layer = None;
+        for layer in self.render_layers.iter() {
+            println!("render layer ID is {}, this render ID is {}", layer.id, layer_id);
+            //if layer.id == layer_id {
+                render_layer = Some(layer);
+                break
+            //}
         }
+        let render_layer = match render_layer {
+            Some(render_layer) => render_layer,
+            None => return,
+        };
 
         self.compositor.set_render_state(RenderingRenderState);
         time::profile(time::RenderingCategory, self.profiler_chan.clone(), || {
@@ -392,7 +434,7 @@ impl<C: RenderListener + Send,T:Send+Freeze> RenderTask<C,T> {
 
             debug!("render_task: returning surface");
             if self.paint_permission {
-                self.compositor.paint(self.id, layer_buffer_set, self.epoch);
+                self.compositor.paint(self.id, render_layer.id, layer_buffer_set, self.epoch);
             } else {
                 debug!("render_task: RendererReadyMsg send");
                 self.constellation_chan.send(RendererReadyMsg(self.id));
