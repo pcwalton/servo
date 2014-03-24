@@ -481,10 +481,11 @@ impl InlineFlow {
         self.boxes = ~[];
     }
 
-    pub fn build_display_list_inline<E:ExtraDisplayListData>(
+    pub fn build_display_list_inline<'a,
+                                     E:ExtraDisplayListData>(
                                      &self,
                                      stacking_context: &mut StackingContext<E>,
-                                     builder: &DisplayListBuilder,
+                                     builder: &DisplayListBuilder<'a,E>,
                                      container_block_size: &Size2D<Au>,
                                      dirty: &Rect<Au>) {
         let abs_rect = Rect(self.base.abs_position, self.base.position.size);

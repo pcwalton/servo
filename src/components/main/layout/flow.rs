@@ -268,13 +268,14 @@ pub trait MutableFlowUtils {
     fn store_overflow(self, _: &mut LayoutContext);
 
     /// Builds the display lists for this flow and its descendants.
-    fn build_display_list<E:ExtraDisplayListData>(
-                         self,
-                         stacking_context: &mut StackingContext<E>,
-                         builder: &DisplayListBuilder,
-                         container_block_size: &Size2D<Au>,
-                         absolute_cb_abs_position: Point2D<Au>,
-                         dirty: &Rect<Au>);
+    fn build_display_list<'a,
+                          E:ExtraDisplayListData>(
+                          self,
+                          stacking_context: &mut StackingContext<E>,
+                          builder: &mut DisplayListBuilder<'a,E>,
+                          container_block_size: &Size2D<Au>,
+                          absolute_cb_abs_position: Point2D<Au>,
+                          dirty: &Rect<Au>);
 
     /// Destroys the flow.
     fn destroy(self);
@@ -941,10 +942,11 @@ impl<'a> MutableFlowUtils for &'a mut Flow {
     ///
     /// * `dirty`: The dirty rectangle. Display lists will not be created for blocks that do not
     ///   intersect this rectangle.
-    fn build_display_list<E:ExtraDisplayListData>(
+    fn build_display_list<'a,
+                          E:ExtraDisplayListData>(
                           self,
                           stacking_context: &mut StackingContext<E>,
-                          builder: &DisplayListBuilder,
+                          builder: &mut DisplayListBuilder<'a,E>,
                           container_block_size: &Size2D<Au>,
                           absolute_cb_abs_position: Point2D<Au>,
                           dirty: &Rect<Au>) {

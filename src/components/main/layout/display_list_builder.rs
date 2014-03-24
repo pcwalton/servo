@@ -8,7 +8,9 @@ use layout::box_::Box;
 use layout::context::LayoutContext;
 use layout::util::OpaqueNode;
 
+use gfx::render_task::RenderLayer;
 use gfx;
+use servo_util::smallvec::SmallVec0;
 use style;
 
 pub trait ExtraDisplayListData {
@@ -35,8 +37,11 @@ impl ExtraDisplayListData for Nothing {
 ///
 /// Right now, the builder isn't used for much, but it establishes the pattern we'll need once we
 /// support display-list-based hit testing and so forth.
-pub struct DisplayListBuilder<'a> {
+pub struct DisplayListBuilder<'a,E> {
     ctx: &'a LayoutContext,
+
+    /// A list of render layers that we've built up, root layer not included.
+    layers: SmallVec0<RenderLayer<E>>,
 }
 
 //

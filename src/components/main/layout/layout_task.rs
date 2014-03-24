@@ -48,7 +48,7 @@ use servo_net::local_image_cache::{ImageResponder, LocalImageCache};
 use servo_util::geometry::Au;
 use servo_util::geometry;
 use servo_util::opts::Opts;
-use servo_util::smallvec::{SmallVec, SmallVec1};
+use servo_util::smallvec::{SmallVec, SmallVec0, SmallVec1};
 use servo_util::time::{ProfilerChan, profile};
 use servo_util::time;
 use servo_util::task::send_on_failure;
@@ -633,19 +633,22 @@ impl LayoutTask {
                 let root_abs_position = Point2D(Au::new(0), Au::new(0));
                 let mut root_stacking_context = StackingContext::new();
                 let dirty = flow::base(layout_root).position.clone();
-                let display_list_builder = DisplayListBuilder {
+                let mut display_list_builder = DisplayListBuilder {
                     ctx: &layout_ctx,
+                    layers: SmallVec0::new(),
                 };
 
                 layout_root.build_display_list(&mut root_stacking_context,
-                                               &display_list_builder,
+                                               &mut display_list_builder,
                                                &root_size,
                                                root_abs_position,
                                                &dirty);
 
                 let display_list = Arc::new(root_stacking_context.flatten());
-                let mut color = color::rgba(255.0, 255.0, 255.0, 255.0);
 
+                // FIXME(pcwalton): This is really ugly and can't handle overflow: scroll. Refactor
+                // it with extreme prejudice.
+                let mut color = color::rgba(255.0, 255.0, 255.0, 255.0);
                 for child in node.traverse_preorder() {
                     if child.type_id() == ElementNodeTypeId(HTMLHtmlElementTypeId) ||
                             child.type_id() == ElementNodeTypeId(HTMLBodyElementTypeId) {
@@ -680,10 +683,16 @@ impl LayoutTask {
 
                 self.display_list = Some(display_list.clone());
 
-                debug!("Layout done!");
-
                 let mut layers = SmallVec1::new();
                 layers.push(render_layer);
+                let DisplayListBuilder {
+                    layers: sublayers,
+                    ..
+                } = display_list_builder;
+                layers.push_all_move(sublayers);
+
+                debug!("Layout done!");
+
                 self.render_chan.send(RenderMsg(layers));
             });
         }

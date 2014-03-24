@@ -27,9 +27,12 @@ use layout::wrapper::ThreadSafeLayoutNode;
 use style::ComputedValues;
 use style::computed_values::{clear, position};
 
+use extra::arc::Arc;
 use geom::{Point2D, Rect, Size2D};
+use gfx::color;
 use gfx::display_list::{BackgroundAndBorderLevel, BlockLevel, RootOfStackingContextLevel};
 use gfx::display_list::{StackingContext};
+use gfx::render_task::RenderLayer;
 use servo_msg::compositor_msg::LayerId;
 use servo_util::geometry::Au;
 use servo_util::geometry;
@@ -1102,10 +1105,11 @@ impl BlockFlow {
         box_.border_box.set(position);
     }
 
-    fn build_display_list_block_common<E:ExtraDisplayListData>(
+    fn build_display_list_block_common<'a,
+                                       E:ExtraDisplayListData>(
                                        &mut self,
                                        stacking_context: &mut StackingContext<E>,
-                                       builder: &DisplayListBuilder,
+                                       builder: &mut DisplayListBuilder<'a,E>,
                                        container_block_size: &Size2D<Au>,
                                        mut absolute_cb_abs_position: Point2D<Au>,
                                        dirty: &Rect<Au>,
@@ -1198,10 +1202,11 @@ impl BlockFlow {
     ///
     /// Set the absolute position for children after doing any offsetting for
     /// position: relative.
-    pub fn build_display_list_block<E:ExtraDisplayListData>(
+    pub fn build_display_list_block<'a,
+                                    E:ExtraDisplayListData>(
                                     &mut self,
                                     stacking_context: &mut StackingContext<E>,
-                                    builder: &DisplayListBuilder,
+                                    builder: &mut DisplayListBuilder<'a,E>,
                                     container_block_size: &Size2D<Au>,
                                     absolute_cb_abs_position: Point2D<Au>,
                                     dirty: &Rect<Au>) {
@@ -1231,10 +1236,11 @@ impl BlockFlow {
         }
     }
 
-    pub fn build_display_list_float<E:ExtraDisplayListData>(
+    pub fn build_display_list_float<'a,
+                                    E:ExtraDisplayListData>(
                                     &mut self,
                                     parent_stacking_context: &mut StackingContext<E>,
-                                    builder: &DisplayListBuilder,
+                                    builder: &mut DisplayListBuilder<'a,E>,
                                     container_block_size: &Size2D<Au>,
                                     absolute_cb_abs_position: Point2D<Au>,
                                     dirty: &Rect<Au>) {
@@ -1343,13 +1349,14 @@ impl BlockFlow {
     }
 
     /// Add display items for Absolutely Positioned flow.
-    pub fn build_display_list_abs<E:ExtraDisplayListData>(
-                                 &mut self,
-                                 parent_stacking_context: &mut StackingContext<E>,
-                                 builder: &DisplayListBuilder,
-                                 containing_block_size: &Size2D<Au>,
-                                 absolute_cb_abs_position: Point2D<Au>,
-                                 dirty: &Rect<Au>) {
+    pub fn build_display_list_abs<'a,
+                                  E:ExtraDisplayListData>(
+                                  &mut self,
+                                  parent_stacking_context: &mut StackingContext<E>,
+                                  builder: &mut DisplayListBuilder<'a,E>,
+                                  containing_block_size: &Size2D<Au>,
+                                  absolute_cb_abs_position: Point2D<Au>,
+                                  dirty: &Rect<Au>) {
         let mut stacking_context = StackingContext::new();
 
         let absolute_cb_abs_position = if self.is_fixed() {
@@ -1360,8 +1367,6 @@ impl BlockFlow {
             // wrt Containing Block
             absolute_cb_abs_position + self.base.position.origin
         };
-
-        // TODO(pcwalton): Add a layer for fixed positioning.
 
         // Set the absolute position, which will be passed down later as part
         // of containing block details for absolute descendants.
@@ -1375,8 +1380,23 @@ impl BlockFlow {
                                              Point2D(Au(0), Au(0)),
                                              RootOfStackingContextLevel);
 
-        // TODO(pcwalton): `z-index`.
-        parent_stacking_context.positioned_descendants.push((0, stacking_context.flatten()))
+        if !self.is_fixed() {
+            // TODO(pcwalton): `z-index`.
+            parent_stacking_context.positioned_descendants.push((0, stacking_context.flatten()));
+            return
+        }
+
+        // If we got here, then we're fixed position. Create a new `RenderLayer`.
+        // 
+        // FIXME(pcwalton): The color is wrong!
+        let new_layer = RenderLayer {
+            id: self.layer_id(0),
+            display_list: Arc::new(stacking_context.flatten()),
+            size: Size2D(self.base.position.size.width.to_nearest_px() as uint,
+                         self.base.position.size.height.to_nearest_px() as uint),
+            color: color::rgba(255.0, 255.0, 255.0, 255.0),
+        };
+        builder.layers.push(new_layer)
     }
 
     /// Return the top outer edge of the Hypothetical Box for an absolute flow.

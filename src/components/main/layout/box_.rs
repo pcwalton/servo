@@ -908,10 +908,11 @@ impl Box {
     }
     /// Adds the display items necessary to paint the background of this box to the display list if
     /// necessary.
-    pub fn paint_background_if_applicable<E:ExtraDisplayListData>(
+    pub fn paint_background_if_applicable<'a,
+                                          E:ExtraDisplayListData>(
                                           &self,
                                           list: &mut DisplayList<E>,
-                                          builder: &DisplayListBuilder,
+                                          builder: &DisplayListBuilder<'a,E>,
                                           absolute_bounds: &Rect<Au>) {
         // FIXME: This causes a lot of background colors to be displayed when they are clearly not
         // needed. We could use display list optimization to clean this up, but it still seems
@@ -1144,10 +1145,11 @@ impl Box {
     /// * `flow_origin`: Position of the origin of the owning flow wrt the display list root flow.
     ///   box.
     /// * `flow`: The flow that this box belongs to.
-    pub fn build_display_list<E:ExtraDisplayListData>(
+    pub fn build_display_list<'a,
+                              E:ExtraDisplayListData>(
                               &self,
                               stacking_context: &mut StackingContext<E>,
-                              builder: &DisplayListBuilder,
+                              builder: &DisplayListBuilder<'a,E>,
                               dirty: &Rect<Au>,
                               flow_origin: Point2D<Au>,
                               flow: &Flow,

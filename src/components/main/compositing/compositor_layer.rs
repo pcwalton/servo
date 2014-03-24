@@ -366,8 +366,8 @@ impl CompositorLayer {
                              -> bool {
         debug!("compositor_layer: starting set_clipping_rect()");
         match self.children.iter().position(|kid_holder| {
-                pipeline_id == kid_holder.child.pipeline.id /*&&
-                layer_id == kid_holder.child.id*/
+                pipeline_id == kid_holder.child.pipeline.id &&
+                layer_id == kid_holder.child.id
             }) {
             Some(i) => {
                 debug!("compositor_layer: node found for set_clipping_rect()");
@@ -423,7 +423,7 @@ impl CompositorLayer {
                   epoch: Epoch)
                   -> bool {
         debug!("compositor_layer: starting resize()");
-        if self.pipeline.id != pipeline_id /*|| self.id != layer_id*/ {
+        if self.pipeline.id != pipeline_id || self.id != layer_id {
             return self.resize_helper(pipeline_id, layer_id, new_size, epoch)
         }
 
@@ -521,8 +521,8 @@ impl CompositorLayer {
                      -> bool {
         debug!("compositor_layer: starting resize_helper()");
         let found = match self.children.iter().position(|kid_holder| {
-                pipeline_id == kid_holder.child.pipeline.id /*&&
-                layer_id == kid_holder.child.id*/
+                pipeline_id == kid_holder.child.pipeline.id &&
+                layer_id == kid_holder.child.id
             }) {
             Some(i) => {
                 debug!("compositor_layer: layer found for resize_helper()");
@@ -687,7 +687,7 @@ impl CompositorLayer {
                        epoch: Epoch)
                        -> Option<~LayerBufferSet> {
         debug!("compositor_layer: starting add_buffers()");
-        if self.pipeline.id != pipeline_id /*|| self.id != layer_id*/ {
+        if self.pipeline.id != pipeline_id || self.id != layer_id {
             // ID does not match ours, so recurse on descendents (including hidden children).
             for child_layer in self.children.mut_iter() {
                 match child_layer.child.add_buffers(graphics_context,
@@ -779,7 +779,7 @@ impl CompositorLayer {
     pub fn invalidate_rect(&mut self, pipeline_id: PipelineId, layer_id: LayerId, rect: Rect<f32>)
                            -> bool {
         debug!("compositor_layer: starting invalidate_rect()");
-        if self.pipeline.id == pipeline_id /*&& layer_id == self.id*/ {
+        if self.pipeline.id == pipeline_id && layer_id == self.id {
             debug!("compositor_layer: layer found for invalidate_rect()");
             let quadtree = match self.quadtree {
                 NoTree(..) => return true, // Nothing to do
