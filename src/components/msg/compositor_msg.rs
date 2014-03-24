@@ -92,6 +92,17 @@ impl LayerId {
     }
 }
 
+/// The scrolling policy of a layer.
+#[deriving(Eq)]
+pub enum ScrollBehavior {
+    /// Normal scrolling behavior.
+    Scroll,
+    /// Parents of these layers shift them as necessary to keep them at the same point in the
+    /// viewport. This is a hack until we actually have the layer tree set up properly (one root
+    /// layer that contains all fixed-position descendants).
+    FixedPosition,
+}
+
 /// All layer-specific information that the painting task sends to the compositor other than the
 /// buffer contents of the layer itself.
 pub struct LayerMetadata {
@@ -101,6 +112,8 @@ pub struct LayerMetadata {
     rect: Rect<uint>,
     /// The background color of the layer.
     color: Color,
+    /// The scrolling policy of this layer.
+    scroll_behavior: ScrollBehavior,
 }
 
 /// The interface used by the renderer to acquire draw targets for each render frame and

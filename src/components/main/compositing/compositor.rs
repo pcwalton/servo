@@ -27,7 +27,7 @@ use layers::scene::Scene;
 use opengles::gl2;
 use png;
 use servo_msg::compositor_msg::{Blank, Epoch, FinishedLoading, IdleRenderState, LayerBufferSet};
-use servo_msg::compositor_msg::{LayerId, ReadyState, RenderState};
+use servo_msg::compositor_msg::{LayerId, ReadyState, RenderState, Scroll, ScrollBehavior};
 use servo_msg::constellation_msg::{ConstellationChan, ExitMsg, LoadUrlMsg, NavigateMsg};
 use servo_msg::constellation_msg::{PipelineId, ResizedWindowMsg};
 use servo_msg::constellation_msg;
@@ -262,11 +262,15 @@ impl IOCompositor {
                     self.create_root_compositor_layer_if_necessary(pipeline_id, layer_id, size);
                 }
 
-                (Some(CreateDescendantCompositorLayerIfNecessary(pipeline_id, layer_id, rect)),
+                (Some(CreateDescendantCompositorLayerIfNecessary(pipeline_id,
+                                                                 layer_id,
+                                                                 rect,
+                                                                 scroll_behavior)),
                  false) => {
                     self.create_descendant_compositor_layer_if_necessary(pipeline_id,
                                                                          layer_id,
-                                                                         rect);
+                                                                         rect,
+                                                                         scroll_behavior);
                 }
 
                 (Some(SetLayerPageSize(pipeline_id, layer_id, new_size, epoch)), false) => {
@@ -378,7 +382,8 @@ impl IOCompositor {
                                                  Some(size),
                                                  self.opts.tile_size,
                                                  Some(MAX_TILE_MEMORY_PER_LAYER),
-                                                 self.opts.cpu_painting);
+                                                 self.opts.cpu_painting,
+                                                 Scroll);
             println!(">>> making new ROOT compositor layer with ID {}", layer_id);
 
             let old_layer = {
@@ -406,13 +411,15 @@ impl IOCompositor {
     fn create_descendant_compositor_layer_if_necessary(&mut self,
                                                        pipeline_id: PipelineId,
                                                        layer_id: LayerId,
-                                                       rect: Rect<f32>) {
+                                                       rect: Rect<f32>,
+                                                       scroll_behavior: ScrollBehavior) {
         match self.compositor_layer {
             Some(ref mut compositor_layer) => {
                 assert!(compositor_layer.add_child_if_necessary(pipeline_id,
                                                                 compositor_layer.id,
                                                                 layer_id,
-                                                                rect))
+                                                                rect,
+                                                                scroll_behavior))
             }
             None => fail!("Compositor: Received new layer without initialized pipeline"),
         };

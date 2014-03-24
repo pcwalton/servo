@@ -33,7 +33,7 @@ use gfx::color;
 use gfx::display_list::{BackgroundAndBorderLevel, BlockLevel, RootOfStackingContextLevel};
 use gfx::display_list::{StackingContext};
 use gfx::render_task::RenderLayer;
-use servo_msg::compositor_msg::LayerId;
+use servo_msg::compositor_msg::{FixedPosition, LayerId};
 use servo_util::geometry::Au;
 use servo_util::geometry;
 use servo_util::smallvec::{SmallVec, SmallVec0};
@@ -1390,6 +1390,7 @@ impl BlockFlow {
             display_list: Arc::new(stacking_context.flatten()),
             rect: Rect(origin, size),
             color: color::rgba(255.0, 255.0, 255.0, 255.0),
+            scroll_behavior: FixedPosition,
         };
         builder.layers.push(new_layer)
     }

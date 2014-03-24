@@ -14,7 +14,7 @@ use geom::rect::Rect;
 use geom::size::Size2D;
 use layers::platform::surface::{NativeCompositingGraphicsContext, NativeGraphicsMetadata};
 use servo_msg::compositor_msg::{Epoch, LayerBufferSet, LayerId, LayerMetadata, ReadyState};
-use servo_msg::compositor_msg::{RenderListener, RenderState, ScriptListener, Tile};
+use servo_msg::compositor_msg::{RenderListener, RenderState, ScriptListener, ScrollBehavior, Tile};
 use servo_msg::constellation_msg::{ConstellationChan, PipelineId};
 use servo_util::opts::Opts;
 use servo_util::time::ProfilerChan;
@@ -106,9 +106,11 @@ impl RenderListener for CompositorChan {
                                                                     size));
                 first = false
             } else {
-                self.chan.send(CreateDescendantCompositorLayerIfNecessary(pipeline_id,
-                                                                          metadata.id,
-                                                                          rect));
+                self.chan
+                    .send(CreateDescendantCompositorLayerIfNecessary(pipeline_id,
+                                                                     metadata.id,
+                                                                     rect,
+                                                                     metadata.scroll_behavior));
             }
 
             self.chan.send(SetUnRenderedColor(pipeline_id, metadata.id, metadata.color));
@@ -171,7 +173,7 @@ pub enum Msg {
     CreateRootCompositorLayerIfNecessary(PipelineId, LayerId, Size2D<f32>),
     /// Tells the compositor to create a descendant layer for a pipeline if necessary (i.e. if no
     /// layer with that ID exists).
-    CreateDescendantCompositorLayerIfNecessary(PipelineId, LayerId, Rect<f32>),
+    CreateDescendantCompositorLayerIfNecessary(PipelineId, LayerId, Rect<f32>, ScrollBehavior),
     /// Alerts the compositor that the specified layer has changed size.
     SetLayerPageSize(PipelineId, LayerId, Size2D<f32>, Epoch),
     /// Alerts the compositor that the specified layer's clipping rect has changed.

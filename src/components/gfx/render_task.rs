@@ -18,8 +18,9 @@ use geom::size::Size2D;
 use layers::platform::surface::{NativePaintingGraphicsContext, NativeSurface};
 use layers::platform::surface::{NativeSurfaceMethods};
 use layers;
-use servo_msg::compositor_msg::{Epoch, IdleRenderState, LayerBuffer, LayerBufferSet, LayerId};
-use servo_msg::compositor_msg::{LayerMetadata, RenderListener, RenderingRenderState};
+use servo_msg::compositor_msg::{Epoch, FixedPosition, IdleRenderState, LayerBuffer};
+use servo_msg::compositor_msg::{LayerBufferSet, LayerId, LayerMetadata, RenderListener};
+use servo_msg::compositor_msg::{RenderingRenderState, Scroll, ScrollBehavior};
 use servo_msg::constellation_msg::{ConstellationChan, PipelineId, RendererReadyMsg};
 use servo_msg::constellation_msg::{Failure, FailureMsg};
 use servo_msg::platform::surface::NativeSurfaceAzureMethods;
@@ -44,6 +45,8 @@ pub struct RenderLayer {
     rect: Rect<uint>,
     /// The color of the background in this layer. Used for unrendered content.
     color: Color,
+    /// The scrolling policy of this layer.
+    scroll_behavior: ScrollBehavior,
 }
 
 pub enum Msg {
@@ -158,6 +161,7 @@ fn initialize_layers<C:RenderListener>(
             id: render_layer.id,
             rect: render_layer.rect,
             color: render_layer.color,
+            scroll_behavior: render_layer.scroll_behavior,
         }
     }).collect();
     compositor.initialize_layers_for_pipeline(pipeline_id, metadata, epoch);
@@ -344,6 +348,8 @@ impl<C: RenderListener + Send> RenderTask<C> {
                         let matrix = matrix.scale(scale as AzFloat, scale as AzFloat);
                         let matrix = matrix.translate(-(tile.page_rect.origin.x) as AzFloat,
                                                       -(tile.page_rect.origin.y) as AzFloat);
+                        let matrix = matrix.translate(-(render_layer.rect.origin.x as AzFloat),
+                                                      -(render_layer.rect.origin.y as AzFloat));
                         
                         ctx.draw_target.set_transform(&matrix);
 
