@@ -26,8 +26,8 @@ use layers::rendergl::RenderContext;
 use layers::scene::Scene;
 use opengles::gl2;
 use png;
-use servo_msg::compositor_msg::{Blank, DontResetScroll, Epoch, FinishedLoading, IdleRenderState};
-use servo_msg::compositor_msg::{LayerBufferSet, LayerId, ReadyState, RenderState, ResetScrollFlag};
+use servo_msg::compositor_msg::{Blank, Epoch, FinishedLoading, IdleRenderState, LayerBufferSet};
+use servo_msg::compositor_msg::{LayerId, ReadyState, RenderState};
 use servo_msg::constellation_msg::{ConstellationChan, ExitMsg, LoadUrlMsg, NavigateMsg};
 use servo_msg::constellation_msg::{PipelineId, ResizedWindowMsg};
 use servo_msg::constellation_msg;
@@ -260,13 +260,11 @@ impl IOCompositor {
 
                 (Some(CreateRootCompositorLayerIfNecessary(pipeline_id,
                                                            layer_id,
-                                                           size,
-                                                           reset_scroll)),
+                                                           size)),
                  false) => {
                     self.create_root_compositor_layer_if_necessary(pipeline_id,
                                                                    layer_id,
-                                                                   size,
-                                                                   reset_scroll);
+                                                                   size);
                 }
 
                 (Some(SetLayerPageSize(pipeline_id, layer_id, new_size, epoch)), false) => {
@@ -366,43 +364,41 @@ impl IOCompositor {
     fn create_root_compositor_layer_if_necessary(&mut self,
                                                  _: PipelineId,
                                                  layer_id: LayerId,
-                                                 size: Size2D<f32>,
-                                                 reset_scroll: ResetScrollFlag) {
-        let (root_pipeline, root_scroll_position) = match (&self.compositor_layer, reset_scroll) {
-            (&Some(ref compositor_layer), DontResetScroll) => {
-                (compositor_layer.pipeline.clone(), compositor_layer.scroll_offset)
+                                                 size: Size2D<f32>) {
+        let (root_pipeline, root_layer_id) = match self.compositor_layer {
+            Some(ref compositor_layer) => {
+                (compositor_layer.pipeline.clone(), compositor_layer.id)
             }
-            (&Some(ref compositor_layer), ResetScroll) => {
-                (compositor_layer.pipeline.clone(), Point2D(0f32, 0f32))
-            }
-            (&None, _) => fail!("Compositor: Received new layer without initialized pipeline"),
+            None => fail!("Compositor: Received new layer without initialized pipeline"),
         };
 
-        let new_layer = CompositorLayer::new(root_pipeline,
-                                             layer_id,
-                                             Some(size),
-                                             self.opts.tile_size,
-                                             Some(MAX_TILE_MEMORY_PER_LAYER),
-                                             self.opts.cpu_painting,
-                                             root_scroll_position);
-        println!("making new compositor layer with ID {}", layer_id);
+        if layer_id != root_layer_id {
+            let new_layer = CompositorLayer::new(root_pipeline,
+                                                 layer_id,
+                                                 Some(size),
+                                                 self.opts.tile_size,
+                                                 Some(MAX_TILE_MEMORY_PER_LAYER),
+                                                 self.opts.cpu_painting);
+            println!("making new compositor layer with ID {}", layer_id);
 
-        let old_layer = {
-            let current_child = self.root_layer.borrow().first_child.borrow();
-            match *current_child.get() {
-                None => None,
-                Some(ref old_layer) => Some((*old_layer).clone()),
-            }
-        };
-        match old_layer {
-            None => {}
-            Some(old_layer) => {
-                ContainerLayer::remove_child(self.root_layer.clone(), old_layer.clone())
+            let old_layer = {
+                let current_child = self.root_layer.borrow().first_child.borrow();
+                match *current_child.get() {
+                    None => None,
+                    Some(ref old_layer) => Some((*old_layer).clone()),
+                }
+            };
+            match old_layer {
+                Some(old_layer) => {
+                    ContainerLayer::remove_child(self.root_layer.clone(), old_layer.clone());
+                    ContainerLayer::add_child_start(self.root_layer.clone(),
+                                                    ContainerLayerKind(new_layer.root_layer
+                                                                                .clone()));
+                    self.compositor_layer = Some(new_layer);
+                }
+                None => {}
             }
         }
-        ContainerLayer::add_child_start(self.root_layer.clone(),
-                                        ContainerLayerKind(new_layer.root_layer.clone()));
-        self.compositor_layer = Some(new_layer);
 
         self.ask_for_tiles();
     }

@@ -14,8 +14,7 @@ use geom::rect::Rect;
 use geom::size::Size2D;
 use layers::platform::surface::{NativeCompositingGraphicsContext, NativeGraphicsMetadata};
 use servo_msg::compositor_msg::{Epoch, LayerBufferSet, LayerId, LayerMetadata, ReadyState};
-use servo_msg::compositor_msg::{RenderListener, RenderState, ResetScroll, ResetScrollFlag};
-use servo_msg::compositor_msg::{ScriptListener, Tile};
+use servo_msg::compositor_msg::{RenderListener, RenderState, ScriptListener, Tile};
 use servo_msg::constellation_msg::{ConstellationChan, PipelineId};
 use servo_util::opts::Opts;
 use servo_util::time::ProfilerChan;
@@ -86,15 +85,13 @@ impl RenderListener for CompositorChan {
         let Size2D { width, height } = page_size;
         self.chan.send(CreateRootCompositorLayerIfNecessary(id,
                                                             LayerId::null(),
-                                                            Size2D(width as f32, height as f32),
-                                                            ResetScroll))
+                                                            Size2D(width as f32, height as f32)))
     }
 
     fn initialize_layers_for_pipeline(&self,
                                       pipeline_id: PipelineId,
                                       metadata: ~[LayerMetadata],
-                                      epoch: Epoch,
-                                      reset_scroll: ResetScrollFlag) {
+                                      epoch: Epoch) {
         // FIXME(pcwalton): This assumes that the first layer determines the page size.
         let mut first = true;
         for metadata in metadata.iter() {
@@ -104,8 +101,7 @@ impl RenderListener for CompositorChan {
             if first {
                 self.chan.send(CreateRootCompositorLayerIfNecessary(pipeline_id,
                                                                     metadata.id,
-                                                                    size,
-                                                                    reset_scroll));
+                                                                    size));
                 first = false
             }
 
@@ -166,7 +162,7 @@ pub enum Msg {
 
     /// Alerts the compositor that a new pipeline exists and a layer group should be created for
     /// it.
-    CreateRootCompositorLayerIfNecessary(PipelineId, LayerId, Size2D<f32>, ResetScrollFlag),
+    CreateRootCompositorLayerIfNecessary(PipelineId, LayerId, Size2D<f32>),
     /// Alerts the compositor that the specified layer has changed size.
     SetLayerPageSize(PipelineId, LayerId, Size2D<f32>, Epoch),
     /// Alerts the compositor that the specified layer's clipping rect has changed.

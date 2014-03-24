@@ -103,13 +103,6 @@ pub struct LayerMetadata {
     color: Color,
 }
 
-/// This is a hack. See the definition of `initialize_layers_for_pipeline()` below.
-#[deriving(Eq, Clone)]
-pub enum ResetScrollFlag {
-    ResetScroll,
-    DontResetScroll,
-}
-
 /// The interface used by the renderer to acquire draw targets for each render frame and
 /// submit them to be drawn to the display.
 pub trait RenderListener {
@@ -118,17 +111,10 @@ pub trait RenderListener {
 
     /// Informs the compositor of the layers for the given pipeline. The compositor responds by
     /// creating and/or destroying render layers as necessary.
-    ///
-    /// The `reset_scroll` flag is a hack to deal with the fact that we don't have incremental
-    /// reflow yet. Because flows are constructed anew from scratch, the layer ID will be different
-    /// between every reflow and the page will scroll to the top. This is obviously bad, so we
-    /// set this hack to allow the root layer to keep its scroll position. This hack should be
-    /// removed once we have incremental reflow.
     fn initialize_layers_for_pipeline(&self,
                                       pipeline_id: PipelineId,
                                       metadata: ~[LayerMetadata],
-                                      epoch: Epoch,
-                                      reset_scroll: ResetScrollFlag);
+                                      epoch: Epoch);
 
     fn set_layer_clip_rect(&self,
                            pipeline_id: PipelineId,

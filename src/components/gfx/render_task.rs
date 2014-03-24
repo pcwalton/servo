@@ -17,9 +17,8 @@ use geom::size::Size2D;
 use layers::platform::surface::{NativePaintingGraphicsContext, NativeSurface};
 use layers::platform::surface::{NativeSurfaceMethods};
 use layers;
-use servo_msg::compositor_msg::{DontResetScroll, Epoch, IdleRenderState, LayerBuffer};
-use servo_msg::compositor_msg::{LayerBufferSet, LayerId, LayerMetadata, RenderListener};
-use servo_msg::compositor_msg::{RenderingRenderState};
+use servo_msg::compositor_msg::{Epoch, IdleRenderState, LayerBuffer, LayerBufferSet, LayerId};
+use servo_msg::compositor_msg::{LayerMetadata, RenderListener, RenderingRenderState};
 use servo_msg::constellation_msg::{ConstellationChan, PipelineId, RendererReadyMsg};
 use servo_msg::constellation_msg::{Failure, FailureMsg};
 use servo_msg::platform::surface::NativeSurfaceAzureMethods;
@@ -156,7 +155,7 @@ fn initialize_layers<C:RenderListener,
             color: render_layer.color,
         }
     }).collect();
-    compositor.initialize_layers_for_pipeline(pipeline_id, metadata, epoch, DontResetScroll);
+    compositor.initialize_layers_for_pipeline(pipeline_id, metadata, epoch);
 }
 
 impl<C: RenderListener + Send,T:Send+Freeze> RenderTask<C,T> {

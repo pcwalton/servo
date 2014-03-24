@@ -118,14 +118,13 @@ impl CompositorLayer {
                page_size: Option<Size2D<f32>>,
                tile_size: uint,
                max_mem: Option<uint>,
-               cpu_painting: bool,
-               scroll_position: Point2D<f32>)
+               cpu_painting: bool)
                -> CompositorLayer {
         CompositorLayer {
             pipeline: pipeline,
             id: id,
             page_size: page_size,
-            scroll_offset: scroll_position,
+            scroll_offset: Point2D(0f32, 0f32),
             children: ~[],
             quadtree: match page_size {
                 None => NoTree(tile_size, max_mem),
@@ -160,8 +159,7 @@ impl CompositorLayer {
                                              None,
                                              tile_size,
                                              max_mem,
-                                             cpu_painting,
-                                             Point2D(0f32, 0f32));
+                                             cpu_painting);
 
         layer.children = (children.move_iter().map(|child| {
             let SendableChildFrameTree { frame_tree, rect } = child;

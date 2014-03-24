@@ -30,6 +30,7 @@ use style::computed_values::{clear, position};
 use geom::{Point2D, Rect, Size2D};
 use gfx::display_list::{BackgroundAndBorderLevel, BlockLevel, RootOfStackingContextLevel};
 use gfx::display_list::{StackingContext};
+use servo_msg::compositor_msg::LayerId;
 use servo_util::geometry::Au;
 use servo_util::geometry;
 use servo_util::smallvec::{SmallVec, SmallVec0};
@@ -1652,6 +1653,18 @@ impl Flow for BlockFlow {
                 // Border box y coordinate + border top
                 box_.border_box.get().origin + Point2D(box_.border.get().left, box_.border.get().top)}
             None => fail!("Containing Block must have a box")
+        }
+    }
+
+    fn layer_id(&self, fragment_index: uint) -> LayerId {
+        // FIXME(pcwalton): This is a hack and is totally bogus in the presence of pseudo-elements.
+        // But until we have incremental reflow we can't do better--we recreate the flow for every
+        // DOM node so otherwise we nuke layers on every reflow.
+        match self.box_ {
+            Some(ref box_) => {
+                LayerId(box_.node.id(), fragment_index)
+            }
+            None => fail!("can't make a layer ID for a flow with no box"),
         }
     }
 
