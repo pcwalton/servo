@@ -1381,11 +1381,14 @@ impl BlockFlow {
         // If we got here, then we're fixed position. Create a new `RenderLayer`.
         // 
         // FIXME(pcwalton): The color is wrong!
+        let size = Size2D(self.base.position.size.width.to_nearest_px() as uint,
+                          self.base.position.size.height.to_nearest_px() as uint);
+        let origin = Point2D(absolute_cb_abs_position.x.to_nearest_px() as uint,
+                             absolute_cb_abs_position.y.to_nearest_px() as uint);
         let new_layer = RenderLayer {
             id: self.layer_id(0),
             display_list: Arc::new(stacking_context.flatten()),
-            size: Size2D(self.base.position.size.width.to_nearest_px() as uint,
-                         self.base.position.size.height.to_nearest_px() as uint),
+            rect: Rect(origin, size),
             color: color::rgba(255.0, 255.0, 255.0, 255.0),
         };
         builder.layers.push(new_layer)

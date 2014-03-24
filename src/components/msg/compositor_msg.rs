@@ -97,8 +97,8 @@ impl LayerId {
 pub struct LayerMetadata {
     /// An opaque ID. This is usually the address of the flow and index of the box within it.
     id: LayerId,
-    /// The size of the layer in pixels.
-    size: Size2D<uint>,
+    /// The position and size of the layer in pixels.
+    rect: Rect<uint>,
     /// The background color of the layer.
     color: Color,
 }

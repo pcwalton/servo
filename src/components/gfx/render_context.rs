@@ -20,6 +20,7 @@ use servo_util::geometry::Au;
 use servo_util::opts::Opts;
 use std::libc::types::common::c99::uint16_t;
 use std::libc::size_t;
+use std::rand::Rng;
 
 pub struct RenderContext<'a> {
     draw_target: &'a DrawTarget,

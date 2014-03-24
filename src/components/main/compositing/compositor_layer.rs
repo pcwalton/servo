@@ -101,6 +101,22 @@ enum MaybeQuadtree {
     NoTree(uint, Option<uint>),
 }
 
+impl MaybeQuadtree {
+    fn tile_size(&self) -> uint {
+        match *self {
+            Tree(ref quadtree) => quadtree.max_tile_size,
+            NoTree(tile_size, _) => tile_size,
+        }
+    }
+
+    fn max_mem(&self) -> Option<uint> {
+        match *self {
+            Tree(ref quadtree) => quadtree.max_mem,
+            NoTree(_, max_mem) => max_mem,
+        }
+    }
+}
+
 /// Determines the behavior of the layer when a scroll message is recieved.
 enum ScrollBehavior {
     /// Normal scrolling behavior.
@@ -108,6 +124,15 @@ enum ScrollBehavior {
     /// Scrolling messages targeted at this layer are ignored, but can be
     /// passed on to child layers.
     FixedPosition,
+}
+
+fn create_container_layer_from_rect(rect: Rect<f32>) -> Rc<ContainerLayer> {
+    let container = Rc::new(ContainerLayer());
+    container.borrow().scissor.set(Some(rect));
+    container.borrow().common.with_mut(|common| {
+        common.transform = identity().translate(rect.origin.x, rect.origin.y, 0f32);
+    });
+    container
 }
 
 impl CompositorLayer {
@@ -163,16 +188,10 @@ impl CompositorLayer {
 
         layer.children = (children.move_iter().map(|child| {
             let SendableChildFrameTree { frame_tree, rect } = child;
-            let container = Rc::new(ContainerLayer());
-            match rect {
-                Some(rect) => {
-                     container.borrow().scissor.set(Some(rect));
-                     container.borrow().common.with_mut(|common| common.transform = identity().translate(rect.origin.x,
-                                                                                                         rect.origin.y,
-                                                                                                         0f32));
-                }
-                None => {}
-            }
+            let container = match rect {
+                Some(rect) => create_container_layer_from_rect(rect),
+                None => Rc::new(ContainerLayer()),
+            };
 
             let child_layer = ~CompositorLayer::from_frame_tree(frame_tree,
                                                                 tile_size,
@@ -188,6 +207,57 @@ impl CompositorLayer {
         })).collect();
         layer.set_occlusions();
         layer
+    }
+
+    /// Adds a child layer to the layer with the given ID and the given pipeline, if it doesn't
+    /// exist yet. The child layer will have the same pipeline, tile size, memory limit, and CPU
+    /// painting status as its parent.
+    ///
+    /// Returns:
+    ///   * True if the layer was added;
+    ///   * True if the layer was not added because it already existed;
+    ///   * False if the layer could not be added because no suitable parent layer with the given
+    ///     ID and pipeline could be found.
+    pub fn add_child_if_necessary(&mut self,
+                                  pipeline_id: PipelineId,
+                                  parent_layer_id: LayerId,
+                                  child_layer_id: LayerId,
+                                  rect: Rect<f32>)
+                                  -> bool {
+        if self.pipeline.id != pipeline_id || self.id != parent_layer_id {
+            return self.children.mut_iter().any(|kid_holder| {
+                kid_holder.child.add_child_if_necessary(pipeline_id,
+                                                        parent_layer_id,
+                                                        child_layer_id,
+                                                        rect)
+            })
+        }
+
+        // See if we've already made this child layer.
+        for kid_holder in self.children.iter() {
+            if kid_holder.child.pipeline.id == pipeline_id &&
+                    kid_holder.child.id == child_layer_id {
+                return true
+            }
+        }
+
+        println!(">>> making new CHILD compositor layer with ID {} @ {}", child_layer_id, rect);
+        let kid = ~CompositorLayer::new(self.pipeline.clone(),
+                                        child_layer_id,
+                                        Some(rect.size),
+                                        self.quadtree.tile_size(), 
+                                        self.quadtree.max_mem(),
+                                        self.cpu_painting);
+
+        let kid_container = create_container_layer_from_rect(rect);
+        ContainerLayer::add_child_start(kid_container.clone(),
+                                        ContainerLayerKind(kid.root_layer.clone()));
+
+        self.children.push(CompositorLayerChild {
+            child: kid,
+            container: kid_container,
+        });
+        true
     }
 
     // Move the layer by as relative specified amount in page coordinates. Does not change
@@ -705,9 +775,11 @@ impl CompositorLayer {
         }
 
         debug!("compositor_layer: layers found for add_buffers()");
+        println!("add_buffers: found layer: {}", layer_id);
 
         if self.epoch != epoch {
-            debug!("compositor epoch mismatch: {:?} != {:?}, id: {:?}",
+            println!("epoch mismatch!");
+            debug!("add_buffers: compositor epoch mismatch: {:?} != {:?}, id: {:?}",
                    self.epoch,
                    epoch,
                    self.pipeline.id);

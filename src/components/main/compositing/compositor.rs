@@ -115,7 +115,6 @@ pub struct IOCompositor {
 }
 
 impl IOCompositor {
-
     pub fn new(app: &Application,
                opts: Opts,
                port: Port<Msg>,
@@ -258,13 +257,16 @@ impl IOCompositor {
                     chan.send(Some(azure_hl::current_graphics_metadata()));
                 }
 
-                (Some(CreateRootCompositorLayerIfNecessary(pipeline_id,
-                                                           layer_id,
-                                                           size)),
+                (Some(CreateRootCompositorLayerIfNecessary(pipeline_id, layer_id, size)),
                  false) => {
-                    self.create_root_compositor_layer_if_necessary(pipeline_id,
-                                                                   layer_id,
-                                                                   size);
+                    self.create_root_compositor_layer_if_necessary(pipeline_id, layer_id, size);
+                }
+
+                (Some(CreateDescendantCompositorLayerIfNecessary(pipeline_id, layer_id, rect)),
+                 false) => {
+                    self.create_descendant_compositor_layer_if_necessary(pipeline_id,
+                                                                         layer_id,
+                                                                         rect);
                 }
 
                 (Some(SetLayerPageSize(pipeline_id, layer_id, new_size, epoch)), false) => {
@@ -324,8 +326,6 @@ impl IOCompositor {
                new_constellation_chan: ConstellationChan) {
         response_chan.send(());
 
-        println!(">>> compositor got SetIds!");
-
         // This assumes there is at most one child, which should be the case.
         // NOTE: work around borrowchk
         {
@@ -379,7 +379,7 @@ impl IOCompositor {
                                                  self.opts.tile_size,
                                                  Some(MAX_TILE_MEMORY_PER_LAYER),
                                                  self.opts.cpu_painting);
-            println!("making new compositor layer with ID {}", layer_id);
+            println!(">>> making new ROOT compositor layer with ID {}", layer_id);
 
             let old_layer = {
                 let current_child = self.root_layer.borrow().first_child.borrow();
@@ -399,6 +399,23 @@ impl IOCompositor {
                 None => {}
             }
         }
+
+        self.ask_for_tiles();
+    }
+
+    fn create_descendant_compositor_layer_if_necessary(&mut self,
+                                                       pipeline_id: PipelineId,
+                                                       layer_id: LayerId,
+                                                       rect: Rect<f32>) {
+        match self.compositor_layer {
+            Some(ref mut compositor_layer) => {
+                assert!(compositor_layer.add_child_if_necessary(pipeline_id,
+                                                                compositor_layer.id,
+                                                                layer_id,
+                                                                rect))
+            }
+            None => fail!("Compositor: Received new layer without initialized pipeline"),
+        };
 
         self.ask_for_tiles();
     }
@@ -687,7 +704,9 @@ impl IOCompositor {
         for layer in self.compositor_layer.mut_iter() {
             if !layer.hidden {
                 let rect = Rect(Point2D(0f32, 0f32), window_size_page);
-                let recomposite = layer.get_buffer_request(&self.graphics_context, rect, world_zoom) ||
+                let recomposite = layer.get_buffer_request(&self.graphics_context,
+                                                           rect,
+                                                           world_zoom) ||
                                   self.recomposite;
                 self.recomposite = recomposite;
             } else {
@@ -762,44 +781,4 @@ impl IOCompositor {
         self.recomposite = result || self.recomposite;
     }
 }
-
-/*
-/// An association list that stores a mapping from pipelines and layer IDs to the actual layers.
-struct LayerMap {
-    list: ~[(PipelineId, LayerId, Layer)],
-}
-
-impl LayerMap {
-    fn new() -> LayerMap {
-        LayerMap {
-            list: ~[],
-        }
-    }
-
-    fn insert(&mut self, pipeline_id: PipelineId, layer_id: LayerId, layer: Layer) {
-        self.list.push((pipeline_id, layer_id, layer))
-    }
-
-    fn remove(&mut self, pipeline_id: PipelineId, layer_id: LayerId) {
-        let index = match self.list
-                              .iter()
-                              .enumerate()
-                              .find(|&(this_pipeline_id, this_layer_id, _)| {
-            pipeline_id == this_pipeline_id && layer_id == this_layer_id
-        }) {
-            Some((i, _)) => i,
-            None => return,
-        };
-        drop(self.list.remove(i))
-    }
-
-    fn find(&self, pipeline_id: PipelineId, layer_id: LayerId) -> Option<Layer> {
-        match self.list.iter().find(|&(this_pipeline_id, this_layer_id, _)| {
-            pipeline_id == this_pipeline_id && layer_id == this_layer_id
-        }) {
-            None => None,
-            Some(layer) => (*layer).clone(),
-        }
-    }
-}*/
 

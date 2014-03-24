@@ -11,12 +11,9 @@ use gfx;
 use servo_util::smallvec::SmallVec0;
 use style;
 
-/// A builder object that manages display list builder should mainly hold information about the
-/// initial request and desired result--for example, whether the `DisplayList` is to be used for
-/// painting or hit testing. This can affect which boxes are created.
+/// Manages the information needed to construct the display list.
 ///
-/// Right now, the builder isn't used for much, but it establishes the pattern we'll need once we
-/// support display-list-based hit testing and so forth.
+/// FIXME(pcwalton): Throw more information in here instead of threading it around in parameters.
 pub struct DisplayListBuilder<'a> {
     ctx: &'a LayoutContext,
 

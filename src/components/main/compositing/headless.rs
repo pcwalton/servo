@@ -68,7 +68,8 @@ impl NullCompositor {
                 // we'll notice and think about whether it needs a response, like
                 // SetIds.
 
-                CreateRootCompositorLayerIfNecessary(..) | SetLayerPageSize(..) |
+                CreateRootCompositorLayerIfNecessary(..) |
+                CreateDescendantCompositorLayerIfNecessary(..) | SetLayerPageSize(..) |
                 SetLayerClipRect(..) | DeleteLayerGroup(..) | Paint(..) | InvalidateRect(..) |
                 ChangeReadyState(..) | ChangeRenderState(..) | ScrollFragmentPoint(..) |
                 SetUnRenderedColor(..) | LoadComplete(..) => ()

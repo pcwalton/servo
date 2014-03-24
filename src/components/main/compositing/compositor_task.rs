@@ -92,17 +92,23 @@ impl RenderListener for CompositorChan {
                                       pipeline_id: PipelineId,
                                       metadata: ~[LayerMetadata],
                                       epoch: Epoch) {
-        // FIXME(pcwalton): This assumes that the first layer determines the page size.
+        // FIXME(pcwalton): This assumes that the first layer determines the page size, and that
+        // all other layers are immediate children of it. This is sufficient to handle
+        // `position: fixed` but will not be sufficient to handle `overflow: scroll` or transforms.
         let mut first = true;
         for metadata in metadata.iter() {
-            println!(">>> initializing layer {}", metadata.id);
-
-            let size = Size2D(metadata.size.width as f32, metadata.size.height as f32);
+            let origin = Point2D(metadata.rect.origin.x as f32, metadata.rect.origin.y as f32);
+            let size = Size2D(metadata.rect.size.width as f32, metadata.rect.size.height as f32);
+            let rect = Rect(origin, size);
             if first {
                 self.chan.send(CreateRootCompositorLayerIfNecessary(pipeline_id,
                                                                     metadata.id,
                                                                     size));
                 first = false
+            } else {
+                self.chan.send(CreateDescendantCompositorLayerIfNecessary(pipeline_id,
+                                                                          metadata.id,
+                                                                          rect));
             }
 
             self.chan.send(SetUnRenderedColor(pipeline_id, metadata.id, metadata.color));
@@ -160,9 +166,12 @@ pub enum Msg {
     /// The headless compositor returns `None`.
     GetGraphicsMetadata(Chan<Option<NativeGraphicsMetadata>>),
 
-    /// Alerts the compositor that a new pipeline exists and a layer group should be created for
-    /// it.
+    /// Tells the compositor to create the root layer for a pipeline if necessary (i.e. if no layer
+    /// with that ID exists).
     CreateRootCompositorLayerIfNecessary(PipelineId, LayerId, Size2D<f32>),
+    /// Tells the compositor to create a descendant layer for a pipeline if necessary (i.e. if no
+    /// layer with that ID exists).
+    CreateDescendantCompositorLayerIfNecessary(PipelineId, LayerId, Rect<f32>),
     /// Alerts the compositor that the specified layer has changed size.
     SetLayerPageSize(PipelineId, LayerId, Size2D<f32>, Epoch),
     /// Alerts the compositor that the specified layer's clipping rect has changed.

@@ -12,6 +12,7 @@ use render_context::RenderContext;
 use azure::azure_hl::{B8G8R8A8, Color, DrawTarget, StolenGLResources};
 use azure::AzFloat;
 use geom::matrix2d::Matrix2D;
+use geom::point::Point2D;
 use geom::rect::Rect;
 use geom::size::Size2D;
 use layers::platform::surface::{NativePaintingGraphicsContext, NativeSurface};
@@ -22,20 +23,27 @@ use servo_msg::compositor_msg::{LayerMetadata, RenderListener, RenderingRenderSt
 use servo_msg::constellation_msg::{ConstellationChan, PipelineId, RendererReadyMsg};
 use servo_msg::constellation_msg::{Failure, FailureMsg};
 use servo_msg::platform::surface::NativeSurfaceAzureMethods;
+use servo_util::geometry::Au;
 use servo_util::opts::Opts;
 use servo_util::smallvec::{SmallVec, SmallVec1};
 use servo_util::time::{ProfilerChan, profile};
 use servo_util::time;
 use servo_util::task::send_on_failure;
 use std::comm::{Chan, Port, SharedChan};
+use std::rand::Rng;
 use std::task;
 use extra::arc::Arc;
 
+/// Information about a layer that layout sends to the painting task.
 pub struct RenderLayer {
+    /// A per-pipeline ID describing this layer that should be stable across reflows.
     id: LayerId,
+    /// The display list describing the contents of this layer.
     display_list: Arc<DisplayList>,
-    size: Size2D<uint>,
-    color: Color
+    /// The position of the layer in pixels.
+    rect: Rect<uint>,
+    /// The color of the background in this layer. Used for unrendered content.
+    color: Color,
 }
 
 pub enum Msg {
@@ -146,10 +154,9 @@ fn initialize_layers<C:RenderListener>(
                      epoch: Epoch,
                      render_layers: &[RenderLayer]) {
     let metadata = render_layers.iter().map(|render_layer| {
-        println!(">>> renderer initialize_layers got ID {}", render_layer.id);
         LayerMetadata {
             id: render_layer.id,
-            size: render_layer.size,
+            rect: render_layer.rect,
             color: render_layer.color,
         }
     }).collect();
@@ -222,10 +229,6 @@ impl<C: RenderListener + Send> RenderTask<C> {
         loop {
             match self.port.recv() {
                 RenderMsg(render_layers) => {
-                    for layer in render_layers.iter() {
-                        println!(">>> renderer got RenderMsg: {}", layer.id);
-                    }
-
                     if !self.paint_permission {
                         debug!("render_task: render ready msg");
                         self.constellation_chan.send(RendererReadyMsg(self.id));
@@ -253,7 +256,6 @@ impl<C: RenderListener + Send> RenderTask<C> {
                     }
                 }
                 PaintPermissionGranted => {
-                    println!("renderer got PaintPermissionGranted");
                     self.paint_permission = true;
 
                     // Here we assume that the main layer—the layer responsible for the page size—
@@ -288,10 +290,10 @@ impl<C: RenderListener + Send> RenderTask<C> {
         let mut render_layer = None;
         for layer in self.render_layers.iter() {
             println!("render layer ID is {}, this render ID is {}", layer.id, layer_id);
-            //if layer.id == layer_id {
+            if layer.id == layer_id {
                 render_layer = Some(layer);
                 break
-            //}
+            }
         }
         let render_layer = match render_layer {
             Some(render_layer) => render_layer,
@@ -344,7 +346,7 @@ impl<C: RenderListener + Send> RenderTask<C> {
                                                       -(tile.page_rect.origin.y) as AzFloat);
                         
                         ctx.draw_target.set_transform(&matrix);
-                        
+
                         // Clear the buffer.
                         ctx.clear();
                         
