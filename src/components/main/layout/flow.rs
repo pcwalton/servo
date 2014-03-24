@@ -30,7 +30,7 @@ use layout::block::BlockFlow;
 use layout::box_::Box;
 use layout::construct::OptVector;
 use layout::context::LayoutContext;
-use layout::display_list_builder::{DisplayListBuilder, ExtraDisplayListData, ToGfxColor};
+use layout::display_list_builder::{DisplayListBuilder, ToGfxColor};
 use layout::floats::Floats;
 use layout::flow_list::{FlowList, Link, Rawlink, FlowListIterator, MutFlowListIterator};
 use layout::incremental::RestyleDamage;
@@ -268,11 +268,9 @@ pub trait MutableFlowUtils {
     fn store_overflow(self, _: &mut LayoutContext);
 
     /// Builds the display lists for this flow and its descendants.
-    fn build_display_list<'a,
-                          E:ExtraDisplayListData>(
-                          self,
-                          stacking_context: &mut StackingContext<E>,
-                          builder: &mut DisplayListBuilder<'a,E>,
+    fn build_display_list(self,
+                          stacking_context: &mut StackingContext,
+                          builder: &mut DisplayListBuilder,
                           container_block_size: &Size2D<Au>,
                           absolute_cb_abs_position: Point2D<Au>,
                           dirty: &Rect<Au>);
@@ -942,11 +940,9 @@ impl<'a> MutableFlowUtils for &'a mut Flow {
     ///
     /// * `dirty`: The dirty rectangle. Display lists will not be created for blocks that do not
     ///   intersect this rectangle.
-    fn build_display_list<'a,
-                          E:ExtraDisplayListData>(
-                          self,
-                          stacking_context: &mut StackingContext<E>,
-                          builder: &mut DisplayListBuilder<'a,E>,
+    fn build_display_list(self,
+                          stacking_context: &mut StackingContext,
+                          builder: &mut DisplayListBuilder,
                           container_block_size: &Size2D<Au>,
                           absolute_cb_abs_position: Point2D<Au>,
                           dirty: &Rect<Au>) {

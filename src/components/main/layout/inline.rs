@@ -6,7 +6,7 @@ use css::node_style::StyledNode;
 use layout::box_::{Box, CannotSplit, GenericBox, IframeBox, ImageBox, InlineInfo, ScannedTextBox};
 use layout::box_::{SplitDidFit, SplitDidNotFit, UnscannedTextBox};
 use layout::context::LayoutContext;
-use layout::display_list_builder::{DisplayListBuilder, ExtraDisplayListData};
+use layout::display_list_builder::DisplayListBuilder;
 use layout::floats::{FloatLeft, Floats, PlacementInfo};
 use layout::flow::{BaseFlow, FlowClass, Flow, InlineFlowClass};
 use layout::flow;
@@ -481,11 +481,9 @@ impl InlineFlow {
         self.boxes = ~[];
     }
 
-    pub fn build_display_list_inline<'a,
-                                     E:ExtraDisplayListData>(
-                                     &self,
-                                     stacking_context: &mut StackingContext<E>,
-                                     builder: &DisplayListBuilder<'a,E>,
+    pub fn build_display_list_inline(&self,
+                                     stacking_context: &mut StackingContext,
+                                     builder: &DisplayListBuilder,
                                      container_block_size: &Size2D<Au>,
                                      dirty: &Rect<Au>) {
         let abs_rect = Rect(self.base.abs_position, self.base.position.size);

@@ -4,32 +4,12 @@
 
 //! Constructs display lists from boxes.
 
-use layout::box_::Box;
 use layout::context::LayoutContext;
-use layout::util::OpaqueNode;
 
 use gfx::render_task::RenderLayer;
 use gfx;
 use servo_util::smallvec::SmallVec0;
 use style;
-
-pub trait ExtraDisplayListData {
-    fn new(box_: &Box) -> Self;
-}
-
-pub type Nothing = ();
-
-impl ExtraDisplayListData for OpaqueNode {
-    fn new(box_: &Box) -> OpaqueNode {
-        box_.node
-    }
-}
-
-impl ExtraDisplayListData for Nothing {
-    fn new(_: &Box) -> Nothing {
-        ()
-    }
-}
 
 /// A builder object that manages display list builder should mainly hold information about the
 /// initial request and desired result--for example, whether the `DisplayList` is to be used for
@@ -37,11 +17,11 @@ impl ExtraDisplayListData for Nothing {
 ///
 /// Right now, the builder isn't used for much, but it establishes the pattern we'll need once we
 /// support display-list-based hit testing and so forth.
-pub struct DisplayListBuilder<'a,E> {
+pub struct DisplayListBuilder<'a> {
     ctx: &'a LayoutContext,
 
     /// A list of render layers that we've built up, root layer not included.
-    layers: SmallVec0<RenderLayer<E>>,
+    layers: SmallVec0<RenderLayer>,
 }
 
 //

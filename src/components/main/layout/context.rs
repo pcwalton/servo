@@ -5,11 +5,11 @@
 //! Data needed by the layout task.
 
 use css::matching::{ApplicableDeclarationsCache, StyleSharingCandidateCache};
-use layout::util::OpaqueNode;
 
 use extra::arc::{Arc, MutexArc};
 use extra::url::Url;
 use geom::size::Size2D;
+use gfx::display_list::OpaqueNode;
 use gfx::font_context::{FontContext, FontContextInfo};
 use green::task::GreenTask;
 use script::layout_interface::LayoutChan;

@@ -25,33 +25,53 @@ use servo_util::geometry::Au;
 use servo_util::range::Range;
 use servo_util::smallvec::{SmallVec, SmallVec0, SmallVecIterator};
 use std::cast::transmute_region;
+use std::cast;
+use std::libc::uintptr_t;
 use std::util;
 use std::vec::VecIterator;
 use style::computed_values::border_style;
 
+/// An opaque handle to a node. The only safe operation that can be performed on this node is to
+/// compare it to another opaque handle or to another node.
+///
+/// Because the script task's GC does not trace layout, node data cannot be safely stored in layout
+/// data structures. Also, layout code tends to be faster when the DOM is not being accessed, for
+/// locality reasons. Using `OpaqueNode` enforces this invariant.
+#[deriving(Clone, Eq)]
+pub struct OpaqueNode(uintptr_t);
+
+impl OpaqueNode {
+    /// Returns the address of this node, for debugging purposes.
+    pub fn id(&self) -> uintptr_t {
+        unsafe {
+            cast::transmute_copy(self)
+        }
+    }
+}
+
 /// A stacking context. See CSS 2.1 § E.2. "Steps" below refer to steps in that specification.
 ///
 /// TODO(pcwalton): Outlines.
-pub struct StackingContext<E> {
+pub struct StackingContext {
     /// The border and backgrounds for the root of this stacking context: steps 1 and 2.
-    background_and_borders: DisplayList<E>,
+    background_and_borders: DisplayList,
     /// Borders and backgrounds for block-level descendants: step 4.
-    block_backgrounds_and_borders: DisplayList<E>,
+    block_backgrounds_and_borders: DisplayList,
     /// Floats: step 5. These are treated as pseudo-stacking contexts.
-    floats: DisplayList<E>,
+    floats: DisplayList,
     /// All other content.
-    content: DisplayList<E>,
+    content: DisplayList,
 
     /// Positioned descendant stacking contexts, along with their `z-index` levels.
     ///
     /// TODO(pcwalton): `z-index` should be the actual CSS property value in order to handle
     /// `auto`, not just an integer. In this case we should store an actual stacking context, not
     /// a flattened display list.
-    positioned_descendants: SmallVec0<(int, DisplayList<E>)>,
+    positioned_descendants: SmallVec0<(int, DisplayList)>,
 }
 
-impl<E> StackingContext<E> {
-    pub fn new() -> StackingContext<E> {
+impl StackingContext {
+    pub fn new() -> StackingContext {
         StackingContext {
             background_and_borders: DisplayList::new(),
             block_backgrounds_and_borders: DisplayList::new(),
@@ -64,7 +84,7 @@ impl<E> StackingContext<E> {
     pub fn list_for_background_and_border_level<'a>(
                                                 &'a mut self,
                                                 level: BackgroundAndBorderLevel)
-                                                -> &'a mut DisplayList<E> {
+                                                -> &'a mut DisplayList {
         match level {
             RootOfStackingContextLevel => &mut self.background_and_borders,
             BlockLevel => &mut self.block_backgrounds_and_borders,
@@ -73,7 +93,7 @@ impl<E> StackingContext<E> {
     }
 
     /// Flattens a stacking context into a display list according to the steps in CSS 2.1 § E.2.
-    pub fn flatten(mut self) -> DisplayList<E> {
+    pub fn flatten(mut self) -> DisplayList {
         // Steps 1 and 2: Borders and background for the root.
         let StackingContext {
             background_and_borders: mut result,
@@ -124,18 +144,18 @@ pub enum BackgroundAndBorderLevel {
 }
 
 /// A list of rendering operations to be performed.
-pub struct DisplayList<E> {
-    list: SmallVec0<DisplayItem<E>>,
+pub struct DisplayList {
+    list: SmallVec0<DisplayItem>,
 }
 
-pub enum DisplayListIterator<'a,E> {
+pub enum DisplayListIterator<'a> {
     EmptyDisplayListIterator,
-    ParentDisplayListIterator(VecIterator<'a,DisplayList<E>>),
+    ParentDisplayListIterator(VecIterator<'a,DisplayList>),
 }
 
-impl<'a,E> Iterator<&'a DisplayList<E>> for DisplayListIterator<'a,E> {
+impl<'a> Iterator<&'a DisplayList> for DisplayListIterator<'a> {
     #[inline]
-    fn next(&mut self) -> Option<&'a DisplayList<E>> {
+    fn next(&mut self) -> Option<&'a DisplayList> {
         match *self {
             EmptyDisplayListIterator => None,
             ParentDisplayListIterator(ref mut subiterator) => subiterator.next(),
@@ -143,9 +163,9 @@ impl<'a,E> Iterator<&'a DisplayList<E>> for DisplayListIterator<'a,E> {
     }
 }
 
-impl<E> DisplayList<E> {
+impl DisplayList {
     /// Creates a new display list.
-    pub fn new() -> DisplayList<E> {
+    pub fn new() -> DisplayList {
         DisplayList {
             list: SmallVec0::new(),
         }
@@ -158,13 +178,13 @@ impl<E> DisplayList<E> {
     }
 
     /// Appends the given item to the display list.
-    pub fn push(&mut self, item: DisplayItem<E>) {
+    pub fn push(&mut self, item: DisplayItem) {
         self.list.push(item)
     }
 
     /// Appends the given display list to this display list, consuming the other display list in
     /// the process.
-    pub fn push_all_move(&mut self, other: DisplayList<E>) {
+    pub fn push_all_move(&mut self, other: DisplayList) {
         self.list.push_all_move(other.list)
     }
 
@@ -178,42 +198,42 @@ impl<E> DisplayList<E> {
     }
 
     /// Returns a preorder iterator over the given display list.
-    pub fn iter<'a>(&'a self) -> DisplayItemIterator<'a,E> {
+    pub fn iter<'a>(&'a self) -> DisplayItemIterator<'a> {
         ParentDisplayItemIterator(self.list.iter())
     }
 }
 
 /// One drawing command in the list.
-pub enum DisplayItem<E> {
-    SolidColorDisplayItemClass(~SolidColorDisplayItem<E>),
-    TextDisplayItemClass(~TextDisplayItem<E>),
-    ImageDisplayItemClass(~ImageDisplayItem<E>),
-    BorderDisplayItemClass(~BorderDisplayItem<E>),
-    LineDisplayItemClass(~LineDisplayItem<E>),
-    ClipDisplayItemClass(~ClipDisplayItem<E>)
+pub enum DisplayItem {
+    SolidColorDisplayItemClass(~SolidColorDisplayItem),
+    TextDisplayItemClass(~TextDisplayItem),
+    ImageDisplayItemClass(~ImageDisplayItem),
+    BorderDisplayItemClass(~BorderDisplayItem),
+    LineDisplayItemClass(~LineDisplayItem),
+    ClipDisplayItemClass(~ClipDisplayItem)
 }
 
 /// Information common to all display items.
-pub struct BaseDisplayItem<E> {
+pub struct BaseDisplayItem {
     /// The boundaries of the display item.
     ///
     /// TODO: Which coordinate system should this use?
     bounds: Rect<Au>,
 
-    /// Extra data: either the originating flow (for hit testing) or nothing (for rendering).
-    extra: E,
+    /// The originating DOM node.
+    node: OpaqueNode,
 }
 
 /// Renders a solid color.
-pub struct SolidColorDisplayItem<E> {
-    base: BaseDisplayItem<E>,
+pub struct SolidColorDisplayItem {
+    base: BaseDisplayItem,
     color: Color,
 }
 
 /// Renders text.
-pub struct TextDisplayItem<E> {
+pub struct TextDisplayItem {
     /// Fields common to all display items.
-    base: BaseDisplayItem<E>,
+    base: BaseDisplayItem,
 
     /// The text run.
     text_run: Arc<~TextRun>,
@@ -250,8 +270,8 @@ bitfield!(TextDisplayItemFlags, override_overline, set_override_overline, 0x02)
 bitfield!(TextDisplayItemFlags, override_line_through, set_override_line_through, 0x04)
 
 /// Renders an image.
-pub struct ImageDisplayItem<E> {
-    base: BaseDisplayItem<E>,
+pub struct ImageDisplayItem {
+    base: BaseDisplayItem,
     image: Arc<~Image>,
 
     /// The dimensions to which the image display item should be stretched. If this is smaller than
@@ -261,8 +281,8 @@ pub struct ImageDisplayItem<E> {
 }
 
 /// Renders a border.
-pub struct BorderDisplayItem<E> {
-    base: BaseDisplayItem<E>,
+pub struct BorderDisplayItem {
+    base: BaseDisplayItem,
 
     /// The border widths
     border: SideOffsets2D<Au>,
@@ -275,8 +295,8 @@ pub struct BorderDisplayItem<E> {
 }
 
 /// Renders a line segment
-pub struct LineDisplayItem<E> {
-    base: BaseDisplayItem<E>,
+pub struct LineDisplayItem {
+    base: BaseDisplayItem,
 
     /// The line segment color.
     color: Color,
@@ -285,20 +305,20 @@ pub struct LineDisplayItem<E> {
     style: border_style::T
 }
 
-pub struct ClipDisplayItem<E> {
-    base: BaseDisplayItem<E>,
-    child_list: SmallVec0<DisplayItem<E>>,
+pub struct ClipDisplayItem {
+    base: BaseDisplayItem,
+    child_list: SmallVec0<DisplayItem>,
     need_clip: bool
 }
 
-pub enum DisplayItemIterator<'a,E> {
+pub enum DisplayItemIterator<'a> {
     EmptyDisplayItemIterator,
-    ParentDisplayItemIterator(SmallVecIterator<'a,DisplayItem<E>>),
+    ParentDisplayItemIterator(SmallVecIterator<'a,DisplayItem>),
 }
 
-impl<'a,E> Iterator<&'a DisplayItem<E>> for DisplayItemIterator<'a,E> {
+impl<'a> Iterator<&'a DisplayItem> for DisplayItemIterator<'a> {
     #[inline]
-    fn next(&mut self) -> Option<&'a DisplayItem<E>> {
+    fn next(&mut self) -> Option<&'a DisplayItem> {
         match *self {
             EmptyDisplayItemIterator => None,
             ParentDisplayItemIterator(ref mut subiterator) => subiterator.next(),
@@ -306,7 +326,7 @@ impl<'a,E> Iterator<&'a DisplayItem<E>> for DisplayItemIterator<'a,E> {
     }
 }
 
-impl<E> DisplayItem<E> {
+impl DisplayItem {
     /// Renders this display item into the given render context.
     fn draw_into_context(&self, render_context: &mut RenderContext) {
         match *self {
@@ -406,7 +426,7 @@ impl<E> DisplayItem<E> {
         }
     }
 
-    pub fn base<'a>(&'a self) -> &'a BaseDisplayItem<E> {
+    pub fn base<'a>(&'a self) -> &'a BaseDisplayItem {
         // FIXME(tkuehn): Workaround for Rust region bug.
         unsafe {
             match *self {
@@ -424,7 +444,7 @@ impl<E> DisplayItem<E> {
         self.base().bounds
     }
 
-    pub fn children<'a>(&'a self) -> DisplayItemIterator<'a,E> {
+    pub fn children<'a>(&'a self) -> DisplayItemIterator<'a> {
         match *self {
             ClipDisplayItemClass(ref clip) => ParentDisplayItemIterator(clip.child_list.iter()),
             SolidColorDisplayItemClass(..) |

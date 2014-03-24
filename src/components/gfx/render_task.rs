@@ -31,15 +31,15 @@ use std::comm::{Chan, Port, SharedChan};
 use std::task;
 use extra::arc::Arc;
 
-pub struct RenderLayer<T> {
+pub struct RenderLayer {
     id: LayerId,
-    display_list: Arc<DisplayList<T>>,
+    display_list: Arc<DisplayList>,
     size: Size2D<uint>,
     color: Color
 }
 
-pub enum Msg<T> {
-    RenderMsg(SmallVec1<RenderLayer<T>>),
+pub enum Msg {
+    RenderMsg(SmallVec1<RenderLayer>),
     ReRenderMsg(~[BufferRequest], f32, LayerId, Epoch),
     UnusedBufferMsg(~[~LayerBuffer]),
     PaintPermissionGranted,
@@ -64,22 +64,21 @@ pub fn BufferRequest(screen_rect: Rect<uint>, page_rect: Rect<f32>) -> BufferReq
     }
 }
 
-// FIXME(rust#9155): this should be a newtype struct, but
-// generic newtypes ICE when compiled cross-crate
-pub struct RenderChan<T> {
-    chan: SharedChan<Msg<T>>,
+// FIXME(pcwalton): This should be a newtype struct.
+pub struct RenderChan {
+    chan: SharedChan<Msg>,
 }
 
-impl<T: Send> Clone for RenderChan<T> {
-    fn clone(&self) -> RenderChan<T> {
+impl Clone for RenderChan {
+    fn clone(&self) -> RenderChan {
         RenderChan {
             chan: self.chan.clone(),
         }
     }
 }
 
-impl<T: Send> RenderChan<T> {
-    pub fn new() -> (Port<Msg<T>>, RenderChan<T>) {
+impl RenderChan {
+    pub fn new() -> (Port<Msg>, RenderChan) {
         let (port, chan) = SharedChan::new();
         let render_chan = RenderChan {
             chan: chan,
@@ -87,11 +86,11 @@ impl<T: Send> RenderChan<T> {
         (port, render_chan)
     }
 
-    pub fn send(&self, msg: Msg<T>) {
+    pub fn send(&self, msg: Msg) {
         assert!(self.try_send(msg), "RenderChan.send: render port closed")
     }
 
-    pub fn try_send(&self, msg: Msg<T>) -> bool {
+    pub fn try_send(&self, msg: Msg) -> bool {
         self.chan.try_send(msg)
     }
 }
@@ -103,9 +102,9 @@ enum GraphicsContext {
     GpuGraphicsContext,
 }
 
-pub struct RenderTask<C,T> {
+pub struct RenderTask<C> {
     id: PipelineId,
-    port: Port<Msg<T>>,
+    port: Port<Msg>,
     compositor: C,
     constellation_chan: ConstellationChan,
     font_ctx: ~FontContext,
@@ -121,7 +120,7 @@ pub struct RenderTask<C,T> {
     native_graphics_context: Option<NativePaintingGraphicsContext>,
 
     /// The layers to be rendered.
-    render_layers: SmallVec1<RenderLayer<T>>,
+    render_layers: SmallVec1<RenderLayer>,
 
     /// Permission to send paint messages to the compositor
     paint_permission: bool,
@@ -141,12 +140,11 @@ macro_rules! native_graphics_context(
     )
 )
 
-fn initialize_layers<C:RenderListener,
-                     E>(
+fn initialize_layers<C:RenderListener>(
                      compositor: &mut C,
                      pipeline_id: PipelineId,
                      epoch: Epoch,
-                     render_layers: &[RenderLayer<E>]) {
+                     render_layers: &[RenderLayer]) {
     let metadata = render_layers.iter().map(|render_layer| {
         println!(">>> renderer initialize_layers got ID {}", render_layer.id);
         LayerMetadata {
@@ -158,9 +156,9 @@ fn initialize_layers<C:RenderListener,
     compositor.initialize_layers_for_pipeline(pipeline_id, metadata, epoch);
 }
 
-impl<C: RenderListener + Send,T:Send+Freeze> RenderTask<C,T> {
+impl<C: RenderListener + Send> RenderTask<C> {
     pub fn create(id: PipelineId,
-                  port: Port<Msg<T>>,
+                  port: Port<Msg>,
                   compositor: C,
                   constellation_chan: ConstellationChan,
                   failure_msg: Failure,

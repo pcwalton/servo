@@ -8,6 +8,7 @@ use layout::parallel::DomParallelInfo;
 use layout::wrapper::{LayoutNode, TLayoutNode, ThreadSafeLayoutNode};
 
 use extra::arc::Arc;
+use gfx::display_list::OpaqueNode;
 use script::dom::bindings::js::JS;
 use script::dom::bindings::utils::Reflectable;
 use script::dom::node::Node;
@@ -200,25 +201,32 @@ impl<'ln> LayoutDataAccess for LayoutNode<'ln> {
     }
 }
 
-/// An opaque handle to a node. The only safe operation that can be performed on this node is to
-/// compare it to another opaque handle or to another node.
-///
-/// Because the script task's GC does not trace layout, node data cannot be safely stored in layout
-/// data structures. Also, layout code tends to be faster when the DOM is not being accessed, for
-/// locality reasons. Using `OpaqueNode` enforces this invariant.
-#[deriving(Clone, Eq)]
-pub struct OpaqueNode(uintptr_t);
-
-impl OpaqueNode {
+pub trait OpaqueNodeMethods {
     /// Converts a DOM node (layout view) to an `OpaqueNode`.
-    pub fn from_layout_node(node: &LayoutNode) -> OpaqueNode {
+    fn from_layout_node(node: &LayoutNode) -> Self;
+
+    /// Converts a thread-safe DOM node (layout view) to an `OpaqueNode`.
+    fn from_thread_safe_layout_node(node: &ThreadSafeLayoutNode) -> Self;
+
+    /// Converts a DOM node (script view) to an `OpaqueNode`.
+    fn from_script_node(node: TrustedNodeAddress) -> Self;
+
+    /// Converts a DOM node to an `OpaqueNode'.
+    fn from_jsmanaged(node: &JS<Node>) -> Self;
+
+    /// Converts this node to an `UntrustedNodeAddress`. An `UntrustedNodeAddress` is just the type
+    /// of node that script expects to receive in a hit test.
+    fn to_untrusted_node_address(&self) -> UntrustedNodeAddress;
+}
+
+impl OpaqueNodeMethods for OpaqueNode {
+    fn from_layout_node(node: &LayoutNode) -> OpaqueNode {
         unsafe {
-            OpaqueNode::from_jsmanaged(node.get_jsmanaged())
+            OpaqueNodeMethods::from_jsmanaged(node.get_jsmanaged())
         }
     }
 
-    /// Converts a thread-safe DOM node (layout view) to an `OpaqueNode`.
-    pub fn from_thread_safe_layout_node(node: &ThreadSafeLayoutNode) -> OpaqueNode {
+    fn from_thread_safe_layout_node(node: &ThreadSafeLayoutNode) -> OpaqueNode {
         unsafe {
             let abstract_node = node.get_jsmanaged();
             let ptr: uintptr_t = cast::transmute(abstract_node.reflector().get_jsobject());
@@ -226,14 +234,12 @@ impl OpaqueNode {
         }
     }
 
-    /// Converts a DOM node (script view) to an `OpaqueNode`.
-    pub fn from_script_node(node: TrustedNodeAddress) -> OpaqueNode {
+    fn from_script_node(node: TrustedNodeAddress) -> OpaqueNode {
         unsafe {
-            OpaqueNode::from_jsmanaged(&JS::from_trusted_node_address(node))
+            OpaqueNodeMethods::from_jsmanaged(&JS::from_trusted_node_address(node))
         }
     }
 
-    /// Converts a DOM node to an `OpaqueNode'.
     fn from_jsmanaged(node: &JS<Node>) -> OpaqueNode {
         unsafe {
             let ptr: uintptr_t = cast::transmute(node.reflector().get_jsobject());
@@ -241,9 +247,7 @@ impl OpaqueNode {
         }
     }
 
-    /// Converts this node to an `UntrustedNodeAddress`. An `UntrustedNodeAddress` is just the type
-    /// of node that script expects to receive in a hit test.
-    pub fn to_untrusted_node_address(&self) -> UntrustedNodeAddress {
+    fn to_untrusted_node_address(&self) -> UntrustedNodeAddress {
         unsafe {
             let OpaqueNode(addr) = *self;
             let addr: UntrustedNodeAddress = cast::transmute(addr);
@@ -251,11 +255,5 @@ impl OpaqueNode {
         }
     }
 
-    /// Returns the address of this node, for debugging purposes.
-    pub fn id(&self) -> uintptr_t {
-        unsafe {
-            cast::transmute_copy(self)
-        }
-    }
 }
 

@@ -18,7 +18,7 @@ use layout::flow;
 use layout::incremental::RestyleDamage;
 use layout::parallel::PaddedUnsafeFlow;
 use layout::parallel;
-use layout::util::{LayoutDataAccess, OpaqueNode, LayoutDataWrapper};
+use layout::util::{LayoutDataAccess, LayoutDataWrapper, OpaqueNodeMethods};
 use layout::wrapper::{LayoutNode, TLayoutNode, ThreadSafeLayoutNode};
 
 use extra::url::Url;
@@ -26,8 +26,8 @@ use extra::arc::{Arc, MutexArc};
 use geom::point::Point2D;
 use geom::rect::Rect;
 use geom::size::Size2D;
-use gfx::display_list::{ClipDisplayItemClass, DisplayItem, DisplayItemIterator};
-use gfx::display_list::{DisplayList, StackingContext};
+use gfx::display_list::{ClipDisplayItemClass, DisplayItem, DisplayItemIterator, DisplayList};
+use gfx::display_list::{OpaqueNode, StackingContext};
 use gfx::font_context::{FontContext, FontContextInfo};
 use gfx::render_task::{RenderMsg, RenderChan, RenderLayer};
 use gfx::{render_task, color};
@@ -80,7 +80,7 @@ pub struct LayoutTask {
     script_chan: ScriptChan,
 
     /// The channel on which messages can be sent to the painting task.
-    render_chan: RenderChan<OpaqueNode>,
+    render_chan: RenderChan,
 
     /// The channel on which messages can be sent to the image cache.
     image_cache_task: ImageCacheTask,
@@ -92,7 +92,7 @@ pub struct LayoutTask {
     screen_size: Size2D<Au>,
 
     /// A cached display list.
-    display_list: Option<Arc<DisplayList<OpaqueNode>>>,
+    display_list: Option<Arc<DisplayList>>,
 
     stylist: ~Stylist,
 
@@ -251,7 +251,7 @@ impl LayoutTask {
                   constellation_chan: ConstellationChan,
                   failure_msg: Failure,
                   script_chan: ScriptChan,
-                  render_chan: RenderChan<OpaqueNode>,
+                  render_chan: RenderChan,
                   img_cache_task: ImageCacheTask,
                   opts: Opts,
                   profiler_chan: ProfilerChan,
@@ -282,7 +282,7 @@ impl LayoutTask {
            chan: LayoutChan,
            constellation_chan: ConstellationChan,
            script_chan: ScriptChan,
-           render_chan: RenderChan<OpaqueNode>,
+           render_chan: RenderChan,
            image_cache_task: ImageCacheTask,
            opts: &Opts,
            profiler_chan: ProfilerChan)
@@ -339,7 +339,7 @@ impl LayoutTask {
             stylist: &*self.stylist,
             initial_css_values: self.initial_css_values.clone(),
             url: (*url).clone(),
-            reflow_root: OpaqueNode::from_layout_node(reflow_root),
+            reflow_root: OpaqueNodeMethods::from_layout_node(reflow_root),
             opts: self.opts.clone(),
         }
     }
@@ -714,15 +714,14 @@ impl LayoutTask {
             // The neat thing here is that in order to answer the following two queries we only
             // need to compare nodes for equality. Thus we can safely work only with `OpaqueNode`.
             ContentBoxQuery(node, reply_chan) => {
-                let node = OpaqueNode::from_script_node(node);
+                let node: OpaqueNode = OpaqueNodeMethods::from_script_node(node);
 
-                fn union_boxes_for_node<'a>(
-                                        accumulator: &mut Option<Rect<Au>>,
-                                        mut iter: DisplayItemIterator<'a,OpaqueNode>,
+                fn union_boxes_for_node(accumulator: &mut Option<Rect<Au>>,
+                                        mut iter: DisplayItemIterator,
                                         node: OpaqueNode) {
                     for item in iter {
                         union_boxes_for_node(accumulator, item.children(), node);
-                        if item.base().extra == node {
+                        if item.base().node == node {
                             match *accumulator {
                                 None => *accumulator = Some(item.base().bounds),
                                 Some(ref mut acc) => *acc = acc.union(&item.base().bounds),
@@ -741,15 +740,14 @@ impl LayoutTask {
                 reply_chan.send(ContentBoxResponse(rect.unwrap_or(Au::zero_rect())))
             }
             ContentBoxesQuery(node, reply_chan) => {
-                let node = OpaqueNode::from_script_node(node);
+                let node: OpaqueNode = OpaqueNodeMethods::from_script_node(node);
 
-                fn add_boxes_for_node<'a>(
-                                      accumulator: &mut ~[Rect<Au>],
-                                      mut iter: DisplayItemIterator<'a,OpaqueNode>,
+                fn add_boxes_for_node(accumulator: &mut ~[Rect<Au>],
+                                      mut iter: DisplayItemIterator,
                                       node: OpaqueNode) {
                     for item in iter {
                         add_boxes_for_node(accumulator, item.children(), node);
-                        if item.base().extra == node {
+                        if item.base().node == node {
                             accumulator.push(item.base().bounds)
                         }
                     }
@@ -765,7 +763,7 @@ impl LayoutTask {
                 reply_chan.send(ContentBoxesResponse(boxes))
             }
             HitTestQuery(_, point, reply_chan) => {
-                fn hit_test(x: Au, y: Au, list: &[DisplayItem<OpaqueNode>])
+                fn hit_test(x: Au, y: Au, list: &[DisplayItem])
                             -> Option<HitTestResponse> {
                     for item in list.rev_iter() {
                         match *item {
@@ -796,7 +794,7 @@ impl LayoutTask {
                                 y < bounds.origin.y + bounds.size.height &&
                                 bounds.origin.y <= y {
                             return Some(HitTestResponse(item.base()
-                                                            .extra
+                                                            .node
                                                             .to_untrusted_node_address()))
                         }
                     }
@@ -819,7 +817,7 @@ impl LayoutTask {
             MouseOverQuery(_, point, reply_chan) => {
                 fn mouse_over_test(x: Au,
                                    y: Au,
-                                   list: &[DisplayItem<OpaqueNode>],
+                                   list: &[DisplayItem],
                                    result: &mut ~[UntrustedNodeAddress]) {
                     for item in list.rev_iter() {
                         match *item {
@@ -840,7 +838,7 @@ impl LayoutTask {
                                 y < bounds.origin.y + bounds.size.height &&
                                 bounds.origin.y <= y {
                             result.push(item.base()
-                                            .extra
+                                            .node
                                             .to_untrusted_node_address());
                         }
                     }

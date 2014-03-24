@@ -32,9 +32,10 @@ use layout::flow::{Descendants, AbsDescendants, FixedDescendants};
 use layout::flow_list::{Rawlink};
 use layout::inline::InlineFlow;
 use layout::text::TextRunScanner;
-use layout::util::{LayoutDataAccess, OpaqueNode};
+use layout::util::{LayoutDataAccess, OpaqueNodeMethods};
 use layout::wrapper::{PostorderNodeMutTraversal, TLayoutNode, ThreadSafeLayoutNode};
 
+use gfx::display_list::OpaqueNode;
 use gfx::font_context::FontContext;
 use script::dom::bindings::codegen::InheritTypes::TextCast;
 use script::dom::bindings::js::JS;
@@ -651,7 +652,7 @@ impl<'a> FlowConstructor<'a> {
                         style: parent_box.style.clone(),
                         font_ascent: font_ascent,
                         font_descent: font_descent,
-                        node: OpaqueNode::from_thread_safe_layout_node(parent_node),
+                        node: OpaqueNodeMethods::from_thread_safe_layout_node(parent_node),
                     })
                 },
                 &None => {}
@@ -670,7 +671,7 @@ impl<'a> FlowConstructor<'a> {
         //
         // FIXME(pcwalton): Don't do this if there's padding or borders.
         if node.is_ignorable_whitespace() {
-            let opaque_node = OpaqueNode::from_thread_safe_layout_node(node);
+            let opaque_node = OpaqueNodeMethods::from_thread_safe_layout_node(node);
             return ConstructionItemConstructionResult(WhitespaceConstructionItem(
                 opaque_node,
                 node.style().clone()))

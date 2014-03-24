@@ -7,13 +7,13 @@
 use css::node_style::StyledNode;
 use layout::construct::FlowConstructor;
 use layout::context::LayoutContext;
-use layout::display_list_builder::{DisplayListBuilder, ExtraDisplayListData, ToGfxColor};
+use layout::display_list_builder::{DisplayListBuilder, ToGfxColor};
 use layout::floats::{ClearBoth, ClearLeft, ClearRight, ClearType};
 use layout::flow::{Flow, FlowFlagsInfo};
 use layout::flow;
 use layout::model::{Auto, IntrinsicWidths, MaybeAuto, Specified, specified};
 use layout::model;
-use layout::util::OpaqueNode;
+use layout::util::OpaqueNodeMethods;
 use layout::wrapper::{TLayoutNode, ThreadSafeLayoutNode};
 
 use extra::url::Url;
@@ -23,9 +23,9 @@ use gfx::color::rgb;
 use gfx::display_list::{BackgroundAndBorderLevel, BaseDisplayItem, BorderDisplayItem};
 use gfx::display_list::{BorderDisplayItemClass, ClipDisplayItem, ClipDisplayItemClass};
 use gfx::display_list::{DisplayList, ImageDisplayItem, ImageDisplayItemClass, LineDisplayItem};
-use gfx::display_list::{LineDisplayItemClass, SolidColorDisplayItem, SolidColorDisplayItemClass};
-use gfx::display_list::{StackingContext, TextDisplayItem, TextDisplayItemClass};
-use gfx::display_list::{TextDisplayItemFlags};
+use gfx::display_list::{LineDisplayItemClass, OpaqueNode, SolidColorDisplayItem};
+use gfx::display_list::{SolidColorDisplayItemClass, StackingContext, TextDisplayItem};
+use gfx::display_list::{TextDisplayItemClass, TextDisplayItemFlags};
 use gfx::font::FontStyle;
 use gfx::text::text_run::TextRun;
 use servo_msg::constellation_msg::{FrameRectMsg, PipelineId, SubpageId};
@@ -415,7 +415,7 @@ impl Box {
                sub_box_kind: SubBoxKind)
                -> Box {
         Box {
-            node: OpaqueNode::from_thread_safe_layout_node(node),
+            node: OpaqueNodeMethods::from_thread_safe_layout_node(node),
             style: node.style().clone(),
             border_box: RefCell::new(Au::zero_rect()),
             border: RefCell::new(Zero::zero()),
@@ -832,9 +832,8 @@ impl Box {
         (Au::new(0), Au::new(0))
     }
 
-    pub fn paint_inline_background_border_if_applicable<E:ExtraDisplayListData>(
-                                                        &self,
-                                                        list: &mut DisplayList<E>,
+    pub fn paint_inline_background_border_if_applicable(&self,
+                                                        list: &mut DisplayList,
                                                         absolute_bounds: &Rect<Au>,
                                                         offset: &Point2D<Au>) {
         // FIXME: This causes a lot of background colors to be displayed when they are clearly not
@@ -856,7 +855,7 @@ impl Box {
                         let solid_color_display_item = ~SolidColorDisplayItem {
                             base: BaseDisplayItem {
                                       bounds: bg_rect.clone(),
-                                      extra: ExtraDisplayListData::new(self),
+                                      node: self.node,
                                   },
                                   color: background_color.to_gfx_color(),
                         };
@@ -887,7 +886,7 @@ impl Box {
                     let border_display_item = ~BorderDisplayItem {
                         base: BaseDisplayItem {
                             bounds: bg_rect,
-                            extra: ExtraDisplayListData::new(self),
+                            node: self.node,
                         },
                         border: border.clone(),
                         color: SideOffsets2D::new(top_color.to_gfx_color(),
@@ -908,11 +907,9 @@ impl Box {
     }
     /// Adds the display items necessary to paint the background of this box to the display list if
     /// necessary.
-    pub fn paint_background_if_applicable<'a,
-                                          E:ExtraDisplayListData>(
-                                          &self,
-                                          list: &mut DisplayList<E>,
-                                          builder: &DisplayListBuilder<'a,E>,
+    pub fn paint_background_if_applicable(&self,
+                                          list: &mut DisplayList,
+                                          builder: &DisplayListBuilder,
                                           absolute_bounds: &Rect<Au>) {
         // FIXME: This causes a lot of background colors to be displayed when they are clearly not
         // needed. We could use display list optimization to clean this up, but it still seems
@@ -924,7 +921,7 @@ impl Box {
             let display_item = ~SolidColorDisplayItem {
                 base: BaseDisplayItem {
                     bounds: *absolute_bounds,
-                    extra: ExtraDisplayListData::new(self),
+                    node: self.node,
                 },
                 color: background_color.to_gfx_color(),
             };
@@ -965,7 +962,7 @@ impl Box {
                                 clip_display_item = Some(~ClipDisplayItem {
                                     base: BaseDisplayItem {
                                         bounds: bounds,
-                                        extra: ExtraDisplayListData::new(self),
+                                        node: self.node,
                                     },
                                     child_list: SmallVec0::new(),
                                     need_clip: true,
@@ -998,7 +995,7 @@ impl Box {
                         let image_display_item = ImageDisplayItemClass(~ImageDisplayItem {
                             base: BaseDisplayItem {
                                 bounds: bounds,
-                                extra: ExtraDisplayListData::new(self),
+                                node: self.node,
                             },
                             image: image.clone(),
                             stretch_size: Size2D(Au::from_px(image.get().width as int),
@@ -1027,10 +1024,7 @@ impl Box {
 
     /// Adds the display items necessary to paint the borders of this box to a display list if
     /// necessary.
-    pub fn paint_borders_if_applicable<E:ExtraDisplayListData>(
-                                       &self,
-                                       list: &mut DisplayList<E>,
-                                       abs_bounds: &Rect<Au>) {
+    pub fn paint_borders_if_applicable(&self, list: &mut DisplayList, abs_bounds: &Rect<Au>) {
         // Fast path.
         let border = self.border.get();
         if border.is_zero() {
@@ -1056,7 +1050,7 @@ impl Box {
         let border_display_item = ~BorderDisplayItem {
             base: BaseDisplayItem {
                 bounds: abs_bounds,
-                extra: ExtraDisplayListData::new(self),
+                node: self.node,
             },
             border: border,
             color: SideOffsets2D::new(top_color.to_gfx_color(),
@@ -1072,9 +1066,8 @@ impl Box {
         list.push(BorderDisplayItemClass(border_display_item))
     }
 
-    fn build_debug_borders_around_text_boxes<E:ExtraDisplayListData>(
-                                             &self,
-                                             stacking_context: &mut StackingContext<E>,
+    fn build_debug_borders_around_text_boxes(&self,
+                                             stacking_context: &mut StackingContext,
                                              flow_origin: Point2D<Au>,
                                              text_box: &ScannedTextBoxInfo) {
         let box_bounds = self.border_box.get();
@@ -1086,7 +1079,7 @@ impl Box {
         let border_display_item = ~BorderDisplayItem {
             base: BaseDisplayItem {
                 bounds: absolute_box_bounds,
-                extra: ExtraDisplayListData::new(self),
+                node: self.node,
             },
             border: debug_border,
             color: SideOffsets2D::new_all_same(rgb(0, 0, 200)),
@@ -1103,7 +1096,7 @@ impl Box {
         let line_display_item = ~LineDisplayItem {
             base: BaseDisplayItem {
                 bounds: baseline,
-                extra: ExtraDisplayListData::new(self),
+                node: self.node,
             },
             color: rgb(0, 200, 0),
             style: border_style::dashed,
@@ -1112,9 +1105,8 @@ impl Box {
         stacking_context.content.push(LineDisplayItemClass(line_display_item))
     }
 
-    fn build_debug_borders_around_box<E:ExtraDisplayListData>(
-                                      &self,
-                                      stacking_context: &mut StackingContext<E>,
+    fn build_debug_borders_around_box(&self,
+                                      stacking_context: &mut StackingContext,
                                       flow_origin: Point2D<Au>) {
         let box_bounds = self.border_box.get();
         let absolute_box_bounds = box_bounds.translate(&flow_origin);
@@ -1125,7 +1117,7 @@ impl Box {
         let border_display_item = ~BorderDisplayItem {
             base: BaseDisplayItem {
                 bounds: absolute_box_bounds,
-                extra: ExtraDisplayListData::new(self),
+                node: self.node,
             },
             border: debug_border,
             color: SideOffsets2D::new_all_same(rgb(0, 0, 200)),
@@ -1145,11 +1137,9 @@ impl Box {
     /// * `flow_origin`: Position of the origin of the owning flow wrt the display list root flow.
     ///   box.
     /// * `flow`: The flow that this box belongs to.
-    pub fn build_display_list<'a,
-                              E:ExtraDisplayListData>(
-                              &self,
-                              stacking_context: &mut StackingContext<E>,
-                              builder: &DisplayListBuilder<'a,E>,
+    pub fn build_display_list(&self,
+                              stacking_context: &mut StackingContext,
+                              builder: &DisplayListBuilder,
                               dirty: &Rect<Au>,
                               flow_origin: Point2D<Au>,
                               flow: &Flow,
@@ -1228,7 +1218,7 @@ impl Box {
                 let text_display_item = ~TextDisplayItem {
                     base: BaseDisplayItem {
                         bounds: bounds,
-                        extra: ExtraDisplayListData::new(self),
+                        node: self.node,
                     },
                     text_run: text_box.run.clone(),
                     range: text_box.range,
@@ -1253,7 +1243,7 @@ impl Box {
                 let item = ~ClipDisplayItem {
                     base: BaseDisplayItem {
                         bounds: absolute_box_bounds,
-                        extra: ExtraDisplayListData::new(self),
+                        node: self.node,
                     },
                     child_list: SmallVec0::new(),
                     need_clip: self.needs_clip()
@@ -1283,7 +1273,7 @@ impl Box {
                         let image_display_item = ~ImageDisplayItem {
                             base: BaseDisplayItem {
                                 bounds: bounds,
-                                extra: ExtraDisplayListData::new(self),
+                                node: self.node,
                             },
                             image: image.clone(),
                             stretch_size: bounds.size,

@@ -15,7 +15,7 @@
 use layout::box_::{Box, ImageBox, MainBoxKind, ScannedTextBox};
 use layout::construct::FlowConstructor;
 use layout::context::LayoutContext;
-use layout::display_list_builder::{DisplayListBuilder, ExtraDisplayListData};
+use layout::display_list_builder::DisplayListBuilder;
 use layout::floats::{ClearBoth, ClearLeft, ClearRight, FloatKind, Floats, PlacementInfo};
 use layout::flow::{BaseFlow, BlockFlowClass, FlowClass, Flow, ImmutableFlowUtils};
 use layout::flow::{MutableFlowUtils, PreorderFlowTraversal, PostorderFlowTraversal, mut_base};
@@ -1105,11 +1105,9 @@ impl BlockFlow {
         box_.border_box.set(position);
     }
 
-    fn build_display_list_block_common<'a,
-                                       E:ExtraDisplayListData>(
-                                       &mut self,
-                                       stacking_context: &mut StackingContext<E>,
-                                       builder: &mut DisplayListBuilder<'a,E>,
+    fn build_display_list_block_common(&mut self,
+                                       stacking_context: &mut StackingContext,
+                                       builder: &mut DisplayListBuilder,
                                        container_block_size: &Size2D<Au>,
                                        mut absolute_cb_abs_position: Point2D<Au>,
                                        dirty: &Rect<Au>,
@@ -1202,11 +1200,9 @@ impl BlockFlow {
     ///
     /// Set the absolute position for children after doing any offsetting for
     /// position: relative.
-    pub fn build_display_list_block<'a,
-                                    E:ExtraDisplayListData>(
-                                    &mut self,
-                                    stacking_context: &mut StackingContext<E>,
-                                    builder: &mut DisplayListBuilder<'a,E>,
+    pub fn build_display_list_block(&mut self,
+                                    stacking_context: &mut StackingContext,
+                                    builder: &mut DisplayListBuilder,
                                     container_block_size: &Size2D<Au>,
                                     absolute_cb_abs_position: Point2D<Au>,
                                     dirty: &Rect<Au>) {
@@ -1236,11 +1232,9 @@ impl BlockFlow {
         }
     }
 
-    pub fn build_display_list_float<'a,
-                                    E:ExtraDisplayListData>(
-                                    &mut self,
-                                    parent_stacking_context: &mut StackingContext<E>,
-                                    builder: &mut DisplayListBuilder<'a,E>,
+    pub fn build_display_list_float(&mut self,
+                                    parent_stacking_context: &mut StackingContext,
+                                    builder: &mut DisplayListBuilder,
                                     container_block_size: &Size2D<Au>,
                                     absolute_cb_abs_position: Point2D<Au>,
                                     dirty: &Rect<Au>) {
@@ -1349,11 +1343,9 @@ impl BlockFlow {
     }
 
     /// Add display items for Absolutely Positioned flow.
-    pub fn build_display_list_abs<'a,
-                                  E:ExtraDisplayListData>(
-                                  &mut self,
-                                  parent_stacking_context: &mut StackingContext<E>,
-                                  builder: &mut DisplayListBuilder<'a,E>,
+    pub fn build_display_list_abs(&mut self,
+                                  parent_stacking_context: &mut StackingContext,
+                                  builder: &mut DisplayListBuilder,
                                   containing_block_size: &Size2D<Au>,
                                   absolute_cb_abs_position: Point2D<Au>,
                                   dirty: &Rect<Au>) {
