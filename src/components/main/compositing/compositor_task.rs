@@ -50,8 +50,11 @@ impl ScriptListener for CompositorChan {
         self.chan.send(InvalidateRect(pipeline_id, layer_id, rect));
     }
 
-    fn scroll_fragment_point(&self, id: PipelineId, point: Point2D<f32>) {
-	    self.chan.send(ScrollFragmentPoint(id, point));
+    fn scroll_fragment_point(&self,
+                             pipeline_id: PipelineId,
+                             layer_id: LayerId,
+                             point: Point2D<f32>) {
+	    self.chan.send(ScrollFragmentPoint(pipeline_id, layer_id, point));
     }
 
     fn close(&self) {
@@ -183,7 +186,7 @@ pub enum Msg {
     /// Invalidate a rect for a given layer
     InvalidateRect(PipelineId, LayerId, Rect<uint>),
     /// Scroll a page in a window
-    ScrollFragmentPoint(PipelineId, Point2D<f32>),
+    ScrollFragmentPoint(PipelineId, LayerId, Point2D<f32>),
     /// Requests that the compositor paint the given layer buffer set for the given page size.
     Paint(PipelineId, LayerId, ~LayerBufferSet, Epoch),
     /// Alerts the compositor to the current status of page loading.

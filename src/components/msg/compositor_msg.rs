@@ -151,7 +151,10 @@ pub trait RenderListener {
 pub trait ScriptListener : Clone {
     fn set_ready_state(&self, ReadyState);
     fn invalidate_rect(&self, pipeline_id: PipelineId, layer_id: LayerId, rect: Rect<uint>);
-    fn scroll_fragment_point(&self, PipelineId, Point2D<f32>);
+    fn scroll_fragment_point(&self,
+                             pipeline_id: PipelineId,
+                             layer_id: LayerId,
+                             point: Point2D<f32>);
     fn close(&self);
     fn dup(&self) -> ~ScriptListener;
 }
