@@ -49,7 +49,8 @@ impl OpaqueNode {
     }
 }
 
-/// A stacking context. See CSS 2.1 § E.2. "Steps" below refer to steps in that specification.
+/// A stacking context. See CSS 2.1 § E.2. "Steps" below refer to steps in that section of the
+/// specification.
 ///
 /// TODO(pcwalton): Outlines.
 pub struct StackingContext {
