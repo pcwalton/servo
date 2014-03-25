@@ -233,14 +233,15 @@ impl<C: RenderListener + Send> RenderTask<C> {
         loop {
             match self.port.recv() {
                 RenderMsg(render_layers) => {
+                    self.epoch.next();
+                    self.render_layers = render_layers;
+
                     if !self.paint_permission {
                         debug!("render_task: render ready msg");
                         self.constellation_chan.send(RendererReadyMsg(self.id));
+                        continue;
                     }
 
-                    self.epoch.next();
-
-                    self.render_layers = render_layers;
                     initialize_layers(&mut self.compositor,
                                       self.id,
                                       self.epoch,
