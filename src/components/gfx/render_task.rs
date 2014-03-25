@@ -400,6 +400,11 @@ impl<C: RenderListener + Send> RenderTask<C> {
                             };
 
                             draw_target.snapshot().get_data_surface().with_data(|data| {
+                                println!("top left corner is {},{},{},{}",
+                                         data[0],
+                                         data[1],
+                                         data[2],
+                                         data[3]);
                                 buffer.native_surface.upload(native_graphics_context!(self), data);
                                 debug!("RENDERER uploading to native surface {:d}",
                                        buffer.native_surface.get_id() as int);

@@ -1389,7 +1389,7 @@ impl BlockFlow {
             id: self.layer_id(0),
             display_list: Arc::new(stacking_context.flatten()),
             rect: Rect(origin, size),
-            color: color::rgba(255.0, 255.0, 255.0, 255.0),
+            color: color::rgba(255.0, 255.0, 255.0, 0.0),
             scroll_behavior: FixedPosition,
         };
         builder.layers.push(new_layer)

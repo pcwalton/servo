@@ -122,7 +122,7 @@ impl<'a> RenderContext<'a>  {
     }
 
     pub fn clear(&self) {
-        let pattern = ColorPattern(Color(0.0, 1.0, 0.0, 0.0));
+        let pattern = ColorPattern(Color(0.0, 0.0, 0.0, 0.0));
         let rect = Rect(Point2D(self.page_rect.origin.x as AzFloat,
                                 self.page_rect.origin.y as AzFloat),
                         Size2D(self.screen_rect.size.width as AzFloat,
