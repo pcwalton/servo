@@ -22,7 +22,6 @@ use layout::flow::{mut_base, PreorderFlowTraversal, PostorderFlowTraversal, Muta
 use layout::flow;
 use layout::model::{MaybeAuto, Specified, Auto, specified_or_none, specified};
 use layout::wrapper::ThreadSafeLayoutNode;
-use style::PseudoElement;
 use style::computed_values::{position};
 
 use std::cell::RefCell;
@@ -31,8 +30,6 @@ use gfx::display_list::{DisplayListCollection, DisplayList};
 use servo_util::geometry::Au;
 use servo_util::geometry;
 use servo_util::smallvec::{SmallVec, SmallVec0};
-use layout::util::OpaqueNode;
-
 
 /// Information specific to floated blocks.
 pub struct FloatedBlockInfo {

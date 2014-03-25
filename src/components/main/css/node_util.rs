@@ -8,6 +8,7 @@ use layout::wrapper::{TLayoutNode, ThreadSafeLayoutNode};
 
 use std::cast;
 use style::ComputedValues;
+use style::Before;
 use sync::Arc;
 
 pub trait NodeUtil {
@@ -25,13 +26,36 @@ impl<'ln> NodeUtil for ThreadSafeLayoutNode<'ln> {
     fn get_css_select_results<'a>(&'a self) -> &'a Arc<ComputedValues> {
         unsafe {
             let layout_data_ref = self.borrow_layout_data();
-            cast::transmute_region(layout_data_ref.get()
-                                                  .as_ref()
-                                                  .unwrap()
-                                                  .data
-                                                  .style
-                                                  .as_ref()
-                                                  .unwrap())
+            match self.get_element_type() {
+                Some(pseudo_type) => {
+                    if pseudo_type == Before {
+                        return cast::transmute_region(layout_data_ref.get()
+                                                                     .as_ref()
+                                                                     .unwrap()
+                                                                     .data
+                                                                     .before_style
+                                                                     .as_ref()
+                                                                     .unwrap())
+                    } else {
+                        return cast::transmute_region(layout_data_ref.get()
+                                                                     .as_ref()
+                                                                     .unwrap()
+                                                                     .data
+                                                                     .after_style
+                                                                     .as_ref()
+                                                                     .unwrap())
+                    }
+                }
+                None => {
+                    return cast::transmute_region(layout_data_ref.get()
+                                                                 .as_ref()
+                                                                 .unwrap()
+                                                                 .data
+                                                                 .style
+                                                                 .as_ref()
+                                                                 .unwrap())
+                }
+            }
         }
     }
 
