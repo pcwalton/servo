@@ -28,7 +28,7 @@ use layout::box_::{UnscannedTextBox, UnscannedTextBoxInfo};
 use layout::context::LayoutContext;
 use layout::floats::FloatKind;
 use layout::flow::{Flow, MutableOwnedFlowUtils};
-use layout::flow::{Descendants, AbsDescendants, FixedDescendants};
+use layout::flow::{Descendants, AbsDescendants};
 use layout::flow_list::{Rawlink};
 use layout::inline::InlineFlow;
 use layout::text::TextRunScanner;
@@ -67,7 +67,7 @@ pub enum ConstructionResult {
     /// This node contributed a flow at the proper position in the tree.
     /// Nothing more needs to be done for this node. It has bubbled up fixed
     /// and absolute descendant flows that have a CB above it.
-    FlowConstructionResult(~Flow, AbsDescendants, FixedDescendants),
+    FlowConstructionResult(~Flow, AbsDescendants),
 
     /// This node contributed some object or objects that will be needed to construct a proper flow
     /// later up the tree, but these objects have not yet found their home.
@@ -78,7 +78,7 @@ impl ConstructionResult {
     fn destroy(&mut self) {
         match *self {
             NoConstructionResult => {}
-            FlowConstructionResult(ref mut flow, _, _) => flow.destroy(),
+            FlowConstructionResult(ref mut flow, _) => flow.destroy(),
             ConstructionItemConstructionResult(ref mut item) => item.destroy(),
         }
     }
@@ -121,9 +121,6 @@ struct InlineBoxesConstructionResult {
 
     /// Any absolute descendants that we're bubbling up.
     abs_descendants: AbsDescendants,
-
-    /// Any fixed descendants that we're bubbling up.
-    fixed_descendants: FixedDescendants,
 }
 
 /// Represents an {ib} split that has not yet found the containing block that it belongs to. This
@@ -350,11 +347,10 @@ impl<'a> FlowConstructor<'a> {
         let mut first_box = true;
         // List of absolute descendants, in tree order.
         let mut abs_descendants = Descendants::new();
-        let mut fixed_descendants = Descendants::new();
         for kid in node.children() {
             match kid.swap_out_construction_result() {
                 NoConstructionResult => {}
-                FlowConstructionResult(kid_flow, kid_abs_descendants, kid_fixed_descendants) => {
+                FlowConstructionResult(kid_flow, kid_abs_descendants) => {
                     // Strip ignorable whitespace from the start of this flow per CSS 2.1 §
                     // 9.2.1.1.
                     if first_box {
@@ -372,15 +368,12 @@ impl<'a> FlowConstructor<'a> {
                                                                  node);
                     flow.add_new_child(kid_flow);
                     abs_descendants.push_descendants(kid_abs_descendants);
-                    fixed_descendants.push_descendants(kid_fixed_descendants);
-
                 }
                 ConstructionItemConstructionResult(InlineBoxesConstructionItem(
                         InlineBoxesConstructionResult {
                             splits: opt_splits,
                             boxes: boxes,
                             abs_descendants: kid_abs_descendants,
-                            fixed_descendants: kid_fixed_descendants,
                         })) => {
                     // Add any {ib} splits.
                     match opt_splits {
@@ -423,7 +416,6 @@ impl<'a> FlowConstructor<'a> {
                     // Add the boxes to the list we're maintaining.
                     opt_boxes_for_inline_flow.push_all_move(boxes);
                     abs_descendants.push_descendants(kid_abs_descendants);
-                    fixed_descendants.push_descendants(kid_fixed_descendants);
                 }
                 ConstructionItemConstructionResult(WhitespaceConstructionItem(..)) => {
                     // Nothing to do here.
@@ -448,16 +440,13 @@ impl<'a> FlowConstructor<'a> {
             flow.set_abs_descendants(abs_descendants);
             abs_descendants = Descendants::new();
 
-            if is_fixed_positioned {
-                // Send itself along with the other fixed descendants.
-                fixed_descendants.push(Rawlink::some(flow));
-            } else if is_absolutely_positioned {
+            if is_fixed_positioned || is_absolutely_positioned {
                 // This is now the only absolute flow in the subtree which hasn't yet
                 // reached its CB.
                 abs_descendants.push(Rawlink::some(flow));
             }
         }
-        FlowConstructionResult(flow, abs_descendants, fixed_descendants)
+        FlowConstructionResult(flow, abs_descendants)
     }
 
     /// Builds a flow for a node with `display: block`. This yields a `BlockFlow` with possibly
@@ -484,13 +473,12 @@ impl<'a> FlowConstructor<'a> {
         let mut opt_inline_block_splits = None;
         let mut opt_box_accumulator = None;
         let mut abs_descendants = Descendants::new();
-        let mut fixed_descendants = Descendants::new();
 
         // Concatenate all the boxes of our kids, creating {ib} splits as necessary.
         for kid in node.children() {
             match kid.swap_out_construction_result() {
                 NoConstructionResult => {}
-                FlowConstructionResult(flow, kid_abs_descendants, kid_fixed_descendants) => {
+                FlowConstructionResult(flow, kid_abs_descendants) => {
                     // {ib} split. Flush the accumulator to our new split and make a new
                     // accumulator to hold any subsequent boxes we come across.
                     let split = InlineBlockSplit {
@@ -499,14 +487,12 @@ impl<'a> FlowConstructor<'a> {
                     };
                     opt_inline_block_splits.push(split);
                     abs_descendants.push_descendants(kid_abs_descendants);
-                    fixed_descendants.push_descendants(kid_fixed_descendants);
                 }
                 ConstructionItemConstructionResult(InlineBoxesConstructionItem(
                         InlineBoxesConstructionResult {
                             splits: opt_splits,
                             boxes: boxes,
                             abs_descendants: kid_abs_descendants,
-                            fixed_descendants: kid_fixed_descendants,
                         })) => {
 
                     // Bubble up {ib} splits.
@@ -533,7 +519,6 @@ impl<'a> FlowConstructor<'a> {
                     // Push residual boxes.
                     opt_box_accumulator.push_all_move(boxes);
                     abs_descendants.push_descendants(kid_abs_descendants);
-                    fixed_descendants.push_descendants(kid_fixed_descendants);
                 }
                 ConstructionItemConstructionResult(WhitespaceConstructionItem(whitespace_node,
                                                                               whitespace_style))
@@ -598,7 +583,6 @@ impl<'a> FlowConstructor<'a> {
                 splits: opt_inline_block_splits,
                 boxes: opt_box_accumulator.to_vec(),
                 abs_descendants: abs_descendants,
-                fixed_descendants: fixed_descendants,
             });
             ConstructionItemConstructionResult(construction_item)
         } else {
@@ -684,7 +668,6 @@ impl<'a> FlowConstructor<'a> {
             splits: None,
             boxes: opt_box_accumulator.to_vec(),
             abs_descendants: Descendants::new(),
-            fixed_descendants: Descendants::new(),
         });
         ConstructionItemConstructionResult(construction_item)
     }

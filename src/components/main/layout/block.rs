@@ -673,19 +673,11 @@ impl BlockFlow {
     /// position already set.
     fn collect_static_y_offsets_from_kids(&mut self) {
         let mut abs_descendant_y_offsets = SmallVec0::new();
-        let mut fixed_descendant_y_offsets = SmallVec0::new();
-
         for kid in self.base.child_iter() {
             let mut gives_abs_offsets = true;
             if kid.is_block_like() {
                 let kid_block = kid.as_block();
-                if kid_block.is_fixed() {
-                    // It won't contribute any offsets for position 'absolute'
-                    // descendants because it would be the CB for them.
-                    gives_abs_offsets = false;
-                    // Add the offset for the current fixed flow too.
-                    fixed_descendant_y_offsets.push(kid_block.get_hypothetical_top_edge());
-                } else if kid_block.is_absolutely_positioned() {
+                if kid_block.is_fixed() || kid_block.is_absolutely_positioned() {
                     // It won't contribute any offsets for descendants because it
                     // would be the CB for them.
                     gives_abs_offsets = false;
@@ -707,18 +699,8 @@ impl BlockFlow {
                     abs_descendant_y_offsets.push(y_offset);
                 }
             }
-
-            // Get all the fixed offsets.
-            let kid_base = flow::mut_base(kid);
-            // Consume all the static y-offsets bubbled up by kid.
-            for y_offset in kid_base.fixed_descendants.static_y_offsets.move_iter() {
-                // The offsets are wrt the kid flow box. Translate them to current flow.
-                y_offset = y_offset + kid_base.position.origin.y;
-                fixed_descendant_y_offsets.push(y_offset);
-            }
         }
         self.base.abs_descendants.static_y_offsets = abs_descendant_y_offsets;
-        self.base.fixed_descendants.static_y_offsets = fixed_descendant_y_offsets;
     }
 
     /// If this is the root flow, shifts all kids down and adjusts our size to account for
@@ -992,37 +974,6 @@ impl BlockFlow {
                 layout_context: layout_context,
             });
         }
-
-        if self.is_root() {
-            self.assign_height_store_overflow_fixed_flows(layout_context);
-        }
-    }
-
-    /// Assign height for all fixed descendants.
-    ///
-    /// A flat iteration over all fixed descendants, passing their respective
-    /// static y offsets.
-    /// Also, store overflow immediately because nothing else depends on a
-    /// fixed flow's height.
-    fn assign_height_store_overflow_fixed_flows(&mut self, ctx: &mut LayoutContext) {
-        assert!(self.is_root());
-        let mut descendant_offset_iter = self.base.fixed_descendants.iter_with_offset();
-        // Pass in the respective static y offset for each descendant.
-        for (ref mut descendant_link, ref y_offset) in descendant_offset_iter {
-            match descendant_link.resolve() {
-                Some(fixed_flow) => {
-                    {
-                        let block = fixed_flow.as_block();
-                        // The stored y_offset is wrt to the flow box (which
-                        // will is also the CB, so it is the correct final value).
-                        block.static_y_offset = **y_offset;
-                        block.calculate_abs_height_and_margins(ctx);
-                    }
-                    fixed_flow.store_overflow(ctx);
-                }
-                None => fail!("empty Rawlink to a descendant")
-            }
-        }
     }
 
     /// Add placement information about current float flow for use by the parent.
@@ -1209,16 +1160,6 @@ impl BlockFlow {
                     flow.build_display_list(stacking_context, builder, &absolute_info)
                 }
                 None => fail!("empty Rawlink to a descendant")
-            }
-        }
-
-        // Process fixed descendant links.
-        if self.is_root() {
-            for fixed_descendant_link in self.base.fixed_descendants.iter() {
-                match fixed_descendant_link.resolve() {
-                    Some(flow) => flow.build_display_list(stacking_context, builder, &info),
-                    None => fail!("empty Rawlink to a descendant")
-                }
             }
         }
     }

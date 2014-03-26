@@ -300,11 +300,6 @@ pub trait MutableOwnedFlowUtils {
     /// Set this flow as the Containing Block for all the absolute descendants.
     fn set_abs_descendants(&mut self, abs_descendants: AbsDescendants);
 
-    /// Set fixed descendants for this flow.
-    ///
-    /// Set yourself as the Containing Block for all the fixed descendants.
-    fn set_fixed_descendants(&mut self, fixed_descendants: AbsDescendants);
-
     /// Destroys the flow.
     fn destroy(&mut self);
 }
@@ -618,7 +613,6 @@ impl Descendants {
 }
 
 pub type AbsDescendants = Descendants;
-pub type FixedDescendants = Descendants;
 
 type DescendantIter<'a> = VecMutIterator<'a, Rawlink>;
 
@@ -676,12 +670,9 @@ pub struct BaseFlow {
     /// The position of this flow in page coordinates, computed during display list construction.
     abs_position: Point2D<Au>,
 
-    /// Details about descendants with position 'absolute' for which we are
-    /// the CB. This is in tree order. This includes any direct children.
+    /// Details about descendants with position 'absolute' or 'fixed' for which we are the
+    /// containing block. This is in tree order. This includes any direct children.
     abs_descendants: AbsDescendants,
-    /// Details about descendants with position 'fixed'.
-    /// TODO: Optimize this, because this will be set only for the root.
-    fixed_descendants: FixedDescendants,
 
     /// Offset wrt the nearest positioned ancestor - aka the Containing Block
     /// for any absolutely positioned elements.
@@ -750,7 +741,6 @@ impl BaseFlow {
             clear: clear::none,
             abs_position: Point2D(Au::new(0), Au::new(0)),
             abs_descendants: Descendants::new(),
-            fixed_descendants: Descendants::new(),
             absolute_static_x_offset: Au::new(0),
             fixed_static_x_offset: Au::new(0),
             absolute_cb: Rawlink::none(),
@@ -910,6 +900,7 @@ impl<'a> MutableFlowUtils for &'a mut Flow {
                 overflow = overflow.union(&kid_overflow)
             }
 
+            // FIXME(pcwalton): This is wrong for `position: fixed`.
             for descendant_link in mut_base(self).abs_descendants.iter() {
                 match descendant_link.resolve() {
                     Some(flow) => {
@@ -918,19 +909,6 @@ impl<'a> MutableFlowUtils for &'a mut Flow {
                         overflow = overflow.union(&kid_overflow)
                     }
                     None => fail!("empty Rawlink to a descendant")
-                }
-            }
-
-            if self.is_root() {
-                for fixed_descendant_link in mut_base(self).fixed_descendants.iter() {
-                    match fixed_descendant_link.resolve() {
-                        Some(flow) => {
-                            let mut kid_overflow = base(flow).overflow;
-                            kid_overflow = kid_overflow.translate(&my_position.origin);
-                            overflow = overflow.union(&kid_overflow)
-                        }
-                        None => fail!("empty Rawlink to a descendant")
-                    }
                 }
             }
         }
@@ -1011,29 +989,6 @@ impl MutableOwnedFlowUtils for ~Flow {
         block.base.abs_descendants = abs_descendants;
 
         for descendant_link in block.base.abs_descendants.iter() {
-            match descendant_link.resolve() {
-                Some(flow) => {
-                    let base = mut_base(flow);
-                    base.absolute_cb = self_link.clone();
-                }
-                None => fail!("empty Rawlink to a descendant")
-            }
-        }
-    }
-
-    /// Set fixed descendants for this flow.
-    ///
-    /// Set yourself as the Containing Block for all the fixed descendants.
-    ///
-    /// Assumption: This is called in a bottom-up traversal, so that nothing
-    /// else is accessing the descendant flows.
-    /// Assumption: This is the root flow.
-    fn set_fixed_descendants(&mut self, fixed_descendants: FixedDescendants) {
-        let self_link = Rawlink::some(*self);
-        let block = self.as_block();
-        block.base.fixed_descendants = fixed_descendants;
-
-        for descendant_link in block.base.fixed_descendants.iter() {
             match descendant_link.resolve() {
                 Some(flow) => {
                     let base = mut_base(flow);

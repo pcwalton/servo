@@ -362,7 +362,7 @@ impl IOCompositor {
         if layer_id != root_layer_id {
             let root_pipeline_id = root_pipeline.id;
             let mut new_layer = CompositorLayer::new_root(root_pipeline,
-                                                          Some(size),
+                                                          size,
                                                           self.opts.tile_size,
                                                           self.opts.cpu_painting);
 
@@ -380,9 +380,7 @@ impl IOCompositor {
                                                      root_pipeline_id,
                                                      new_layer.id,
                                                      layer_id,
-                                                     Rect(Point2D(0f32, 0f32),
-                                                          Size2D(self.window_size.width as f32,
-                                                                 self.window_size.height as f32)),
+                                                     Rect(Point2D(0f32, 0f32), size),
                                                      size,
                                                      Scrollable));
 
@@ -401,12 +399,14 @@ impl IOCompositor {
                                                        scroll_policy: ScrollPolicy) {
         match self.compositor_layer {
             Some(ref mut compositor_layer) => {
+                println!(">>> compositor layer page size is {:?}", compositor_layer.page_size);
                 assert!(compositor_layer.add_child_if_necessary(self.root_layer.clone(),
                                                                 pipeline_id,
                                                                 compositor_layer.id,
                                                                 layer_id,
                                                                 rect,
-                                                                rect.size,
+                                                                compositor_layer.page_size
+                                                                                .unwrap(),
                                                                 scroll_policy))
             }
             None => fail!("Compositor: Received new layer without initialized pipeline"),
@@ -534,14 +534,6 @@ impl IOCompositor {
         let world_zoom = self.world_zoom;
         let page_window = Size2D(self.window_size.width as f32 / world_zoom,
                                  self.window_size.height as f32 / world_zoom);
-        // FIXME(pcwalton): This is pretty bogus when multiple layers are involved. See
-        // the comment in `scroll_fragment_point()` in `script_task.rs`.
-        if layer_id == LayerId::null() {
-            layer_id = match self.root_layer_id() {
-                Some(layer_id) => layer_id,
-                None => LayerId::null(),
-            }
-        }
 
         let (ask, move): (bool, bool) = match self.compositor_layer {
             Some(ref mut layer) if layer.pipeline.id == pipeline_id && !layer.hidden => {
