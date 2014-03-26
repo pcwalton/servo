@@ -1140,7 +1140,7 @@ impl Box {
     pub fn build_display_list(&self,
                               stacking_context: &mut StackingContext,
                               builder: &DisplayListBuilder,
-                              info: &DisplayListBuildingInfo,
+                              _: &DisplayListBuildingInfo,
                               flow_origin: Point2D<Au>,
                               flow: &Flow,
                               background_and_border_level: BackgroundAndBorderLevel) {

@@ -22,7 +22,7 @@ use layers::texturegl::{Texture, TextureTarget};
 use script::dom::event::{ClickEvent, MouseDownEvent, MouseMoveEvent, MouseUpEvent};
 use script::script_task::SendEventMsg;
 use servo_msg::compositor_msg::{Epoch, FixedPosition, LayerBuffer, LayerBufferSet, LayerId};
-use servo_msg::compositor_msg::{Scroll, ScrollBehavior, Tile};
+use servo_msg::compositor_msg::{ScrollPolicy, Scrollable, Tile};
 use servo_msg::constellation_msg::PipelineId;
 
 // FIXME: switch to std::rc when we upgrade Rust
@@ -83,7 +83,10 @@ pub struct CompositorLayer {
     epoch: Epoch,
 
     /// The behavior of this layer when a scroll message is received. 
-    scroll_behavior: ScrollBehavior,
+    wants_scroll_events: WantsScrollEventsFlag,
+
+    /// Whether an ancestor layer that receives scroll events moves this layer.
+    scroll_policy: ScrollPolicy,
 
     /// True if CPU rendering is enabled, false if we're using GPU rendering.
     cpu_painting: bool,
@@ -117,6 +120,12 @@ impl MaybeQuadtree {
     }
 }
 
+#[deriving(Eq, Clone)]
+pub enum WantsScrollEventsFlag {
+    WantsScrollEvents,
+    DoesntWantScrollEvents,
+}
+
 fn create_container_layer_from_rect(rect: Rect<f32>) -> Rc<ContainerLayer> {
     let container = Rc::new(ContainerLayer());
     println!(">>> scissor is {}", rect);
@@ -134,7 +143,8 @@ impl CompositorLayer {
            page_size: Option<Size2D<f32>>,
            tile_size: uint,
            cpu_painting: bool,
-           scroll_behavior: ScrollBehavior)
+           wants_scroll_events: WantsScrollEventsFlag,
+           scroll_policy: ScrollPolicy)
            -> CompositorLayer {
         CompositorLayer {
             pipeline: pipeline,
@@ -153,7 +163,8 @@ impl CompositorLayer {
             root_layer: Rc::new(ContainerLayer()),
             hidden: true,
             epoch: Epoch(0),
-            scroll_behavior: scroll_behavior,
+            wants_scroll_events: wants_scroll_events,
+            scroll_policy: scroll_policy,
             cpu_painting: cpu_painting,
             unrendered_color: gfx::color::rgba(0.0, 0.0, 0.0, 0.0),
         }
@@ -177,7 +188,8 @@ impl CompositorLayer {
             root_layer: Rc::new(ContainerLayer()),
             hidden: false,
             epoch: Epoch(0),
-            scroll_behavior: FixedPosition,
+            wants_scroll_events: WantsScrollEvents,
+            scroll_policy: FixedPosition,
             cpu_painting: cpu_painting,
             unrendered_color: gfx::color::rgba(0.0, 0.0, 0.0, 0.0),
         }
@@ -198,7 +210,8 @@ impl CompositorLayer {
                                              None,
                                              tile_size,
                                              cpu_painting,
-                                             Scroll);
+                                             DoesntWantScrollEvents,
+                                             Scrollable);
 
         layer.children = (children.move_iter().map(|child| {
             let SendableChildFrameTree { frame_tree, rect } = child;
@@ -238,7 +251,7 @@ impl CompositorLayer {
                                   child_layer_id: LayerId,
                                   rect: Rect<f32>,
                                   page_size: Size2D<f32>,
-                                  scroll_behavior: ScrollBehavior)
+                                  scroll_policy: ScrollPolicy)
                                   -> bool {
         if self.pipeline.id != pipeline_id || self.id != parent_layer_id {
             return self.children.mut_iter().any(|kid_holder| {
@@ -248,7 +261,7 @@ impl CompositorLayer {
                                                         child_layer_id,
                                                         rect,
                                                         page_size,
-                                                        scroll_behavior)
+                                                        scroll_policy)
             })
         }
 
@@ -266,7 +279,8 @@ impl CompositorLayer {
                                         Some(page_size),
                                         self.quadtree.tile_size(), 
                                         self.cpu_painting,
-                                        scroll_behavior);
+                                        DoesntWantScrollEvents,
+                                        scroll_policy);
 
         // Place the kid's layer in a container...
         let kid_container = create_container_layer_from_rect(rect);
@@ -284,20 +298,34 @@ impl CompositorLayer {
         true
     }
 
-    // Move the layer by as relative specified amount in page coordinates. Does not change
-    // the position of the layer relative to its parent. This also takes in a cursor position
-    // to see if the mouse is over child layers first. If a layer successfully scrolled, returns
-    // true; otherwise returns false, so a parent layer can scroll instead.
-    pub fn scroll(&mut self, delta: Point2D<f32>, cursor: Point2D<f32>, window_size: Size2D<f32>)
-                  -> bool {
-        println!(">>> scrolling by {}, behavior={:?}, offset={:?}",
+    /// Move the layer's descendants that don't want scroll events and scroll by a relative
+    /// specified amount in page coordinates. This also takes in a cursor position to see if the
+    /// mouse is over child layers first. If a layer successfully scrolled, returns true; otherwise
+    /// returns false, so a parent layer can scroll instead.
+    pub fn handle_scroll_event(&mut self,
+                               delta: Point2D<f32>,
+                               cursor: Point2D<f32>,
+                               window_size: Size2D<f32>)
+                               -> bool {
+        println!(">>> scrolling by {}, policy={:?}, offset={:?}",
                  delta,
-                 self.scroll_behavior,
+                 self.scroll_policy,
                  self.scroll_offset);
+
+        // If this layer is hidden, neither it nor its children will scroll.
+        if self.hidden {
+            return false
+        }
+
+        // If this layer doesn't want scroll events, neither it nor its children can handle scroll
+        // events.
+        if self.wants_scroll_events != WantsScrollEvents {
+            return false
+        }
 
         // Allow children to scroll.
         let cursor = cursor - self.scroll_offset;
-        for child in self.children.mut_iter().filter(|x| !x.child.hidden) {
+        for child in self.children.mut_iter() {
             // NOTE: work around borrowchk
             let tmp = child.container.borrow().scissor.borrow();
             match *tmp.get() {
@@ -307,49 +335,64 @@ impl CompositorLayer {
                 Some(rect) => {
                     if cursor.x >= rect.origin.x && cursor.x < rect.origin.x + rect.size.width
                         && cursor.y >= rect.origin.y && cursor.y < rect.origin.y + rect.size.height
-                        && child.child.scroll(delta, cursor - rect.origin, rect.size) {
-                        return true;
+                        && child.child.handle_scroll_event(delta,
+                                                           cursor - rect.origin,
+                                                           rect.size) {
+                        return true
                     }
                 }
             }
         }
 
-        // If this layer is fixed, then it can't scroll. But its children can, so this is done
-        // after we allow children to handle the event.
-        if self.scroll_behavior == FixedPosition {
-            return false
+        self.scroll(delta, cursor, window_size)
+    }
+
+    /// Actually scrolls the descendants of a layer that scroll. This is called by
+    /// `handle_scroll_event` above when it determines that a layer wants to scroll.
+    fn scroll(&mut self, delta: Point2D<f32>, cursor: Point2D<f32>, window_size: Size2D<f32>)
+              -> bool {
+        let mut result = false;
+
+        // Only scroll this layer if it's not fixed-positioned.
+        if self.scroll_policy != FixedPosition {
+            // This scroll event is mine!
+            // Scroll this layer!
+            let old_origin = self.scroll_offset;
+            self.scroll_offset = self.scroll_offset + delta;
+
+            // bounds checking
+            let page_size = match self.page_size {
+                Some(size) => size,
+                None => fail!("CompositorLayer: tried to scroll with no page size set"),
+            };
+            let min_x = (window_size.width - page_size.width).min(&0.0);
+            self.scroll_offset.x = self.scroll_offset.x.clamp(&min_x, &0.0);
+            let min_y = (window_size.height - page_size.height).min(&0.0);
+            self.scroll_offset.y = self.scroll_offset.y.clamp(&min_y, &0.0);
+
+            // check to see if we scrolled
+            if old_origin - self.scroll_offset == Point2D(0f32, 0f32) {
+                println!(">>> didn't scroll, page size={} window size={}", page_size, window_size);
+                return false;
+            }
+
+            self.root_layer
+                .borrow()
+                .common
+                .with_mut(|common| {
+                    common.set_transform(identity().translate(self.scroll_offset.x,
+                                                              self.scroll_offset.y,
+                                                              0.0))
+                });
+
+            result = true
         }
 
-        // This scroll event is mine!
-        // Scroll this layer!
-        let old_origin = self.scroll_offset;
-        self.scroll_offset = self.scroll_offset + delta;
-
-        // bounds checking
-        let page_size = match self.page_size {
-            Some(size) => size,
-            None => fail!("CompositorLayer: tried to scroll with no page size set"),
-        };
-        let min_x = (window_size.width - page_size.width).min(&0.0);
-        self.scroll_offset.x = self.scroll_offset.x.clamp(&min_x, &0.0);
-        let min_y = (window_size.height - page_size.height).min(&0.0);
-        self.scroll_offset.y = self.scroll_offset.y.clamp(&min_y, &0.0);
-
-        // check to see if we scrolled
-        if old_origin - self.scroll_offset == Point2D(0f32, 0f32) {
-            println!(">>> didn't scroll, page size={} window size={}", page_size, window_size);
-            return false;
+        for kid_holder in self.children.mut_iter() {
+            result = kid_holder.child.scroll(delta, cursor, window_size) || result;
         }
 
-        self.root_layer
-            .borrow()
-            .common
-            .with_mut(|common| {
-                common.set_transform(identity().translate(self.scroll_offset.x,
-                                                          self.scroll_offset.y,
-                                                          0.0))
-            });
-        true
+        result
     }
 
     // Takes in a MouseWindowEvent, determines if it should be passed to children, and 
@@ -575,8 +618,8 @@ impl CompositorLayer {
             return false
         }
 
-        match self.scroll_behavior {
-            Scroll => {
+        match self.scroll_policy {
+            Scrollable => {
                 // Scroll this layer!
                 let old_origin = self.scroll_offset;
                 self.scroll_offset = Point2D(0f32, 0f32) - origin;

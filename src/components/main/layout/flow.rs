@@ -530,12 +530,16 @@ bitfield!(FlowFlags, override_overline, set_override_overline, 0b0000_0100)
 // NB: If you update this, you need to update TEXT_DECORATION_OVERRIDE_BITMASK.
 bitfield!(FlowFlags, override_line_through, set_override_line_through, 0b0000_1000)
 
-// Whether this absolute containing block forces its absolutely-positioned descendants to get their
-// own layers. This is set if and only if the block has fixed-position descendants.
+// Whether this flow contains a flow that has its own layer within the same absolute containing
+// block.
 bitfield!(FlowFlags,
-          positioned_descendants_need_layers,
-          set_positioned_descendants_need_layers,
+          layers_needed_for_descendants,
+          set_layers_needed_for_descendants,
           0b0100_0000)
+
+// Whether this flow must have its own layer. Even if this flag is not set, it might get its own
+// layer if it's deemed to be likely to overlap flows with their own layer.
+bitfield!(FlowFlags, needs_layer, set_needs_layer, 0b1000_0000)
 
 // The text alignment for this flow.
 impl FlowFlags {

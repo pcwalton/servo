@@ -28,7 +28,7 @@ use layers::scene::Scene;
 use opengles::gl2;
 use png;
 use servo_msg::compositor_msg::{Blank, Epoch, FinishedLoading, IdleRenderState, LayerBufferSet};
-use servo_msg::compositor_msg::{LayerId, ReadyState, RenderState, Scroll, ScrollBehavior};
+use servo_msg::compositor_msg::{LayerId, ReadyState, RenderState, ScrollPolicy, Scrollable};
 use servo_msg::constellation_msg::{ConstellationChan, ExitMsg, LoadUrlMsg, NavigateMsg};
 use servo_msg::constellation_msg::{PipelineId, ResizedWindowMsg};
 use servo_msg::constellation_msg;
@@ -385,7 +385,7 @@ impl IOCompositor {
                                                           Size2D(self.window_size.width as f32,
                                                                  self.window_size.height as f32)),
                                                      size,
-                                                     Scroll));
+                                                     Scrollable));
 
             ContainerLayer::add_child_start(self.root_layer.clone(),
                                             ContainerLayerKind(new_layer.root_layer.clone()));
@@ -399,7 +399,7 @@ impl IOCompositor {
                                                        pipeline_id: PipelineId,
                                                        layer_id: LayerId,
                                                        rect: Rect<f32>,
-                                                       scroll_behavior: ScrollBehavior) {
+                                                       scroll_policy: ScrollPolicy) {
         match self.compositor_layer {
             Some(ref mut compositor_layer) => {
                 assert!(compositor_layer.add_child_if_necessary(self.root_layer.clone(),
@@ -408,7 +408,7 @@ impl IOCompositor {
                                                                 layer_id,
                                                                 rect,
                                                                 rect.size,
-                                                                scroll_behavior))
+                                                                scroll_policy))
             }
             None => fail!("Compositor: Received new layer without initialized pipeline"),
         };
@@ -666,7 +666,7 @@ impl IOCompositor {
                                  self.window_size.height as f32 / world_zoom);
         let mut scroll = false;
         for layer in self.compositor_layer.mut_iter() {
-            scroll = layer.scroll(page_delta, page_cursor, page_window) || scroll;
+            scroll = layer.handle_scroll_event(page_delta, page_cursor, page_window) || scroll;
         }
         self.recomposite_if(scroll);
         self.ask_for_tiles();
@@ -692,7 +692,7 @@ impl IOCompositor {
         let page_window = Size2D(window_size.width as f32 / world_zoom,
                                  window_size.height as f32 / world_zoom);
         for layer in self.compositor_layer.mut_iter() {
-            layer.scroll(page_delta, page_cursor, page_window);
+            layer.handle_scroll_event(page_delta, page_cursor, page_window);
         }
 
         self.recomposite = true;

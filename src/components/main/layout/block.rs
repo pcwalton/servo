@@ -33,7 +33,7 @@ use gfx::color;
 use gfx::display_list::{BackgroundAndBorderLevel, BlockLevel, RootOfStackingContextLevel};
 use gfx::display_list::{StackingContext};
 use gfx::render_task::RenderLayer;
-use servo_msg::compositor_msg::{FixedPosition, LayerId};
+use servo_msg::compositor_msg::{FixedPosition, LayerId, Scrollable};
 use servo_util::geometry::Au;
 use servo_util::geometry;
 use servo_util::smallvec::{SmallVec, SmallVec0};
@@ -437,6 +437,32 @@ impl<'a> PostorderFlowTraversal for AbsoluteStoreOverflowTraversal<'a> {
     }
 }
 
+// Propagates the `layers_needed_for_descendants` flag appropriately from a child. This is called
+// as part of height assignment.
+//
+// If any fixed descendants of kids are present, this kid needs a layer.
+//
+// FIXME(pcwalton): This is too layer-happy. Like WebKit, we shouldn't do this unless
+// the positioned descendants are actually on top of the fixed kids.
+//
+// TODO(pcwalton): Do this for CSS transforms and opacity too, at least if they're
+// animating.
+fn propagate_layer_flag_from_child(layers_needed_for_descendants: &mut bool, kid: &mut Flow) {
+    if kid.is_absolute_containing_block() {
+        let kid_base = flow::mut_base(kid);
+        if kid_base.flags_info.flags.needs_layer() {
+            println!("!!! propagating NL");
+            *layers_needed_for_descendants = true
+        }
+    } else {
+        let kid_base = flow::mut_base(kid);
+        if kid_base.flags_info.flags.layers_needed_for_descendants() {
+            println!("!!! propagating LNFD");
+            *layers_needed_for_descendants = true
+        }
+    }
+}
+
 // A block formatting context.
 pub struct BlockFlow {
     /// Data common to all flows.
@@ -776,28 +802,9 @@ impl BlockFlow {
 
         // At this point, cur_y is at the content edge of the flow's box.
         let mut floats = self.base.floats.clone();
-        let mut positioned_descendants_need_layers = false;
+        let mut layers_needed_for_descendants = false;
         for kid in self.base.child_iter() {
-            // If any fixed descendants of kids are present, this kid needs a layer.
-            //
-            // FIXME(pcwalton): This is too layer-happy. Like WebKit, we shouldn't do this unless
-            // the positioned descendants are actually on top of the fixed kids.
-            //
-            // TODO(pcwalton): Do this for CSS transforms and opacity too, at least if they're
-            // animating.
-            if !kid.is_absolute_containing_block() {
-                let kid_base = flow::mut_base(kid);
-                if kid_base.flags_info.flags.positioned_descendants_need_layers() {
-                    positioned_descendants_need_layers = true
-                }
-            }
-
             if kid.is_absolutely_positioned() {
-                // If the kid is fixed, then it needs a layer.
-                if kid.as_block().is_fixed() {
-                    positioned_descendants_need_layers = true
-                }
-
                 // Assume that the *hypothetical box* for an absolute flow starts immediately after
                 // the bottom border edge of the previous flow.
                 kid.as_block().base.position.origin.y = cur_y;
@@ -805,6 +812,8 @@ impl BlockFlow {
                 if inorder {
                     kid.assign_height_inorder(layout_context)
                 }
+
+                propagate_layer_flag_from_child(&mut layers_needed_for_descendants, kid);
 
                 // Skip the collapsing and float processing for absolute flow kids and continue
                 // with the next flow.
@@ -845,6 +854,8 @@ impl BlockFlow {
                     flow::mut_base(kid).position.origin.y = cur_y;
                 }
             }
+
+            propagate_layer_flag_from_child(&mut layers_needed_for_descendants, kid);
 
             // If the child was a float, stop here.
             if kid.is_float() {
@@ -891,7 +902,7 @@ impl BlockFlow {
         self.base
             .flags_info
             .flags
-            .set_positioned_descendants_need_layers(positioned_descendants_need_layers);
+            .set_layers_needed_for_descendants(layers_needed_for_descendants);
 
         self.collect_static_y_offsets_from_kids();
 
@@ -923,9 +934,9 @@ impl BlockFlow {
             // handle this is to just treat this as clearance.
             height = height + floats.clearance(ClearBoth);
 
-            // Fixed position layers get layers, so propagate the flags up to the parent.
+            // Fixed position layers get layers.
             if self.is_fixed() {
-                self.base.flags_info.flags.set_positioned_descendants_need_layers(true)
+                self.base.flags_info.flags.set_needs_layer(true)
             }
 
             // Store the content height for use in calculating the absolute flow's dimensions
@@ -1165,7 +1176,6 @@ impl BlockFlow {
             }
         }
 
-        // TODO: handle any out-of-flow elements
         let this_position = self.base.abs_position;
         for kid in self.base.child_iter() {
             {
@@ -1191,11 +1201,17 @@ impl BlockFlow {
         // Note that this can only be done once we have paint order
         // working cos currently the later boxes paint over the absolute
         // and fixed boxes :|
+        let mut absolute_info = info;
+        absolute_info.layers_needed_for_positioned_flows =
+            self.base.flags_info.flags.layers_needed_for_descendants();
+        if absolute_info.layers_needed_for_positioned_flows {
+            println!("!!! >>> layers needed for positioned flows in this containing block!");
+        }
         for abs_descendant_link in self.base.abs_descendants.iter() {
             match abs_descendant_link.resolve() {
                 Some(flow) => {
                     // TODO(pradeep): Send in our absolute position directly.
-                    flow.build_display_list(stacking_context, builder, &info)
+                    flow.build_display_list(stacking_context, builder, &absolute_info)
                 }
                 None => fail!("empty Rawlink to a descendant")
             }
@@ -1368,25 +1384,32 @@ impl BlockFlow {
                                              Point2D(Au(0), Au(0)),
                                              RootOfStackingContextLevel);
 
-        if !self.is_fixed() {
+        if !info.layers_needed_for_positioned_flows && !self.base.flags_info.flags.needs_layer() {
+            // We didn't need a layer.
+            //
             // TODO(pcwalton): `z-index`.
             parent_stacking_context.positioned_descendants.push((0, stacking_context.flatten()));
             return
         }
 
-        // If we got here, then we're fixed position. Create a new `RenderLayer`.
+        // If we got here, then we need a new layer.
         // 
         // FIXME(pcwalton): The color is wrong!
         let size = Size2D(self.base.position.size.width.to_nearest_px() as uint,
                           self.base.position.size.height.to_nearest_px() as uint);
         let origin = Point2D(info.absolute_containing_block_position.x.to_nearest_px() as uint,
                              info.absolute_containing_block_position.y.to_nearest_px() as uint);
+        let scroll_policy = if self.is_fixed() {
+            FixedPosition
+        } else {
+            Scrollable
+        };
         let new_layer = RenderLayer {
             id: self.layer_id(0),
             display_list: Arc::new(stacking_context.flatten()),
             rect: Rect(origin, size),
             color: color::rgba(255.0, 255.0, 255.0, 0.0),
-            scroll_behavior: FixedPosition,
+            scroll_policy: scroll_policy,
         };
         builder.layers.push(new_layer)
     }

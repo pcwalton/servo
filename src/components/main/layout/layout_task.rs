@@ -42,7 +42,7 @@ use script::layout_interface::{ContentChangedDocumentDamage, LayoutChan, Msg, Pr
 use script::layout_interface::{QueryMsg, ReapLayoutDataMsg, Reflow, UntrustedNodeAddress};
 use script::layout_interface::{ReflowForDisplay, ReflowMsg};
 use script::script_task::{ReflowCompleteMsg, ScriptChan, SendEventMsg};
-use servo_msg::compositor_msg::Scroll;
+use servo_msg::compositor_msg::Scrollable;
 use servo_msg::constellation_msg::{ConstellationChan, PipelineId, Failure, FailureMsg};
 use servo_net::image_cache_task::{ImageCacheTask, ImageResponseMsg};
 use servo_net::local_image_cache::{ImageResponder, LocalImageCache};
@@ -639,7 +639,7 @@ impl LayoutTask {
                 let display_list_building_info = DisplayListBuildingInfo {
                     containing_block_size: flow::base(layout_root).position.size,
                     absolute_containing_block_position: Point2D(Au(0), Au(0)),
-                    positioned_descendants_need_layers: false,
+                    layers_needed_for_positioned_flows: false,
                 };
 
                 layout_root.build_display_list(&mut root_stacking_context,
@@ -686,7 +686,7 @@ impl LayoutTask {
                     display_list: display_list.clone(),
                     rect: Rect(Point2D(0u, 0u), root_size),
                     color: color,
-                    scroll_behavior: Scroll,
+                    scroll_policy: Scrollable,
                 };
 
                 self.display_list = Some(display_list.clone());

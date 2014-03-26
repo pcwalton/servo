@@ -20,7 +20,7 @@ use layers::platform::surface::{NativeSurfaceMethods};
 use layers;
 use servo_msg::compositor_msg::{Epoch, FixedPosition, IdleRenderState, LayerBuffer};
 use servo_msg::compositor_msg::{LayerBufferSet, LayerId, LayerMetadata, RenderListener};
-use servo_msg::compositor_msg::{RenderingRenderState, Scroll, ScrollBehavior};
+use servo_msg::compositor_msg::{RenderingRenderState, Scrollable, ScrollPolicy};
 use servo_msg::constellation_msg::{ConstellationChan, PipelineId, RendererReadyMsg};
 use servo_msg::constellation_msg::{Failure, FailureMsg};
 use servo_msg::platform::surface::NativeSurfaceAzureMethods;
@@ -46,7 +46,7 @@ pub struct RenderLayer {
     /// The color of the background in this layer. Used for unrendered content.
     color: Color,
     /// The scrolling policy of this layer.
-    scroll_behavior: ScrollBehavior,
+    scroll_policy: ScrollPolicy,
 }
 
 pub enum Msg {
@@ -161,7 +161,7 @@ fn initialize_layers<C:RenderListener>(
             id: render_layer.id,
             rect: render_layer.rect,
             color: render_layer.color,
-            scroll_behavior: render_layer.scroll_behavior,
+            scroll_policy: render_layer.scroll_policy,
         }
     }).collect();
     compositor.initialize_layers_for_pipeline(pipeline_id, metadata, epoch);

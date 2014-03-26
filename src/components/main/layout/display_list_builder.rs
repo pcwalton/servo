@@ -31,7 +31,7 @@ pub struct DisplayListBuildingInfo {
     /// The absolute position of the absolute containing block.
     absolute_containing_block_position: Point2D<Au>,
     /// Whether the absolute containing block forces positioned descendants to be layerized.
-    positioned_descendants_need_layers: bool,
+    layers_needed_for_positioned_flows: bool,
 }
 
 //
