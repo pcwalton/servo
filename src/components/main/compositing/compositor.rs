@@ -365,7 +365,6 @@ impl IOCompositor {
                                                           Some(size),
                                                           self.opts.tile_size,
                                                           self.opts.cpu_painting);
-            println!(">>> making new ROOT compositor layer");
 
             {
                 let current_child = self.root_layer.borrow().first_child.borrow();
@@ -719,7 +718,6 @@ impl IOCompositor {
                                                            world_zoom) ||
                                   self.recomposite;
                 self.recomposite = recomposite;
-                println!("ask_for_tiles recomposite={}", recomposite);
             } else {
                 debug!("Compositor: root layer is hidden!");
             }

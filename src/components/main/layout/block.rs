@@ -451,13 +451,11 @@ fn propagate_layer_flag_from_child(layers_needed_for_descendants: &mut bool, kid
     if kid.is_absolute_containing_block() {
         let kid_base = flow::mut_base(kid);
         if kid_base.flags_info.flags.needs_layer() {
-            println!("!!! propagating NL");
             *layers_needed_for_descendants = true
         }
     } else {
         let kid_base = flow::mut_base(kid);
         if kid_base.flags_info.flags.layers_needed_for_descendants() {
-            println!("!!! propagating LNFD");
             *layers_needed_for_descendants = true
         }
     }
@@ -1204,9 +1202,6 @@ impl BlockFlow {
         let mut absolute_info = info;
         absolute_info.layers_needed_for_positioned_flows =
             self.base.flags_info.flags.layers_needed_for_descendants();
-        if absolute_info.layers_needed_for_positioned_flows {
-            println!("!!! >>> layers needed for positioned flows in this containing block!");
-        }
         for abs_descendant_link in self.base.abs_descendants.iter() {
             match abs_descendant_link.resolve() {
                 Some(flow) => {

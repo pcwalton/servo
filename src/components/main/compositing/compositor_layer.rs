@@ -128,7 +128,6 @@ pub enum WantsScrollEventsFlag {
 
 fn create_container_layer_from_rect(rect: Rect<f32>) -> Rc<ContainerLayer> {
     let container = Rc::new(ContainerLayer());
-    println!(">>> scissor is {}", rect);
     container.borrow().scissor.set(Some(rect));
     container.borrow().common.with_mut(|common| {
         common.transform = identity().translate(rect.origin.x, rect.origin.y, 0f32);
@@ -273,7 +272,6 @@ impl CompositorLayer {
             }
         }
 
-        println!(">>> making new CHILD compositor layer with ID {} @ {}", child_layer_id, rect);
         let kid = ~CompositorLayer::new(self.pipeline.clone(),
                                         child_layer_id,
                                         Some(page_size),
@@ -307,11 +305,6 @@ impl CompositorLayer {
                                cursor: Point2D<f32>,
                                window_size: Size2D<f32>)
                                -> bool {
-        println!(">>> scrolling by {}, policy={:?}, offset={:?}",
-                 delta,
-                 self.scroll_policy,
-                 self.scroll_offset);
-
         // If this layer is hidden, neither it nor its children will scroll.
         if self.hidden {
             return false
@@ -372,8 +365,7 @@ impl CompositorLayer {
 
             // check to see if we scrolled
             if old_origin - self.scroll_offset == Point2D(0f32, 0f32) {
-                println!(">>> didn't scroll, page size={} window size={}", page_size, window_size);
-                return false;
+                return false
             }
 
             self.root_layer
@@ -459,7 +451,6 @@ impl CompositorLayer {
                     //
                     // FIXME(pcwalton): We may want to batch these up in the case in which one
                     // page has multiple layers, to avoid the user seeing inconsistent states.
-                    println!("requesting tiles");
                     let msg = ReRenderMsg(request, scale, self.id, self.epoch);
                     self.pipeline.render_chan.try_send(msg);
                 }
@@ -529,7 +520,6 @@ impl CompositorLayer {
                     tmp.get().clone()
                 };
 
-                println!("setting scissor rect to {}", child_node.child.id);
                 child_node.container.borrow().scissor.set(Some(new_rect));
                 match self.quadtree {
                     NoTree(..) => {} // Nothing to do
@@ -545,7 +535,6 @@ impl CompositorLayer {
                 }
                 // If possible, unhide child
                 if child_node.child.hidden && child_node.child.page_size.is_some() {
-                    println!(">>> unhiding child due to clipping rect {}", child_node.child.id);
                     child_node.child.hidden = false;
                 }
                 true
@@ -596,7 +585,6 @@ impl CompositorLayer {
         // Call scroll for bounds checking if the page shrunk. Use (-1, -1) as the cursor position
         // to make sure the scroll isn't propagated downwards.
         self.scroll(Point2D(0f32, 0f32), Point2D(-1f32, -1f32), window_size);
-        println!(">>> unhiding child due to resize {}", self.id);
         self.hidden = false;
         self.set_occlusions();
         true
@@ -714,7 +702,6 @@ impl CompositorLayer {
                         // Call scroll for bounds checking if the page shrunk. Use (-1, -1) as the
                         // cursor position to make sure the scroll isn't propagated downwards.
                         child.scroll(Point2D(0f32, 0f32), Point2D(-1f32, -1f32), scissor.size);
-                        println!(">>> unhiding child due to scroll {}", child.id);
                         child.hidden = false;
                     }
                     None => {} // Nothing to do
@@ -742,8 +729,6 @@ impl CompositorLayer {
     pub fn build_layer_tree(&mut self, graphics_context: &NativeCompositingGraphicsContext) {
         // Iterate over the children of the container layer.
         let mut current_layer_child;
-
-        println!(">>> building layer tree for {}", self.id);
 
         // NOTE: work around borrowchk
         {
@@ -779,7 +764,6 @@ impl CompositorLayer {
             current_layer_child = match current_layer_child.clone() {
                 None => {
                     debug!("osmain: adding new texture layer");
-                    println!(">>> adding new texture layer for {}", self.id);
 
                     // Determine, in a platform-specific way, whether we should flip the texture
                     // and which target to use.
@@ -874,10 +858,8 @@ impl CompositorLayer {
         }
 
         debug!("compositor_layer: layers found for add_buffers()");
-        println!("add_buffers: found layer: {}", layer_id);
 
         if self.epoch != epoch {
-            println!("epoch mismatch!");
             debug!("add_buffers: compositor epoch mismatch: {:?} != {:?}, id: {:?}",
                    self.epoch,
                    epoch,
@@ -907,7 +889,6 @@ impl CompositorLayer {
             }
         }
 
-        println!(">>> adding buffers for {}!", self.id);
         self.build_layer_tree(graphics_context);
         return None
     }

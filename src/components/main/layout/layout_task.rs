@@ -699,6 +699,12 @@ impl LayoutTask {
                 } = display_list_builder;
                 layers.push_all_move(sublayers);
 
+                println!("--- begin layers ---");
+                for layer in layers.iter() {
+                    println!("* id {}, scroll policy {:?}", layer.id, layer.scroll_policy);
+                }
+                println!("--- end layers ---");
+
                 debug!("Layout done!");
 
                 self.render_chan.send(RenderMsg(layers));
