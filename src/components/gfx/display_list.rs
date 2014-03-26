@@ -295,14 +295,14 @@ pub struct BorderDisplayItem {
     style: SideOffsets2D<border_style::T>
 }
 
-/// Renders a line segment
+/// Renders a line segment.
 pub struct LineDisplayItem {
     base: BaseDisplayItem,
 
     /// The line segment color.
     color: Color,
 
-    /// The line segemnt style.
+    /// The line segment style.
     style: border_style::T
 }
 

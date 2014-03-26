@@ -11,7 +11,7 @@ use css::select::new_stylist;
 use css::node_style::StyledNode;
 use layout::construct::{FlowConstructionResult, NoConstructionResult};
 use layout::context::LayoutContext;
-use layout::display_list_builder::{DisplayListBuilder, ToGfxColor};
+use layout::display_list_builder::{DisplayListBuilder, DisplayListBuildingInfo, ToGfxColor};
 use layout::flow::{Flow, ImmutableFlowUtils, MutableFlowUtils, MutableOwnedFlowUtils};
 use layout::flow::{PreorderFlowTraversal, PostorderFlowTraversal};
 use layout::flow;
@@ -630,20 +630,21 @@ impl LayoutTask {
         // Build the display list if necessary, and send it to the renderer.
         if data.goal == ReflowForDisplay {
             profile(time::LayoutDispListBuildCategory, self.profiler_chan.clone(), || {
-                let root_size = flow::base(layout_root).position.size;
-                let root_abs_position = Point2D(Au::new(0), Au::new(0));
                 let mut root_stacking_context = StackingContext::new();
-                let dirty = flow::base(layout_root).position.clone();
                 let mut display_list_builder = DisplayListBuilder {
                     ctx: &layout_ctx,
                     layers: SmallVec0::new(),
+                    dirty: flow::base(layout_root).position.clone(),
+                };
+                let display_list_building_info = DisplayListBuildingInfo {
+                    containing_block_size: flow::base(layout_root).position.size,
+                    absolute_containing_block_position: Point2D(Au(0), Au(0)),
+                    positioned_descendants_need_layers: false,
                 };
 
                 layout_root.build_display_list(&mut root_stacking_context,
                                                &mut display_list_builder,
-                                               &root_size,
-                                               root_abs_position,
-                                               &dirty);
+                                               &display_list_building_info);
 
                 let display_list = Arc::new(root_stacking_context.flatten());
 
@@ -674,8 +675,12 @@ impl LayoutTask {
                     }
                 }
 
-                let root_size = Size2D(root_size.width.to_nearest_px() as uint,
-                                       root_size.height.to_nearest_px() as uint);
+                let root_size = Size2D(display_list_building_info.containing_block_size
+                                                                 .width
+                                                                 .to_nearest_px() as uint,
+                                       display_list_building_info.containing_block_size
+                                                                 .height
+                                                                 .to_nearest_px() as uint);
                 let render_layer = RenderLayer {
                     id: layout_root.layer_id(0),
                     display_list: display_list.clone(),

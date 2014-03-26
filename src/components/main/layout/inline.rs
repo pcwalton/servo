@@ -6,7 +6,7 @@ use css::node_style::StyledNode;
 use layout::box_::{Box, CannotSplit, GenericBox, IframeBox, ImageBox, InlineInfo, ScannedTextBox};
 use layout::box_::{SplitDidFit, SplitDidNotFit, UnscannedTextBox};
 use layout::context::LayoutContext;
-use layout::display_list_builder::DisplayListBuilder;
+use layout::display_list_builder::{DisplayListBuilder, DisplayListBuildingInfo};
 use layout::floats::{FloatLeft, Floats, PlacementInfo};
 use layout::flow::{BaseFlow, FlowClass, Flow, InlineFlowClass};
 use layout::flow;
@@ -484,10 +484,9 @@ impl InlineFlow {
     pub fn build_display_list_inline(&self,
                                      stacking_context: &mut StackingContext,
                                      builder: &DisplayListBuilder,
-                                     container_block_size: &Size2D<Au>,
-                                     dirty: &Rect<Au>) {
+                                     info: &DisplayListBuildingInfo) {
         let abs_rect = Rect(self.base.abs_position, self.base.position.size);
-        if !abs_rect.intersects(dirty) {
+        if !abs_rect.intersects(&builder.dirty) {
             return
         }
 
@@ -496,10 +495,10 @@ impl InlineFlow {
         debug!("Flow: building display list for {:u} inline boxes", self.boxes.len());
 
         for box_ in self.boxes.iter() {
-            let rel_offset: Point2D<Au> = box_.relative_position(container_block_size);
+            let rel_offset: Point2D<Au> = box_.relative_position(&info.containing_block_size);
             box_.build_display_list(stacking_context,
                                     builder,
-                                    dirty,
+                                    info,
                                     self.base.abs_position + rel_offset,
                                     (&*self) as &Flow,
                                     ContentLevel);

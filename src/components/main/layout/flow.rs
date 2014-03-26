@@ -30,7 +30,7 @@ use layout::block::BlockFlow;
 use layout::box_::Box;
 use layout::construct::OptVector;
 use layout::context::LayoutContext;
-use layout::display_list_builder::{DisplayListBuilder, ToGfxColor};
+use layout::display_list_builder::{DisplayListBuilder, DisplayListBuildingInfo, ToGfxColor};
 use layout::floats::Floats;
 use layout::flow_list::{FlowList, Link, Rawlink, FlowListIterator, MutFlowListIterator};
 use layout::incremental::RestyleDamage;
@@ -162,6 +162,11 @@ pub trait Flow {
         false
     }
 
+    /// Returns true if this is an absolute containing block.
+    fn is_absolute_containing_block(&self) -> bool {
+        false
+    }
+
     /// Return the dimensions of the CB generated _by_ this flow for absolute descendants.
     fn generated_cb_size(&self) -> Size2D<Au> {
         fail!("generated_cb_size not yet implemented")
@@ -271,9 +276,7 @@ pub trait MutableFlowUtils {
     fn build_display_list(self,
                           stacking_context: &mut StackingContext,
                           builder: &mut DisplayListBuilder,
-                          container_block_size: &Size2D<Au>,
-                          absolute_cb_abs_position: Point2D<Au>,
-                          dirty: &Rect<Au>);
+                          info: &DisplayListBuildingInfo);
 
     /// Destroys the flow.
     fn destroy(self);
@@ -526,6 +529,13 @@ bitfield!(FlowFlags, override_overline, set_override_overline, 0b0000_0100)
 //
 // NB: If you update this, you need to update TEXT_DECORATION_OVERRIDE_BITMASK.
 bitfield!(FlowFlags, override_line_through, set_override_line_through, 0b0000_1000)
+
+// Whether this absolute containing block forces its absolutely-positioned descendants to get their
+// own layers. This is set if and only if the block has fixed-position descendants.
+bitfield!(FlowFlags,
+          positioned_descendants_need_layers,
+          set_positioned_descendants_need_layers,
+          0b0100_0000)
 
 // The text alignment for this flow.
 impl FlowFlags {
@@ -931,35 +941,21 @@ impl<'a> MutableFlowUtils for &'a mut Flow {
     /// * `stacking_context`: The parent stacking context that this flow belongs to and to which
     ///   display items will be added.
     ///
-    /// * `container_block_size`: The size of the *containing block* for the current flow. This is
-    ///   used for relative positioning (which resolves percentage values for `top`, etc. after all
-    ///   containing block heights have been computed).
+    /// * `builder`: The display list builder, which contains information used during the entire
+    ///   display list building pass.
     ///
-    /// * `absolute_cb_abs_position`: The absolute position of the containing block for the flow if
-    ///   it is absolutely positioned.
-    ///
-    /// * `dirty`: The dirty rectangle. Display lists will not be created for blocks that do not
-    ///   intersect this rectangle.
+    /// * `info`: Per-flow display list building information.
     fn build_display_list(self,
                           stacking_context: &mut StackingContext,
                           builder: &mut DisplayListBuilder,
-                          container_block_size: &Size2D<Au>,
-                          absolute_cb_abs_position: Point2D<Au>,
-                          dirty: &Rect<Au>) {
+                          info: &DisplayListBuildingInfo) {
         debug!("Flow: building display list");
         match self.class() {
             BlockFlowClass => {
-                self.as_block().build_display_list_block(stacking_context,
-                                                         builder,
-                                                         container_block_size,
-                                                         absolute_cb_abs_position,
-                                                         dirty)
+                self.as_block().build_display_list_block(stacking_context, builder, info)
             }
             InlineFlowClass => {
-                self.as_inline().build_display_list_inline(stacking_context,
-                                                           builder,
-                                                           container_block_size,
-                                                           dirty)
+                self.as_inline().build_display_list_inline(stacking_context, builder, info)
             }
         }
     }

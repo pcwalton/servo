@@ -6,19 +6,32 @@
 
 use layout::context::LayoutContext;
 
+use geom::{Point2D, Rect, Size2D};
 use gfx::render_task::RenderLayer;
 use gfx;
+use servo_util::geometry::Au;
 use servo_util::smallvec::SmallVec0;
 use style;
 
 /// Manages the information needed to construct the display list.
-///
-/// FIXME(pcwalton): Throw more information in here instead of threading it around in parameters.
 pub struct DisplayListBuilder<'a> {
     ctx: &'a LayoutContext,
 
     /// A list of render layers that we've built up, root layer not included.
     layers: SmallVec0<RenderLayer>,
+
+    /// The dirty rect.
+    dirty: Rect<Au>,
+}
+
+/// Information needed at each step of the display list building traversal.
+pub struct DisplayListBuildingInfo {
+    /// The size of the containing block.
+    containing_block_size: Size2D<Au>,
+    /// The absolute position of the absolute containing block.
+    absolute_containing_block_position: Point2D<Au>,
+    /// Whether the absolute containing block forces positioned descendants to be layerized.
+    positioned_descendants_need_layers: bool,
 }
 
 //

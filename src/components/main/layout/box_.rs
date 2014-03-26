@@ -7,7 +7,7 @@
 use css::node_style::StyledNode;
 use layout::construct::FlowConstructor;
 use layout::context::LayoutContext;
-use layout::display_list_builder::{DisplayListBuilder, ToGfxColor};
+use layout::display_list_builder::{DisplayListBuilder, DisplayListBuildingInfo, ToGfxColor};
 use layout::floats::{ClearBoth, ClearLeft, ClearRight, ClearType};
 use layout::flow::{Flow, FlowFlagsInfo};
 use layout::flow;
@@ -1140,7 +1140,7 @@ impl Box {
     pub fn build_display_list(&self,
                               stacking_context: &mut StackingContext,
                               builder: &DisplayListBuilder,
-                              dirty: &Rect<Au>,
+                              info: &DisplayListBuildingInfo,
                               flow_origin: Point2D<Au>,
                               flow: &Flow,
                               background_and_border_level: BackgroundAndBorderLevel) {
@@ -1151,13 +1151,13 @@ impl Box {
                box_bounds,
                absolute_box_bounds,
                self.debug_str());
-        debug!("Box::build_display_list: dirty={}, flow_origin={}", *dirty, flow_origin);
+        debug!("Box::build_display_list: dirty={}, flow_origin={}", builder.dirty, flow_origin);
 
         if self.style().InheritedBox.get().visibility != visibility::visible {
             return
         }
 
-        if !absolute_box_bounds.intersects(dirty) {
+        if !absolute_box_bounds.intersects(&builder.dirty) {
             debug!("Box::build_display_list: Did not intersect...");
             return
         }

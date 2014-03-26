@@ -15,7 +15,7 @@
 use layout::box_::{Box, ImageBox, MainBoxKind, ScannedTextBox};
 use layout::construct::FlowConstructor;
 use layout::context::LayoutContext;
-use layout::display_list_builder::DisplayListBuilder;
+use layout::display_list_builder::{DisplayListBuilder, DisplayListBuildingInfo};
 use layout::floats::{ClearBoth, ClearLeft, ClearRight, FloatKind, Floats, PlacementInfo};
 use layout::flow::{BaseFlow, BlockFlowClass, FlowClass, Flow, ImmutableFlowUtils};
 use layout::flow::{MutableFlowUtils, PreorderFlowTraversal, PostorderFlowTraversal, mut_base};
@@ -776,8 +776,28 @@ impl BlockFlow {
 
         // At this point, cur_y is at the content edge of the flow's box.
         let mut floats = self.base.floats.clone();
+        let mut positioned_descendants_need_layers = false;
         for kid in self.base.child_iter() {
+            // If any fixed descendants of kids are present, this kid needs a layer.
+            //
+            // FIXME(pcwalton): This is too layer-happy. Like WebKit, we shouldn't do this unless
+            // the positioned descendants are actually on top of the fixed kids.
+            //
+            // TODO(pcwalton): Do this for CSS transforms and opacity too, at least if they're
+            // animating.
+            if !kid.is_absolute_containing_block() {
+                let kid_base = flow::mut_base(kid);
+                if kid_base.flags_info.flags.positioned_descendants_need_layers() {
+                    positioned_descendants_need_layers = true
+                }
+            }
+
             if kid.is_absolutely_positioned() {
+                // If the kid is fixed, then it needs a layer.
+                if kid.as_block().is_fixed() {
+                    positioned_descendants_need_layers = true
+                }
+
                 // Assume that the *hypothetical box* for an absolute flow starts immediately after
                 // the bottom border edge of the previous flow.
                 kid.as_block().base.position.origin.y = cur_y;
@@ -868,6 +888,11 @@ impl BlockFlow {
             translate_including_floats(&mut cur_y, delta, inorder, &mut floats);
         }
 
+        self.base
+            .flags_info
+            .flags
+            .set_positioned_descendants_need_layers(positioned_descendants_need_layers);
+
         self.collect_static_y_offsets_from_kids();
 
         // Add in our bottom margin and compute our collapsible margins.
@@ -897,6 +922,11 @@ impl BlockFlow {
             // The content height includes all the floats per CSS 2.1 § 10.6.7. The easiest way to
             // handle this is to just treat this as clearance.
             height = height + floats.clearance(ClearBoth);
+
+            // Fixed position layers get layers, so propagate the flags up to the parent.
+            if self.is_fixed() {
+                self.base.flags_info.flags.set_positioned_descendants_need_layers(true)
+            }
 
             // Store the content height for use in calculating the absolute flow's dimensions
             // later.
@@ -1108,19 +1138,18 @@ impl BlockFlow {
     fn build_display_list_block_common(&mut self,
                                        stacking_context: &mut StackingContext,
                                        builder: &mut DisplayListBuilder,
-                                       container_block_size: &Size2D<Au>,
-                                       mut absolute_cb_abs_position: Point2D<Au>,
-                                       dirty: &Rect<Au>,
+                                       info: &DisplayListBuildingInfo,
                                        offset: Point2D<Au>,
                                        background_border_level: BackgroundAndBorderLevel) {
+        let mut info = *info;
         let mut rel_offset = Point2D(Au(0), Au(0));
         for fragment in self.box_.iter() {
-            rel_offset = fragment.relative_position(container_block_size);
+            rel_offset = fragment.relative_position(&info.containing_block_size);
 
             // Add the box that starts the block context.
             fragment.build_display_list(stacking_context,
                                         builder,
-                                        dirty,
+                                        &info,
                                         self.base.abs_position + rel_offset + offset,
                                         (&*self) as &Flow,
                                         background_border_level);
@@ -1130,7 +1159,8 @@ impl BlockFlow {
             // on the other hand, only established if we are positioned.
             let container_block_size = fragment.content_box_size();
             if self.is_positioned() {
-                absolute_cb_abs_position = self.base.abs_position + self.generated_cb_position() +
+                info.absolute_containing_block_position = self.base.abs_position +
+                    self.generated_cb_position() +
                     fragment.relative_position(&container_block_size)
             }
         }
@@ -1149,11 +1179,7 @@ impl BlockFlow {
                 continue
             }
 
-            kid.build_display_list(stacking_context,
-                                   builder,
-                                   container_block_size,
-                                   absolute_cb_abs_position,
-                                   dirty);
+            kid.build_display_list(stacking_context, builder, &info);
         }
 
         // Process absolute descendant links.
@@ -1168,12 +1194,8 @@ impl BlockFlow {
         for abs_descendant_link in self.base.abs_descendants.iter() {
             match abs_descendant_link.resolve() {
                 Some(flow) => {
-                    // TODO(pradeep): Send in your abs_position directly.
-                    flow.build_display_list(stacking_context,
-                                            builder,
-                                            container_block_size,
-                                            absolute_cb_abs_position,
-                                            dirty)
+                    // TODO(pradeep): Send in our absolute position directly.
+                    flow.build_display_list(stacking_context, builder, &info)
                 }
                 None => fail!("empty Rawlink to a descendant")
             }
@@ -1183,13 +1205,7 @@ impl BlockFlow {
         if self.is_root() {
             for fixed_descendant_link in self.base.fixed_descendants.iter() {
                 match fixed_descendant_link.resolve() {
-                    Some(flow) => {
-                        flow.build_display_list(stacking_context,
-                                                builder,
-                                                container_block_size,
-                                                absolute_cb_abs_position,
-                                                dirty);
-                    }
+                    Some(flow) => flow.build_display_list(stacking_context, builder, &info),
                     None => fail!("empty Rawlink to a descendant")
                 }
             }
@@ -1203,30 +1219,17 @@ impl BlockFlow {
     pub fn build_display_list_block(&mut self,
                                     stacking_context: &mut StackingContext,
                                     builder: &mut DisplayListBuilder,
-                                    container_block_size: &Size2D<Au>,
-                                    absolute_cb_abs_position: Point2D<Au>,
-                                    dirty: &Rect<Au>) {
-
+                                    info: &DisplayListBuildingInfo) {
         if self.is_float() {
             // TODO(pcwalton): This is a pseudo-stacking context. We need to merge `z-index: auto`
             // kids into the parent stacking context, when that is supported.
-            self.build_display_list_float(stacking_context,
-                                          builder,
-                                          container_block_size,
-                                          absolute_cb_abs_position,
-                                          dirty)
+            self.build_display_list_float(stacking_context, builder, info)
         } else if self.is_absolutely_positioned() {
-            self.build_display_list_abs(stacking_context,
-                                        builder,
-                                        container_block_size,
-                                        absolute_cb_abs_position,
-                                        dirty)
+            self.build_display_list_abs(stacking_context, builder, info)
         } else {
             self.build_display_list_block_common(stacking_context,
                                                  builder,
-                                                 container_block_size,
-                                                 absolute_cb_abs_position,
-                                                 dirty,
+                                                 info,
                                                  Point2D(Au(0), Au(0)),
                                                  BlockLevel)
         }
@@ -1235,16 +1238,12 @@ impl BlockFlow {
     pub fn build_display_list_float(&mut self,
                                     parent_stacking_context: &mut StackingContext,
                                     builder: &mut DisplayListBuilder,
-                                    container_block_size: &Size2D<Au>,
-                                    absolute_cb_abs_position: Point2D<Au>,
-                                    dirty: &Rect<Au>) {
+                                    info: &DisplayListBuildingInfo) {
         let mut stacking_context = StackingContext::new();
         let float_offset = self.float.get_ref().rel_pos;
         self.build_display_list_block_common(&mut stacking_context,
                                              builder,
-                                             container_block_size,
-                                             absolute_cb_abs_position,
-                                             dirty,
+                                             info,
                                              float_offset,
                                              RootOfStackingContextLevel);
         parent_stacking_context.floats.push_all_move(stacking_context.flatten())
@@ -1346,29 +1345,26 @@ impl BlockFlow {
     pub fn build_display_list_abs(&mut self,
                                   parent_stacking_context: &mut StackingContext,
                                   builder: &mut DisplayListBuilder,
-                                  containing_block_size: &Size2D<Au>,
-                                  absolute_cb_abs_position: Point2D<Au>,
-                                  dirty: &Rect<Au>) {
+                                  info: &DisplayListBuildingInfo) {
         let mut stacking_context = StackingContext::new();
+        let mut info = *info;
 
-        let absolute_cb_abs_position = if self.is_fixed() {
+        info.absolute_containing_block_position = if self.is_fixed() {
             // The viewport is initially at (0, 0).
             self.base.position.origin
         } else {
             // Absolute position of Containing Block + position of absolute flow
             // wrt Containing Block
-            absolute_cb_abs_position + self.base.position.origin
+            info.absolute_containing_block_position + self.base.position.origin
         };
 
         // Set the absolute position, which will be passed down later as part
         // of containing block details for absolute descendants.
-        self.base.abs_position = absolute_cb_abs_position;
+        self.base.abs_position = info.absolute_containing_block_position;
 
         self.build_display_list_block_common(&mut stacking_context,
                                              builder,
-                                             containing_block_size,
-                                             absolute_cb_abs_position,
-                                             dirty,
+                                             &info,
                                              Point2D(Au(0), Au(0)),
                                              RootOfStackingContextLevel);
 
@@ -1383,8 +1379,8 @@ impl BlockFlow {
         // FIXME(pcwalton): The color is wrong!
         let size = Size2D(self.base.position.size.width.to_nearest_px() as uint,
                           self.base.position.size.height.to_nearest_px() as uint);
-        let origin = Point2D(absolute_cb_abs_position.x.to_nearest_px() as uint,
-                             absolute_cb_abs_position.y.to_nearest_px() as uint);
+        let origin = Point2D(info.absolute_containing_block_position.x.to_nearest_px() as uint,
+                             info.absolute_containing_block_position.y.to_nearest_px() as uint);
         let new_layer = RenderLayer {
             id: self.layer_id(0),
             display_list: Arc::new(stacking_context.flatten()),
@@ -1696,6 +1692,10 @@ impl Flow for BlockFlow {
             Some(ref rb) => rb.debug_str(),
             None => ~"",
         })
+    }
+
+    fn is_absolute_containing_block(&self) -> bool {
+        self.is_positioned()
     }
 }
 
