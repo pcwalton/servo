@@ -5,8 +5,8 @@
 //! CSS table formatting contexts.
 
 use layout::box_::Box;
-use layout::block::BlockFlow;
-use layout::block::{WidthAndMarginsComputer, WidthConstraintInput, WidthConstraintSolution};
+use layout::block::{BlockFlow, MarginsMayNotCollapse, WidthAndMarginsComputer};
+use layout::block::{WidthConstraintInput, WidthConstraintSolution};
 use layout::construct::FlowConstructor;
 use layout::context::LayoutContext;
 use layout::display_list_builder::{DisplayListBuilder, DisplayListBuildingInfo};
@@ -133,8 +133,8 @@ impl TableFlow {
     /// inline(always) because this is only ever called by in-order or non-in-order top-level
     /// methods
     #[inline(always)]
-    fn assign_height_table_base(&mut self, ctx: &mut LayoutContext, inorder: bool) {
-        self.block_flow.assign_height_block_base(ctx, inorder)
+    fn assign_height_table_base(&mut self, layout_context: &mut LayoutContext, inorder: bool) {
+        self.block_flow.assign_height_block_base(layout_context, inorder, MarginsMayNotCollapse);
     }
 
     pub fn build_display_list_table(&mut self,
@@ -142,7 +142,7 @@ impl TableFlow {
                                     builder: &mut DisplayListBuilder,
                                     info: &DisplayListBuildingInfo) {
         debug!("build_display_list_table: same process as block flow");
-        self.block_flow.build_display_list_block(stacking_context, builder, info)
+        self.block_flow.build_display_list_block(stacking_context, builder, info);
     }
 }
 

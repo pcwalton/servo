@@ -5,7 +5,7 @@
 //! CSS table formatting contexts.
 
 use layout::box_::Box;
-use layout::block::{BlockFlow, WidthAndMarginsComputer};
+use layout::block::{BlockFlow, MarginsMayNotCollapse, WidthAndMarginsComputer};
 use layout::context::LayoutContext;
 use layout::display_list_builder::{DisplayListBuilder, DisplayListBuildingInfo};
 use layout::flow::{TableCellFlowClass, FlowClass, Flow};
@@ -48,28 +48,10 @@ impl TableCellFlow {
     /// inline(always) because this is only ever called by in-order or non-in-order top-level
     /// methods
     #[inline(always)]
-    fn assign_height_table_cell_base(&mut self, ctx: &mut LayoutContext, inorder: bool) {
-        let (_, mut top_offset, bottom_offset, left_offset) = (Au(0), Au(0), Au(0), Au(0));
-
-        let mut cur_y = top_offset;
-        // CSS 2.1 § 17.5.3. Table cell box height is the minimum height required by the content.
-        let height = cur_y - top_offset;
-
-        // TODO(june0cho): vertical-align of table-cell should be calculated.
-        let mut noncontent_height = Au::new(0);
-        for box_ in self.block_flow.box_.iter() {
-            let mut position = box_.border_box.get();
-
-            // noncontent_height = border_top/bottom + padding_top/bottom of box
-            noncontent_height = box_.noncontent_height();
-
-            position.origin.y = Au(0);
-            position.size.height = height + noncontent_height;
-
-            box_.border_box.set(position);
-        }
-
-        self.block_flow.base.position.size.height = height + noncontent_height;
+    fn assign_height_table_cell_base(&mut self,
+                                     layout_context: &mut LayoutContext,
+                                     inorder: bool) {
+        self.block_flow.assign_height_block_base(layout_context, inorder, MarginsMayNotCollapse)
     }
 
     pub fn build_display_list_table_cell(&mut self,

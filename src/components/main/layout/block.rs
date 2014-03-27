@@ -448,6 +448,12 @@ enum BlockType {
     FloatNonReplacedType,
 }
 
+#[deriving(Clone, Eq)]
+pub enum MarginsMayCollapseFlag {
+    MarginsMayCollapse,
+    MarginsMayNotCollapse,
+}
+
 // Propagates the `layers_needed_for_descendants` flag appropriately from a child. This is called
 // as part of height assignment.
 //
@@ -810,7 +816,10 @@ impl BlockFlow {
     /// `inline(always)` because this is only ever called by in-order or non-in-order top-level
     /// methods
     #[inline(always)]
-    pub fn assign_height_block_base(&mut self, layout_context: &mut LayoutContext, inorder: bool) {
+    pub fn assign_height_block_base(&mut self,
+                                    layout_context: &mut LayoutContext,
+                                    inorder: bool,
+                                    margins_may_collapse: MarginsMayCollapseFlag) {
         // Our current border-box position.
         let mut cur_y = Au(0);
 
@@ -819,7 +828,10 @@ impl BlockFlow {
 
         // Absolute positioning establishes a block formatting context. Don't propagate floats
         // in or out. (But do propagate them between kids.)
-        if inorder && self.is_absolutely_positioned() {
+        if inorder && (self.is_absolutely_positioned()) {
+            self.base.floats = Floats::new();
+        }
+        if margins_may_collapse != MarginsMayCollapse {
             self.base.floats = Floats::new();
         }
 
@@ -831,6 +843,7 @@ impl BlockFlow {
             translate_including_floats(&mut cur_y, top_offset, inorder, &mut self.base.floats);
 
             let can_collapse_top_margin_with_kids =
+                margins_may_collapse == MarginsMayCollapse &&
                 !self.is_absolutely_positioned() &&
                 fragment.border.get().top == Au(0) &&
                 fragment.padding.get().top == Au(0);
@@ -947,6 +960,7 @@ impl BlockFlow {
         // Add in our bottom margin and compute our collapsible margins.
         for fragment in self.box_.iter() {
             let can_collapse_bottom_margin_with_kids =
+                margins_may_collapse == MarginsMayCollapse &&
                 !self.is_absolutely_positioned() &&
                 fragment.border.get().bottom == Au(0) &&
                 fragment.padding.get().bottom == Au(0);
@@ -1457,10 +1471,8 @@ impl BlockFlow {
         }
         let kid_fixed_cb_x_offset = self.base.fixed_static_x_offset + left_content_edge;
 
-        // Left margin edge of kid flow is at our left content edge
+        // This value is used only for table cells.
         let mut kid_left_margin_edge = left_content_edge;
-        // Width of kid flow is our content width
-        let mut kid_width = content_width;
 
         // FIXME(ksh8281): avoid copy
         let flags_info = self.base.flags_info.clone();
@@ -1489,8 +1501,12 @@ impl BlockFlow {
                 Some(ref col_widths) => {
                     // If kid is table_rowgroup or table_row, the column widths info should be
                     // copied from its parent.
+                    let kid_width;
                     if kid.is_table() || kid.is_table_rowgroup() || kid.is_table_row() {
-                        *kid.col_widths() = col_widths.clone()
+                        *kid.col_widths() = col_widths.clone();
+
+                        // Width of kid flow is our content width.
+                        kid_width = content_width
                     } else if kid.is_table_cell() {
                         // If kid is table_cell, the x offset and width for each cell should be
                         // calculated from parent's column widths info.
@@ -1499,8 +1515,16 @@ impl BlockFlow {
                         } else {
                             kid_left_margin_edge + col_widths[i-1]
                         };
+
                         kid_width = col_widths[i]
+                    } else {
+                        // Width of kid flow is our content width.
+                        kid_width = content_width
                     }
+
+                    let kid_base = flow::mut_base(kid);
+                    kid_base.position.origin.x = kid_left_margin_edge;
+                    kid_base.position.size.width = kid_width;
                 }
                 None => {}
             }
@@ -1639,7 +1663,7 @@ impl Flow for BlockFlow {
             self.assign_height_float_inorder();
         } else {
             debug!("assign_height_inorder: assigning height for block");
-            self.assign_height_block_base(ctx, true);
+            self.assign_height_block_base(ctx, true, MarginsMayCollapse);
         }
     }
 
@@ -1660,7 +1684,7 @@ impl Flow for BlockFlow {
                 self.assign_height_inorder(ctx);
                 return;
             }
-            self.assign_height_block_base(ctx, false);
+            self.assign_height_block_base(ctx, false, MarginsMayCollapse);
         }
     }
 

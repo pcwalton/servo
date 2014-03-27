@@ -83,7 +83,7 @@ impl TableRowFlow {
     /// inline(always) because this is only ever called by in-order or non-in-order top-level
     /// methods
     #[inline(always)]
-    fn assign_height_table_row_base(&mut self, ctx: &mut LayoutContext, inorder: bool) {
+    fn assign_height_table_row_base(&mut self, layout_context: &mut LayoutContext, inorder: bool) {
         let (top_offset, bottom_offset, left_offset) = self.initialize_offsets();
 
         let mut cur_y = top_offset;
@@ -91,6 +91,10 @@ impl TableRowFlow {
         // Per CSS 2.1 § 17.5.3, find max_y = max( computed `height`, minimum height of all cells )
         let mut max_y = Au::new(0);
         for kid in self.block_flow.base.child_iter() {
+            if inorder {
+                kid.assign_height_inorder(layout_context)
+            }
+
             for child_box in kid.as_table_cell().box_().iter() {
                 // TODO: Percentage height
                 let child_specified_height = MaybeAuto::from_style(child_box.style().Box.get().height,

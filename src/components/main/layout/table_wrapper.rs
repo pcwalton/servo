@@ -5,12 +5,12 @@
 //! CSS table formatting contexts.
 
 use layout::box_::Box;
-use layout::block::BlockFlow;
-use layout::block::{WidthAndMarginsComputer, WidthConstraintInput, WidthConstraintSolution};
+use layout::block::{BlockFlow, MarginsMayNotCollapse, WidthAndMarginsComputer};
+use layout::block::{WidthConstraintInput, WidthConstraintSolution};
 use layout::construct::FlowConstructor;
 use layout::context::LayoutContext;
 use layout::display_list_builder::{DisplayListBuilder, DisplayListBuildingInfo};
-use layout::floats::{FloatKind};
+use layout::floats::FloatKind;
 use layout::flow::{TableWrapperFlowClass, FlowClass, Flow, ImmutableFlowUtils};
 use layout::flow;
 use layout::model::{MaybeAuto, Specified, Auto, specified};
@@ -104,14 +104,13 @@ impl TableWrapperFlow {
     /// Assign height for table-wrapper flow.
     /// `Assign height` of table-wrapper flow follows a similar process to that of block flow.
     /// 
-    /// TODO(pcwalton): However, table-wrapper flow doesn't consider collapsing margins for flow's
-    /// children and calculating padding/border.
-    ///
     /// inline(always) because this is only ever called by in-order or non-in-order top-level
     /// methods
     #[inline(always)]
-    fn assign_height_table_wrapper_base(&mut self, ctx: &mut LayoutContext, inorder: bool) {
-        self.block_flow.assign_height_block_base(ctx, inorder)
+    fn assign_height_table_wrapper_base(&mut self,
+                                        layout_context: &mut LayoutContext,
+                                        inorder: bool) {
+        self.block_flow.assign_height_block_base(layout_context, inorder, MarginsMayNotCollapse);
     }
 
     pub fn build_display_list_table_wrapper(&mut self,
@@ -119,7 +118,12 @@ impl TableWrapperFlow {
                                             builder: &mut DisplayListBuilder,
                                             info: &DisplayListBuildingInfo) {
         debug!("build_display_list_table_wrapper: same process as block flow");
-        self.block_flow.build_display_list_block(stacking_context, builder, info)
+        self.block_flow.build_display_list_block(stacking_context, builder, info);
+
+        for kid in self.block_flow.base.child_iter() {
+            kid.as_table().block_flow.base.position.size.height =
+                self.block_flow.base.position.size.height;
+        }
     }
 }
 
