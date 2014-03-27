@@ -434,19 +434,18 @@ impl<'ln> TLayoutNode for ThreadSafeLayoutNode<'ln> {
         cast::transmute::<*mut Node,&'a Node>(self.get_jsmanaged().unsafe_get())
     }
     fn first_child(&self) -> Option<ThreadSafeLayoutNode<'ln>> {
-        if self.pseudo != Normal {
+        if self.pseudo == Before {
             return None
         }
 
         if self.has_before_pseudo() {
-            let pseudo_before_node = if self.is_block(Before) {
+            if self.is_block(Before) && self.pseudo == Normal {
                 let pseudo_before_node = ThreadSafeLayoutNode::new_with_pseudo_without_self(&self.node, BeforeBlock);
-                pseudo_before_node
-            } else {
+                return Some(pseudo_before_node)
+            } else if self.pseudo == Normal || self.pseudo == BeforeBlock{
                 let pseudo_before_node = ThreadSafeLayoutNode::new_with_pseudo_without_self(&self.node, Before);
-                pseudo_before_node
-            };
-            return Some(pseudo_before_node)
+                return Some(pseudo_before_node)
+            }
         }
 
         unsafe {
@@ -515,9 +514,8 @@ impl<'ln> ThreadSafeLayoutNode<'ln> {
     unsafe fn next_sibling(&self) -> Option<ThreadSafeLayoutNode<'ln>> {
         if self.pseudo == Before || self.pseudo == BeforeBlock {
             return self.get().first_child_ref().map(|node| self.new_with_this_lifetime(node))
-        } else if self.pseudo == After || self.pseudo == AfterBlock {
-            return None
         }
+
         self.node.get().next_sibling_ref().map(|node| self.new_with_this_lifetime(node))
     }
 
@@ -643,24 +641,36 @@ impl<'a> Iterator<ThreadSafeLayoutNode<'a>> for ThreadSafeLayoutNodeChildrenIter
                 if node.pseudo == After || node.pseudo == AfterBlock {
                     return None
                 }
-                self.current_node = self.current_node.clone().and_then(|node| {
-                    unsafe {
-                        node.next_sibling()
+
+                match self.parent_node {
+                    Some(ref parent_node) => {
+                        if parent_node.pseudo == Normal {
+                            self.current_node = self.current_node.clone().and_then(|node| {
+                                unsafe {
+                                    node.next_sibling()
+                                }
+                            });
+                        } else { 
+                            self.current_node = None; 
+                        }
                     }
-                });
+                    None => {}
+                }
             }
             None => {
                 match self.parent_node {
                     Some(ref parent_node) => {
-                        if parent_node.has_after_pseudo() && parent_node.pseudo == Normal {
-                            let pseudo_after_node = if parent_node.is_block(After) {
+                        if parent_node.has_after_pseudo() {
+                            let pseudo_after_node = if parent_node.is_block(After) && parent_node.pseudo == Normal {
                                 let pseudo_after_node = ThreadSafeLayoutNode::new_with_pseudo_without_self(&parent_node.node, AfterBlock);
-                                pseudo_after_node
-                            } else {
+                                Some(pseudo_after_node)
+                            } else if parent_node.pseudo == Normal || parent_node.pseudo == AfterBlock {
                                 let pseudo_after_node = ThreadSafeLayoutNode::new_with_pseudo_without_self(&parent_node.node, After);
-                                pseudo_after_node
+                                Some(pseudo_after_node)
+                            } else {
+                                None
                             };
-                            self.current_node = Some(pseudo_after_node);
+                            self.current_node = pseudo_after_node;
                             return self.current_node.clone()
                         }
                    }
@@ -668,6 +678,7 @@ impl<'a> Iterator<ThreadSafeLayoutNode<'a>> for ThreadSafeLayoutNodeChildrenIter
                 }
             }
         }
+
         node
     }
 }

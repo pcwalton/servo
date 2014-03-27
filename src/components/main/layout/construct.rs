@@ -433,28 +433,6 @@ impl<'a> FlowConstructor<'a> {
         let mut abs_descendants = Descendants::new();
         let mut fixed_descendants = Descendants::new();
 
-        if node.get_element_type() == BeforeBlock {
-            let pseudo_before_node = node.new_with_pseudo(Before);
-            self.process(&pseudo_before_node);
-            self.build_block_flow_using_children_construction_result(&mut flow,
-                                                                          node,
-                                                                          pseudo_before_node.swap_out_construction_result(),
-                                                                          &mut opt_boxes_for_inline_flow,
-                                                                          &mut abs_descendants,
-                                                                          &mut fixed_descendants,
-                                                                          &mut first_box);
-        } else if node.get_element_type() == AfterBlock {
-            let pseudo_after_node = node.new_with_pseudo(After);
-            self.process(&pseudo_after_node);
-            self.build_block_flow_using_children_construction_result(&mut flow,
-                                                                          node,
-                                                                          pseudo_after_node.swap_out_construction_result(),
-                                                                          &mut opt_boxes_for_inline_flow,
-                                                                          &mut abs_descendants,
-                                                                          &mut fixed_descendants,
-                                                                          &mut first_box);
-        }
-
         for kid in node.children() {
             if kid.get_element_type() != Normal {
                 self.process(&kid);
