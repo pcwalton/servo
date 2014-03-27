@@ -1457,6 +1457,11 @@ impl BlockFlow {
         }
         let kid_fixed_cb_x_offset = self.base.fixed_static_x_offset + left_content_edge;
 
+        // Left margin edge of kid flow is at our left content edge
+        let mut kid_left_margin_edge = left_content_edge;
+        // Width of kid flow is our content width
+        let mut kid_width = content_width;
+
         // FIXME(ksh8281): avoid copy
         let flags_info = self.base.flags_info.clone();
         for kid in self.base.child_iter() {
@@ -1474,6 +1479,27 @@ impl BlockFlow {
 
             if !child_base.flags_info.flags.inorder() {
                 child_base.floats = Floats::new();
+            }
+
+            // Handle tables.
+            match opt_col_widths {
+                Some(ref col_widths) => {
+                    // If kid is table_rowgroup or table_row, the column widths info should be
+                    // copied from its parent.
+                    if kid.is_table() || kid.is_table_rowgroup() || kid.is_table_row() {
+                        *kid.col_widths() = col_widths.clone()
+                    } else if kid.is_table_cell() {
+                        // If kid is table_cell, the x offset and width for each cell should be
+                        // calculated from parent's column widths info.
+                        kid_left_margin_edge = if i == 0 {
+                            Au(0)
+                        } else {
+                            kid_left_margin_edge + col_widths[i-1]
+                        };
+                        kid_width = col_widths[i]
+                    }
+                }
+                None => {}
             }
 
             // Per CSS 2.1 § 16.3.1, text decoration propagates to all children in flow.
