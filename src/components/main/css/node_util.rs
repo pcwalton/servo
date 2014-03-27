@@ -5,10 +5,9 @@
 use layout::incremental::RestyleDamage;
 use layout::util::LayoutDataAccess;
 use layout::wrapper::{TLayoutNode, ThreadSafeLayoutNode};
-
+use layout::wrapper::{After, AfterBlock, Before, BeforeBlock, Normal};
 use std::cast;
 use style::ComputedValues;
-use style::Before;
 use sync::Arc;
 
 pub trait NodeUtil {
@@ -27,26 +26,25 @@ impl<'ln> NodeUtil for ThreadSafeLayoutNode<'ln> {
         unsafe {
             let layout_data_ref = self.borrow_layout_data();
             match self.get_element_type() {
-                Some(pseudo_type) => {
-                    if pseudo_type == Before {
-                        return cast::transmute_region(layout_data_ref.get()
-                                                                     .as_ref()
-                                                                     .unwrap()
-                                                                     .data
-                                                                     .before_style
-                                                                     .as_ref()
-                                                                     .unwrap())
-                    } else {
-                        return cast::transmute_region(layout_data_ref.get()
-                                                                     .as_ref()
-                                                                     .unwrap()
-                                                                     .data
-                                                                     .after_style
-                                                                     .as_ref()
-                                                                     .unwrap())
-                    }
+                Before | BeforeBlock => {
+                     return cast::transmute_region(layout_data_ref.get()
+                                                                  .as_ref()
+                                                                  .unwrap()
+                                                                  .data
+                                                                  .before_style
+                                                                  .as_ref()
+                                                                  .unwrap())
                 }
-                None => {
+                After | AfterBlock => {
+                    return cast::transmute_region(layout_data_ref.get()
+                                                                 .as_ref()
+                                                                 .unwrap()
+                                                                 .data
+                                                                 .after_style
+                                                                 .as_ref()
+                                                                 .unwrap())
+                }
+                Normal => {
                     return cast::transmute_region(layout_data_ref.get()
                                                                  .as_ref()
                                                                  .unwrap()

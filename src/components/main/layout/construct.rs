@@ -34,6 +34,7 @@ use layout::inline::InlineFlow;
 use layout::text::TextRunScanner;
 use layout::util::{LayoutDataAccess, OpaqueNode};
 use layout::wrapper::{PostorderNodeMutTraversal, TLayoutNode, ThreadSafeLayoutNode};
+use layout::wrapper::{Before, BeforeBlock, After, AfterBlock, Normal};
 
 use gfx::font_context::FontContext;
 use script::dom::bindings::codegen::InheritTypes::TextCast;
@@ -45,7 +46,6 @@ use script::dom::node::{TextNodeTypeId};
 use script::dom::text::Text;
 use style::computed_values::{display, position, float, white_space};
 use style::ComputedValues;
-use style::{After, Before};
 
 use servo_util::namespace;
 use servo_util::url::parse_url;
@@ -433,22 +433,33 @@ impl<'a> FlowConstructor<'a> {
         let mut abs_descendants = Descendants::new();
         let mut fixed_descendants = Descendants::new();
 
-        if node.get_element_type() == None && node.has_pseudo(Before) {
-
+        if node.get_element_type() == BeforeBlock {
             let pseudo_before_node = node.new_with_pseudo(Before);
             self.process(&pseudo_before_node);
-
             self.build_block_flow_using_children_construction_result(&mut flow,
-                                                                     node,
-                                                                     pseudo_before_node.swap_out_construction_result(),
-                                                                     &mut opt_boxes_for_inline_flow,
-                                                                     &mut abs_descendants,
-                                                                     &mut fixed_descendants,
-                                                                     &mut first_box);
-
+                                                                          node,
+                                                                          pseudo_before_node.swap_out_construction_result(),
+                                                                          &mut opt_boxes_for_inline_flow,
+                                                                          &mut abs_descendants,
+                                                                          &mut fixed_descendants,
+                                                                          &mut first_box);
+        } else if node.get_element_type() == AfterBlock {
+            let pseudo_after_node = node.new_with_pseudo(After);
+            self.process(&pseudo_after_node);
+            self.build_block_flow_using_children_construction_result(&mut flow,
+                                                                          node,
+                                                                          pseudo_after_node.swap_out_construction_result(),
+                                                                          &mut opt_boxes_for_inline_flow,
+                                                                          &mut abs_descendants,
+                                                                          &mut fixed_descendants,
+                                                                          &mut first_box);
         }
 
         for kid in node.children() {
+            if kid.get_element_type() != Normal {
+                self.process(&kid);
+            }            
+
             self.build_block_flow_using_children_construction_result(&mut flow, 
                                                                      node,
                                                                      kid.swap_out_construction_result(),
@@ -457,22 +468,6 @@ impl<'a> FlowConstructor<'a> {
                                                                      &mut fixed_descendants,
                                                                      &mut first_box);
         }
-
-        if node.get_element_type() == None && node.has_pseudo(After) {
-
-            let pseudo_after_node = node.new_with_pseudo(After);
-            self.process(&pseudo_after_node);
-
-            self.build_block_flow_using_children_construction_result(&mut flow,
-                                                                     node,
-                                                                     pseudo_after_node.swap_out_construction_result(),
-                                                                     &mut opt_boxes_for_inline_flow,
-                                                                     &mut abs_descendants,
-                                                                     &mut fixed_descendants,
-                                                                     &mut first_box);
-
-        }
-
 
         // Perform a final flush of any inline boxes that we were gathering up to handle {ib}
         // splits, after stripping ignorable whitespace.
@@ -752,6 +747,10 @@ impl<'a> PostorderNodeMutTraversal for FlowConstructor<'a> {
     fn process(&mut self, node: &ThreadSafeLayoutNode) -> bool {
         // Get the `display` property for this node, and determine whether this node is floated.
         let (display, float, positioning) = match node.type_id() {
+            ElementNodeTypeId(HTMLPseudoElementTypeId) => {
+                let style = node.style().get();
+                (display::inline, style.Box.get().float, style.Box.get().position)
+            }
             ElementNodeTypeId(_) => {
                 let style = node.style().get();
                 (style.Box.get().display, style.Box.get().float, style.Box.get().position)
@@ -875,14 +874,13 @@ impl<'ln> NodeUtils for ThreadSafeLayoutNode<'ln> {
         match *layout_data_ref.get() {
             Some(ref mut layout_data) =>{
                 match self.get_element_type() {
-                    Some(pseudo_type) => {
-                        if pseudo_type == Before {
-                            layout_data.data.before_flow_construction_result = result
-                        } else {
-                            layout_data.data.after_flow_construction_result = result
-                        }
+                    Before | BeforeBlock => {
+                        layout_data.data.before_flow_construction_result = result
                     },
-                    None => layout_data.data.flow_construction_result = result,
+                    After | AfterBlock => {
+                        layout_data.data.after_flow_construction_result = result
+                    },
+                    Normal => layout_data.data.flow_construction_result = result,
                 }
             },
             None => fail!("no layout data"),
@@ -895,14 +893,13 @@ impl<'ln> NodeUtils for ThreadSafeLayoutNode<'ln> {
         match *layout_data_ref.get() {
             Some(ref mut layout_data) => {
                 match self.get_element_type() {
-                    Some(pseudo_type) => {
-                        if pseudo_type == Before {
-                            return mem::replace(&mut layout_data.data.before_flow_construction_result, NoConstructionResult)
-                        } else {
-                            return mem::replace(&mut layout_data.data.after_flow_construction_result, NoConstructionResult)
-                        }
+                    Before | BeforeBlock => {
+                        return mem::replace(&mut layout_data.data.before_flow_construction_result, NoConstructionResult)
                     },
-                    None => { return mem::replace(&mut layout_data.data.flow_construction_result, NoConstructionResult) },
+                    After | AfterBlock => {
+                        return mem::replace(&mut layout_data.data.after_flow_construction_result, NoConstructionResult)
+                    },
+                    Normal => { return mem::replace(&mut layout_data.data.flow_construction_result, NoConstructionResult) },
                 }               
             }
             None => fail!("no layout data"),

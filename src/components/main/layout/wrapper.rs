@@ -50,8 +50,7 @@ use std::cast;
 use std::cell::{Ref, RefMut};
 use style::{PropertyDeclarationBlock, TElement, TNode, AttrSelector, SpecificNamespace};
 use style::{AnyNamespace};
-use style::computed_values::content;
-use style::{After, Before, PseudoElement};
+use style::computed_values::{content, display};
 use layout::util::LayoutDataWrapper;
 
 /// Allows some convenience methods on generic layout nodes.
@@ -391,13 +390,22 @@ fn get_content(content_list: &content::T) -> ~str{
     }
 }
 
+#[deriving(Eq, Clone)]
+pub enum ElementType {
+    Normal,
+    Before,
+    After,
+    BeforeBlock,
+    AfterBlock,
+}
+
 /// A thread-safe version of `LayoutNode`, used during flow construction. This type of layout
 /// node does not allow any parents or siblings of nodes to be accessed, to avoid races.
 pub struct ThreadSafeLayoutNode<'ln> {
     /// The wrapped node.
     priv node: LayoutNode<'ln>,
 
-    priv pseudo: Option<PseudoElement>,
+    priv pseudo: ElementType,
 }
 
 impl<'ln> TLayoutNode for ThreadSafeLayoutNode<'ln> {
@@ -408,12 +416,12 @@ impl<'ln> TLayoutNode for ThreadSafeLayoutNode<'ln> {
                 node: node.transmute_copy(),
                 chain: self.node.chain,
             },
-            pseudo: None,
+            pseudo: Normal,
         }
     }
    
     fn type_id(&self) -> NodeTypeId {
-        if self.pseudo.is_some() {
+        if self.pseudo == Before || self.pseudo == After {
             return ElementNodeTypeId(HTMLPseudoElementTypeId)
         } else {
             return self.node.type_id()
@@ -426,8 +434,19 @@ impl<'ln> TLayoutNode for ThreadSafeLayoutNode<'ln> {
         cast::transmute::<*mut Node,&'a Node>(self.get_jsmanaged().unsafe_get())
     }
     fn first_child(&self) -> Option<ThreadSafeLayoutNode<'ln>> {
-        if self.pseudo.is_some() {
+        if self.pseudo != Normal {
             return None
+        }
+
+        if self.has_before_pseudo() {
+            let pseudo_before_node = if self.is_block(Before) {
+                let pseudo_before_node = ThreadSafeLayoutNode::new_with_pseudo_without_self(&self.node, BeforeBlock);
+                pseudo_before_node
+            } else {
+                let pseudo_before_node = ThreadSafeLayoutNode::new_with_pseudo_without_self(&self.node, Before);
+                pseudo_before_node
+            };
+            return Some(pseudo_before_node)
         }
 
         unsafe {
@@ -435,27 +454,24 @@ impl<'ln> TLayoutNode for ThreadSafeLayoutNode<'ln> {
         }
     }
     fn text(&self) -> ~str {
-        match self.pseudo {
-            Some(pseudo_type) => {
-                let layout_data_ref = self.borrow_layout_data();
-                let node_ldw = layout_data_ref.get().get_ref();
+        if self.pseudo == Before || self.pseudo == After {
+            let layout_data_ref = self.borrow_layout_data();
+            let node_ldw = layout_data_ref.get().get_ref();
 
-                if pseudo_type == Before {
-                    let before_style = node_ldw.data.before_style.get_ref();
-                    return get_content(&before_style.get().Box.get().content)
-                } else {
-                    let after_style = node_ldw.data.after_style.get_ref();
-                    return get_content(&after_style.get().Box.get().content)
-                }
+            if self.pseudo == Before {
+                let before_style = node_ldw.data.before_style.get_ref();
+                return get_content(&before_style.get().Box.get().content)
+            } else {
+                let after_style = node_ldw.data.after_style.get_ref();
+                return get_content(&after_style.get().Box.get().content)
             }
-            None => {
-                unsafe {
-                    if !self.get().is_text() {
-                        fail!("not text!")
-                    }
-                    let text: JS<Text> = self.get_jsmanaged().transmute_copy();
-                    (*text.unsafe_get()).characterdata.data.to_str()
+        } else {
+            unsafe {
+                if !self.get().is_text() {
+                    fail!("not text!")
                 }
+                let text: JS<Text> = self.get_jsmanaged().transmute_copy();
+                (*text.unsafe_get()).characterdata.data.to_str()
             }
         }
     }
@@ -475,20 +491,33 @@ impl<'ln> ThreadSafeLayoutNode<'ln> {
     pub fn new<'a>(node: &LayoutNode<'a>) -> ThreadSafeLayoutNode<'a> {
         ThreadSafeLayoutNode {
             node: node.clone(),
-            pseudo: None,
+            pseudo: Normal,
         }
     }
 
+    pub fn new_with_pseudo_without_self<'a>(node: &LayoutNode<'a>, element_type: ElementType) -> ThreadSafeLayoutNode<'a> {
+         ThreadSafeLayoutNode {
+             node: node.clone(),
+             pseudo: element_type,
+         }
+    }
+
+
     /// Creates a new `ThreadSafeLayoutNode` from the given `LayoutNode`.
-    pub fn new_with_pseudo<'a>(&'a self, pseudo: PseudoElement) -> ThreadSafeLayoutNode<'a> {
+    pub fn new_with_pseudo<'a>(&'a self, element_type: ElementType) -> ThreadSafeLayoutNode<'a> {
         ThreadSafeLayoutNode {
             node: self.node.clone(),
-            pseudo: Some(pseudo),
+            pseudo: element_type,
         }
     }
 
     /// Returns the next sibling of this node. Unsafe and private because this can lead to races.
     unsafe fn next_sibling(&self) -> Option<ThreadSafeLayoutNode<'ln>> {
+        if self.pseudo == Before || self.pseudo == BeforeBlock {
+            return self.get().first_child_ref().map(|node| self.new_with_this_lifetime(node))
+        } else if self.pseudo == After || self.pseudo == AfterBlock {
+            return None
+        }
         self.node.get().next_sibling_ref().map(|node| self.new_with_this_lifetime(node))
     }
 
@@ -496,6 +525,7 @@ impl<'ln> ThreadSafeLayoutNode<'ln> {
     pub fn children(&self) -> ThreadSafeLayoutNodeChildrenIterator<'ln> {
         ThreadSafeLayoutNodeChildrenIterator {
             current_node: self.first_child(),
+            parent_node: Some(ThreadSafeLayoutNode::new_with_pseudo_without_self(&self.node, self.pseudo)),
         }
     }
 
@@ -513,22 +543,46 @@ impl<'ln> ThreadSafeLayoutNode<'ln> {
         }
     }
 
-    pub fn get_element_type(&self) ->  Option<PseudoElement> {
+    pub fn get_element_type(&self) ->  ElementType {
         self.pseudo
     }
 
-    pub fn has_pseudo(&self, kind: PseudoElement) -> bool {
-        let ldw = self.borrow_layout_data();
-        let ldw_ref = ldw.get().get_ref();
-        let has_pseudo = match kind {
-            Before => {
-                ldw_ref.data.before_style.is_some()
+    pub fn is_block(&self, kind: ElementType) -> bool {
+        let mut layout_data_ref = self.mutate_layout_data();
+        let node_ldw = layout_data_ref.get().get_mut_ref();
+
+        let display = match kind {
+            Before | BeforeBlock => {
+                let before_style = node_ldw.data.before_style.get_ref();
+                before_style.get().Box.get().display
             }
-            After => {
-                ldw_ref.data.after_style.is_some()
+            After | AfterBlock => {
+                let after_style = node_ldw.data.after_style.get_ref();
+                after_style.get().Box.get().display
+            }
+            Normal => {
+                let after_style = node_ldw.data.style.get_ref();
+                after_style.get().Box.get().display
             }
         };
-        has_pseudo
+
+        if display == display::block {
+            return true
+        }
+        
+        false
+    }
+
+    pub fn has_before_pseudo(&self) -> bool {
+        let ldw = self.borrow_layout_data();
+        let ldw_ref = ldw.get().get_ref();
+        ldw_ref.data.before_style.is_some()
+    }
+
+    pub fn has_after_pseudo(&self) -> bool {
+        let ldw = self.borrow_layout_data();
+        let ldw_ref = ldw.get().get_ref();
+        ldw_ref.data.after_style.is_some()
     }
 
     /// Borrows the layout data immutably. Fails on a conflicting borrow.
@@ -577,16 +631,43 @@ impl<'ln> ThreadSafeLayoutNode<'ln> {
 
 pub struct ThreadSafeLayoutNodeChildrenIterator<'a> {
     priv current_node: Option<ThreadSafeLayoutNode<'a>>,
+    priv parent_node: Option<ThreadSafeLayoutNode<'a>>,
 }
 
 impl<'a> Iterator<ThreadSafeLayoutNode<'a>> for ThreadSafeLayoutNodeChildrenIterator<'a> {
     fn next(&mut self) -> Option<ThreadSafeLayoutNode<'a>> {
         let node = self.current_node.clone();
-        self.current_node = self.current_node.clone().and_then(|node| {
-            unsafe {
-                node.next_sibling()
+
+        match node {
+            Some(ref node) => {
+                if node.pseudo == After || node.pseudo == AfterBlock {
+                    return None
+                }
+                self.current_node = self.current_node.clone().and_then(|node| {
+                    unsafe {
+                        node.next_sibling()
+                    }
+                });
             }
-        });
+            None => {
+                match self.parent_node {
+                    Some(ref parent_node) => {
+                        if parent_node.has_after_pseudo() && parent_node.pseudo == Normal {
+                            let pseudo_after_node = if parent_node.is_block(After) {
+                                let pseudo_after_node = ThreadSafeLayoutNode::new_with_pseudo_without_self(&parent_node.node, AfterBlock);
+                                pseudo_after_node
+                            } else {
+                                let pseudo_after_node = ThreadSafeLayoutNode::new_with_pseudo_without_self(&parent_node.node, After);
+                                pseudo_after_node
+                            };
+                            self.current_node = Some(pseudo_after_node);
+                            return self.current_node.clone()
+                        }
+                   }
+                   None => {}
+                }
+            }
+        }
         node
     }
 }
