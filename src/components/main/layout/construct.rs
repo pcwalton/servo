@@ -361,30 +361,49 @@ impl<'a> FlowConstructor<'a> {
 
     fn build_block_flow_using_children_construction_result(&mut self,
                                                            flow: &mut ~Flow,
+                                                           consecutive_siblings: &mut ~[~Flow],
                                                            node: &ThreadSafeLayoutNode,
-                                                           construction_result: ConstructionResult,
+                                                           kid: ThreadSafeLayoutNode,
                                                            opt_boxes_for_inline_flow: &mut Option<~[Box]>,
                                                            abs_descendants: &mut Descendants,
                                                            first_box: &mut bool) {
-        match construction_result {
+        match kid.swap_out_construction_result() {
             NoConstructionResult => {}
             FlowConstructionResult(kid_flow, kid_abs_descendants) => {
-                // Strip ignorable whitespace from the start of this flow per CSS 2.1 §
-                // 9.2.1.1.
-                if *first_box {
-                    strip_ignorable_whitespace_from_start(opt_boxes_for_inline_flow);
-                    *first_box = false
-                }
+                // If kid_flow is TableCaptionFlow, kid_flow should be added under
+                // TableWrapperFlow.
+                if flow.is_table() && kid_flow.is_table_caption() {
+                    kid.set_flow_construction_result(FlowConstructionResult(
+                            kid_flow,
+                            Descendants::new()))
+                } else if flow.need_anonymous_flow(kid_flow) {
+                    consecutive_siblings.push(kid_flow)
+                } else {
+                    // Strip ignorable whitespace from the start of this flow per CSS 2.1 §
+                    // 9.2.1.1.
+                    if flow.is_table_kind() || *first_box {
+                        strip_ignorable_whitespace_from_start(opt_boxes_for_inline_flow);
+                        *first_box = false
+                    }
 
-                // Flush any inline boxes that we were gathering up. This allows us to handle
-                // {ib} splits.
-                debug!("flushing {} inline box(es) to flow A",
-                       opt_boxes_for_inline_flow.as_ref()
-                                                .map_or(0, |boxes| boxes.len()));
-                self.flush_inline_boxes_to_flow_if_necessary(opt_boxes_for_inline_flow,
-                                                             flow,
-                                                             node);
-                flow.add_new_child(kid_flow);
+                    // Flush any inline boxes that we were gathering up. This allows us to handle
+                    // {ib} splits.
+                    debug!("flushing {} inline box(es) to flow A",
+                            opt_boxes_for_inline_flow.as_ref()
+                            .map_or(0, |boxes| boxes.len()));
+                    self.flush_inline_boxes_to_flow_or_list_if_necessary(
+                        opt_boxes_for_inline_flow,
+                        flow,
+                        consecutive_siblings,
+                        node);
+                    if !consecutive_siblings.is_empty() {
+                        let consecutive_siblings = mem::replace(consecutive_siblings, ~[]);
+                        self.generate_anonymous_missing_child(consecutive_siblings,
+                                                              flow,
+                                                              node);
+                    }
+                    flow.add_new_child(kid_flow);
+                }
                 abs_descendants.push_descendants(kid_abs_descendants);
             }
             ConstructionItemConstructionResult(InlineBoxesConstructionItem(
@@ -392,7 +411,6 @@ impl<'a> FlowConstructor<'a> {
                         splits: opt_splits,
                         boxes: boxes,
                         abs_descendants: kid_abs_descendants,
-                        fixed_descendants: kid_fixed_descendants,
                     })) => {
                 // Add any {ib} splits.
                 match opt_splits {
@@ -418,16 +436,20 @@ impl<'a> FlowConstructor<'a> {
                             // Flush any inline boxes that we were gathering up.
                             debug!("flushing {} inline box(es) to flow A",
                                    opt_boxes_for_inline_flow.as_ref()
-                                                            .map_or(0,
-                                                                    |boxes| boxes.len()));
-                            self.flush_inline_boxes_to_flow_if_necessary(
+                                                            .map_or(0, |boxes| boxes.len()));
+                            self.flush_inline_boxes_to_flow_or_list_if_necessary(
                                     opt_boxes_for_inline_flow,
                                     flow,
+                                    consecutive_siblings,
                                     node);
 
                             // Push the flow generated by the {ib} split onto our list of
                             // flows.
-                            flow.add_new_child(kid_flow)
+                            if flow.need_anonymous_flow(kid_flow) {
+                                consecutive_siblings.push(kid_flow)
+                            } else {
+                                flow.add_new_child(kid_flow)
+                            }
                         }
                     }
                 }
@@ -439,8 +461,11 @@ impl<'a> FlowConstructor<'a> {
             ConstructionItemConstructionResult(WhitespaceConstructionItem(..)) => {
                 // Nothing to do here.
             }
+            ConstructionItemConstructionResult(TableColumnBoxConstructionItem(_)) => {
+                // TODO: Implement anonymous table objects for missing parents
+                // CSS 2.1 § 17.2.1, step 3-2
+            }
         }
-        
     }
 
     /// Build block flow for current node using information from children nodes.
@@ -467,9 +492,10 @@ impl<'a> FlowConstructor<'a> {
             }            
 
             self.build_block_flow_using_children_construction_result(
-                &mut flow, 
+                &mut flow,
+                &mut consecutive_siblings,
                 node,
-                kid.swap_out_construction_result(),
+                kid,
                 &mut opt_boxes_for_inline_flow,
                 &mut abs_descendants,
                 &mut first_box);
@@ -763,8 +789,10 @@ impl<'a> FlowConstructor<'a> {
 
     /// Generates an anonymous table flow according to CSS 2.1 § 17.2.1, step 2.
     /// If necessary, generate recursively another anonymous table flow.
-    fn generate_anonymous_missing_child(&mut self, child_flows: ~[~Flow],
-                                        flow: &mut ~Flow, node: &ThreadSafeLayoutNode) {
+    fn generate_anonymous_missing_child(&mut self,
+                                        child_flows: ~[~Flow],
+                                        flow: &mut ~Flow,
+                                        node: &ThreadSafeLayoutNode) {
         let mut anonymous_flow = flow.generate_missing_child_flow(node);
         let mut consecutive_siblings = ~[];
         for kid_flow in child_flows.move_iter() {
