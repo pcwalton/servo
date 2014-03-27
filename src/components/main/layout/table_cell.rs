@@ -100,11 +100,13 @@ impl Flow for TableCellFlow {
         for box_ in self.block_flow.box_.iter() {
             let specified_width = MaybeAuto::from_style(box_.style().Box.get().width,
                                                         Au::new(0)).specified_or_zero();
-            if self.block_flow.base.min_width < specified_width {
-                self.block_flow.base.min_width = specified_width;
+            if self.block_flow.base.intrinsic_widths.minimum_width < specified_width {
+                self.block_flow.base.intrinsic_widths.minimum_width = specified_width;
             }
-            if self.block_flow.base.pref_width < self.block_flow.base.min_width {
-                self.block_flow.base.pref_width = self.block_flow.base.min_width;
+            if self.block_flow.base.intrinsic_widths.preferred_width <
+                    self.block_flow.base.intrinsic_widths.minimum_width {
+                self.block_flow.base.intrinsic_widths.preferred_width =
+                    self.block_flow.base.intrinsic_widths.minimum_width;
             }
         }
     }

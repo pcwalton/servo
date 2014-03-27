@@ -293,11 +293,11 @@ impl TableWrapper {
                 let mut col_pref_widths = &~[];
                 for kid in table_wrapper.block_flow.base.child_iter() {
                     if kid.is_table_caption() {
-                        cap_min = kid.as_block().base.min_width;
+                        cap_min = kid.as_block().base.intrinsic_widths.minimum_width;
                     } else {
                         assert!(kid.is_table());
-                        cols_min = kid.as_block().base.min_width;
-                        cols_max = kid.as_block().base.pref_width;
+                        cols_min = kid.as_block().base.intrinsic_widths.minimum_width;
+                        cols_max = kid.as_block().base.intrinsic_widths.preferred_width;
                         col_min_widths = kid.col_min_widths();
                         col_pref_widths = kid.col_pref_widths();
                     }

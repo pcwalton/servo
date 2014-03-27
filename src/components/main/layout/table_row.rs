@@ -189,15 +189,16 @@ impl Flow for TableRowFlow {
 
             // collect min_width & pref_width of children cells for automatic table layout calculation.
             let child_base = flow::mut_base(kid);
-            self.col_min_widths.push(child_base.min_width);
-            self.col_pref_widths.push(child_base.pref_width);
-            min_width = min_width + child_base.min_width;
-            pref_width = pref_width + child_base.pref_width;
+            self.col_min_widths.push(child_base.intrinsic_widths.minimum_width);
+            self.col_pref_widths.push(child_base.intrinsic_widths.preferred_width);
+            min_width = min_width + child_base.intrinsic_widths.minimum_width;
+            pref_width = pref_width + child_base.intrinsic_widths.preferred_width;
             num_floats = num_floats + child_base.num_floats;
         }
         self.block_flow.base.num_floats = num_floats;
-        self.block_flow.base.min_width = min_width;
-        self.block_flow.base.pref_width = geometry::max(min_width, pref_width);
+        self.block_flow.base.intrinsic_widths.minimum_width = min_width;
+        self.block_flow.base.intrinsic_widths.preferred_width = geometry::max(min_width,
+                                                                              pref_width);
     }
 
     /// Recursively (top-down) determines the actual width of child contexts and boxes. When called

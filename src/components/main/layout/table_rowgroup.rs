@@ -182,8 +182,9 @@ impl Flow for TableRowGroupFlow {
         }
 
         self.block_flow.base.num_floats = num_floats;
-        self.block_flow.base.min_width = min_width;
-        self.block_flow.base.pref_width = geometry::max(min_width, pref_width);
+        self.block_flow.base.intrinsic_widths.minimum_width = min_width;
+        self.block_flow.base.intrinsic_widths.preferred_width = geometry::max(min_width,
+                                                                              pref_width);
     }
 
     /// Recursively (top-down) determines the actual width of child contexts and boxes. When called

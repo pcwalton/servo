@@ -1464,21 +1464,24 @@ impl BlockFlow {
 
         // FIXME(ksh8281): avoid copy
         let flags_info = self.base.flags_info.clone();
-        for kid in self.base.child_iter() {
+        for (i, kid) in self.base.child_iter().enumerate() {
             if kid.is_block_flow() {
                 let kid_block = kid.as_block();
                 kid_block.base.absolute_static_x_offset = kid_abs_cb_x_offset;
                 kid_block.base.fixed_static_x_offset = kid_fixed_cb_x_offset;
             }
-            let child_base = flow::mut_base(kid);
-            // Left margin edge of kid flow is at our left content edge
-            child_base.position.origin.x = left_content_edge;
-            // Width of kid flow is our content width
-            child_base.position.size.width = content_width;
-            child_base.flags_info.flags.set_inorder(has_inorder_children);
 
-            if !child_base.flags_info.flags.inorder() {
-                child_base.floats = Floats::new();
+            {
+                let child_base = flow::mut_base(kid);
+                // Left margin edge of kid flow is at our left content edge
+                child_base.position.origin.x = left_content_edge;
+                // Width of kid flow is our content width
+                child_base.position.size.width = content_width;
+                child_base.flags_info.flags.set_inorder(has_inorder_children);
+
+                if !child_base.flags_info.flags.inorder() {
+                    child_base.floats = Floats::new();
+                }
             }
 
             // Handle tables.
@@ -1505,7 +1508,7 @@ impl BlockFlow {
             // Per CSS 2.1 § 16.3.1, text decoration propagates to all children in flow.
             //
             // TODO(pcwalton): When we have out-of-flow children, don't unconditionally propagate.
-
+            let child_base = flow::mut_base(kid);
             child_base.flags_info.propagate_text_decoration_from_parent(&flags_info);
             child_base.flags_info.propagate_text_alignment_from_parent(&flags_info)
         }
