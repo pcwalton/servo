@@ -1128,14 +1128,15 @@ impl BlockFlow {
                                        offset: Point2D<Au>,
                                        background_border_level: BackgroundAndBorderLevel) {
         let mut info = *info;
-        let rel_offset = self.box_.relative_position(&info.relative_containing_block_size);
+        let rel_offset = self.box_.relative_position(&info.relative_containing_block_size, None);
 
         // Add the box that starts the block context.
         self.box_.build_display_list(stacking_context,
                                      builder,
                                      &info,
                                      self.base.abs_position + rel_offset + offset,
-                                     background_border_level);
+                                     background_border_level,
+                                     None);
 
         // For relatively-positioned descendants, the containing block formed by a block is
         // just the content box. The containing block for absolutely-positioned descendants,
@@ -1145,7 +1146,7 @@ impl BlockFlow {
             info.absolute_containing_block_position =
                 self.base.abs_position +
                 self.generated_cb_position() +
-                self.box_.relative_position(&info.relative_containing_block_size)
+                self.box_.relative_position(&info.relative_containing_block_size, None)
         }
 
         let this_position = self.base.abs_position;
@@ -1520,7 +1521,7 @@ impl Flow for BlockFlow {
             self.box_.compute_borders(self.box_.style())
         }
 
-        let box_intrinsic_widths = self.box_.intrinsic_widths();
+        let box_intrinsic_widths = self.box_.intrinsic_widths(None);
         intrinsic_widths.minimum_width = geometry::max(intrinsic_widths.minimum_width,
                                                        box_intrinsic_widths.minimum_width);
         intrinsic_widths.preferred_width = geometry::max(intrinsic_widths.preferred_width,
@@ -2210,7 +2211,7 @@ impl WidthAndMarginsComputer for AbsoluteReplaced {
                               -> MaybeAuto {
         let containing_block_width = block.containing_block_size(ctx.screen_size).width;
         let box_ = block.box_();
-        box_.assign_replaced_width_if_necessary(containing_block_width);
+        box_.assign_replaced_width_if_necessary(containing_block_width, None);
         // For replaced absolute flow, the rest of the constraint solving will
         // take width to be specified as the value computed here.
         Specified(box_.content_width())
@@ -2259,7 +2260,7 @@ impl WidthAndMarginsComputer for BlockReplaced {
                               _: &mut LayoutContext)
                               -> MaybeAuto {
         let box_ = block.box_();
-        box_.assign_replaced_width_if_necessary(parent_flow_width);
+        box_.assign_replaced_width_if_necessary(parent_flow_width, None);
         // For replaced block flow, the rest of the constraint solving will
         // take width to be specified as the value computed here.
         Specified(box_.content_width())
@@ -2317,7 +2318,7 @@ impl WidthAndMarginsComputer for FloatReplaced {
                               _: &mut LayoutContext)
                               -> MaybeAuto {
         let box_ = block.box_();
-        box_.assign_replaced_width_if_necessary(parent_flow_width);
+        box_.assign_replaced_width_if_necessary(parent_flow_width, None);
         // For replaced block flow, the rest of the constraint solving will
         // take width to be specified as the value computed here.
         Specified(box_.content_width())

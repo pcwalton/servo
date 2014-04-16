@@ -10,6 +10,7 @@ use layout::context::LayoutContext;
 use layout::display_list_builder::{DisplayListBuilder, DisplayListBuildingInfo, ToGfxColor};
 use layout::floats::{ClearBoth, ClearLeft, ClearRight, ClearType};
 use layout::flow::Flow;
+use layout::inline::InlineFragmentContext;
 use layout::model::{Auto, IntrinsicWidths, MaybeAuto, Specified, specified};
 use layout::model;
 use layout::util::OpaqueNodeMethods;
@@ -41,10 +42,10 @@ use std::cell::RefCell;
 use std::from_str::FromStr;
 use std::num::Zero;
 use style::{ComputedValues, TElement, TNode, cascade, initial_values};
-use style::computed_values::{LengthOrPercentage, LengthOrPercentageOrAuto, overflow, LPA_Auto};
-use style::computed_values::{background_attachment, background_repeat, border_style, clear};
-use style::computed_values::{font_family, line_height, position, text_align, text_decoration};
-use style::computed_values::{vertical_align, visibility, white_space};
+use style::computed_values::{LengthOrPercentageOrAuto, overflow, LPA_Auto, background_attachment};
+use style::computed_values::{background_repeat, border_style, clear, font_family, line_height};
+use style::computed_values::{position, text_align, text_decoration, vertical_align, visibility};
+use style::computed_values::{white_space};
 use url::Url;
 
 /// Boxes (`struct Box`) are the leaves of the layout tree. They cannot position themselves. In
@@ -95,9 +96,6 @@ pub struct Box {
 
     /// positioned box offsets
     position_offsets: RefCell<SideOffsets2D<Au>>,
-
-    /// Inline data
-    inline_info: RefCell<Option<InlineInfo>>,
 
     /// New-line chracter(\n)'s positions(relative, not absolute)
     new_line_pos: ~[uint],
@@ -290,36 +288,6 @@ pub enum SplitBoxResult {
 }
 
 
-/// Data for inline boxes.
-///
-/// FIXME(#2013, pcwalton): Copying `InlineParentInfo` vectors all the time is really inefficient.
-/// Use atomic reference counting instead.
-#[deriving(Clone)]
-pub struct InlineInfo {
-    parent_info: SmallVec0<InlineParentInfo>,
-    baseline: Au,
-}
-
-impl InlineInfo {
-    pub fn new() -> InlineInfo {
-        InlineInfo {
-            parent_info: SmallVec0::new(),
-            baseline: Au(0),
-        }
-    }
-}
-
-#[deriving(Clone)]
-pub struct InlineParentInfo {
-    padding: SideOffsets2D<Au>,
-    border: SideOffsets2D<Au>,
-    margin: SideOffsets2D<Au>,
-    style: Arc<ComputedValues>,
-    font_ascent: Au,
-    font_descent: Au,
-    node: OpaqueNode,
-}
-
 /// A box that represents a table column.
 #[deriving(Clone)]
 pub struct TableColumnBoxInfo {
@@ -350,62 +318,17 @@ macro_rules! def_noncontent( ($side:ident, $get:ident, $inline_get:ident) => (
             self.border.get().$side + self.padding.get().$side
         }
 
-        pub fn $inline_get(&self) -> Au {
-            let mut val = Au::new(0);
-            let info = self.inline_info.borrow();
-            match &*info {
-                &Some(ref info) => {
-                    for info in info.parent_info.iter() {
-                        val = val + info.border.$side + info.padding.$side;
+        pub fn $inline_get(&self, inline_fragment_context: Option<InlineFragmentContext>) -> Au {
+            let mut val = Au(0);
+            match inline_fragment_context {
+                None => {}
+                Some(inline_fragment_context) => {
+                    for range in inline_fragment_context.ranges() {
+                        val = val + range.border().$side + range.padding().$side
                     }
-                },
-                &None => {}
+                }
             }
             val
-        }
-    }
-))
-
-macro_rules! def_noncontent_horiz( ($side:ident, $merge:ident, $clear:ident) => (
-    impl Box {
-        pub fn $merge(&self, other_box: &Box) {
-            let mut info = self.inline_info.borrow_mut();
-            let other_info = other_box.inline_info.borrow();
-
-            match &*other_info {
-                &Some(ref other_info) => {
-                    match &mut *info {
-                        &Some(ref mut info) => {
-                            for other_item in other_info.parent_info.iter() {
-                                for item in info.parent_info.mut_iter() {
-                                    if item.node == other_item.node {
-                                        item.border.$side = other_item.border.$side;
-                                        item.padding.$side = other_item.padding.$side;
-                                        item.margin.$side = other_item.margin.$side;
-                                        break;
-                                    }
-                                }
-                            }
-                        },
-                        &None => {}
-                    }
-                },
-                &None => {}
-            }
-        }
-
-        pub fn $clear(&self) {
-            let mut info = self.inline_info.borrow_mut();
-            match &mut *info {
-                &Some(ref mut info) => {
-                    for item in info.parent_info.mut_iter() {
-                        item.border.$side = Au::new(0);
-                        item.padding.$side = Au::new(0);
-                        item.margin.$side = Au::new(0);
-                    }
-                },
-                &None => {}
-            }
         }
     }
 ))
@@ -414,9 +337,6 @@ def_noncontent!(left,   noncontent_left,   noncontent_inline_left)
 def_noncontent!(right,  noncontent_right,  noncontent_inline_right)
 def_noncontent!(top,    noncontent_top,    noncontent_inline_top)
 def_noncontent!(bottom, noncontent_bottom, noncontent_inline_bottom)
-
-def_noncontent_horiz!(left,  merge_noncontent_inline_left,  clear_noncontent_inline_left)
-def_noncontent_horiz!(right, merge_noncontent_inline_right, clear_noncontent_inline_right)
 
 impl Box {
     /// Constructs a new `Box` instance for the given node.
@@ -436,7 +356,6 @@ impl Box {
             margin: RefCell::new(Zero::zero()),
             specific: constructor.build_specific_box_info_for_node(node),
             position_offsets: RefCell::new(Zero::zero()),
-            inline_info: RefCell::new(None),
             new_line_pos: ~[],
         }
     }
@@ -452,7 +371,6 @@ impl Box {
             margin: RefCell::new(Zero::zero()),
             specific: specific,
             position_offsets: RefCell::new(Zero::zero()),
-            inline_info: RefCell::new(None),
             new_line_pos: ~[],
         }
     }
@@ -479,7 +397,6 @@ impl Box {
             margin: RefCell::new(Zero::zero()),
             specific: specific,
             position_offsets: RefCell::new(Zero::zero()),
-            inline_info: RefCell::new(None),
             new_line_pos: ~[],
         }
     }
@@ -498,7 +415,6 @@ impl Box {
             margin: RefCell::new(Zero::zero()),
             specific: specific,
             position_offsets: RefCell::new(Zero::zero()),
-            inline_info: RefCell::new(None),
             new_line_pos: ~[],
         }
     }
@@ -523,7 +439,6 @@ impl Box {
             margin: RefCell::new(self.margin.get()),
             specific: specific,
             position_offsets: RefCell::new(Zero::zero()),
-            inline_info: self.inline_info.clone(),
             new_line_pos: self.new_line_pos.clone(),
         }
     }
@@ -553,8 +468,8 @@ impl Box {
         };
 
         let (padding_left, padding_right) = if use_padding {
-            (self.compute_padding_length(style.Padding.get().padding_left, Au(0)),
-             self.compute_padding_length(style.Padding.get().padding_right, Au(0)))
+            (model::specified(style.Padding.get().padding_left, Au(0)),
+             model::specified(style.Padding.get().padding_right, Au(0)))
         } else {
             (Au(0), Au(0))
         };
@@ -584,28 +499,8 @@ impl Box {
     /// FIXME(pcwalton): This should not be necessary. Just go to the style.
     pub fn compute_borders(&self, style: &ComputedValues) {
         let border = match self.specific {
-            TableWrapperBox => {
-                SideOffsets2D::new(Au(0), Au(0), Au(0), Au(0))
-            },
-            _ => {
-                #[inline]
-                fn width(width: Au, style: border_style::T) -> Au {
-                    if style == border_style::none {
-                        Au(0)
-                    } else {
-                        width
-                    }
-                }
-
-                SideOffsets2D::new(width(style.Border.get().border_top_width,
-                                         style.Border.get().border_top_style),
-                                   width(style.Border.get().border_right_width,
-                                         style.Border.get().border_right_style),
-                                   width(style.Border.get().border_bottom_width,
-                                         style.Border.get().border_bottom_style),
-                                   width(style.Border.get().border_left_width,
-                                         style.Border.get().border_left_style))
-            }
+            TableWrapperBox => SideOffsets2D::new(Au(0), Au(0), Au(0), Au(0)),
+            _ => model::border_from_style(style),
         };
         self.border.set(border)
     }
@@ -653,31 +548,12 @@ impl Box {
             TableColumnBox(_) | TableRowBox | TableWrapperBox => {
                 SideOffsets2D::new(Au(0), Au(0), Au(0), Au(0))
             },
-            GenericBox | IframeBox(_) | ImageBox(_) | TableBox | TableCellBox |
-            ScannedTextBox(_) | UnscannedTextBox(_) => {
-                SideOffsets2D::new(self.compute_padding_length(style.Padding
-                                                                    .get()
-                                                                    .padding_top,
-                                                               containing_block_width),
-                                   self.compute_padding_length(style.Padding
-                                                                    .get()
-                                                                    .padding_right,
-                                                               containing_block_width),
-                                   self.compute_padding_length(style.Padding
-                                                                    .get()
-                                                                    .padding_bottom,
-                                                               containing_block_width),
-                                   self.compute_padding_length(style.Padding
-                                                                    .get()
-                                                                    .padding_left,
-                                                               containing_block_width))
+            GenericBox | IframeBox(_) | ImageBox(_) | TableBox | TableCellBox | ScannedTextBox(_) |
+            UnscannedTextBox(_) => {
+                model::padding_from_style(style, containing_block_width)
             }
         };
         self.padding.set(padding)
-    }
-
-    fn compute_padding_length(&self, padding: LengthOrPercentage, content_box_width: Au) -> Au {
-        specified(padding, content_box_width)
     }
 
     pub fn padding_box_size(&self) -> Size2D<Au> {
@@ -695,7 +571,10 @@ impl Box {
     }
 
     // Return offset from original position because of `position: relative`.
-    pub fn relative_position(&self, container_block_size: &Size2D<Au>) -> Point2D<Au> {
+    pub fn relative_position(&self,
+                             container_block_size: &Size2D<Au>,
+                             inline_fragment_context: Option<InlineFragmentContext>)
+                             -> Point2D<Au> {
         fn left_right(style: &ComputedValues, block_width: Au) -> Au {
             // TODO(ksh8281) : consider RTL(right-to-left) culture
             match (style.PositionOffsets.get().left, style.PositionOffsets.get().right) {
@@ -734,20 +613,20 @@ impl Box {
         }
 
         // Go over the ancestor boxes and add all relative offsets (if any).
-        let info = self.inline_info.borrow();
-        match &*info {
-            &Some(ref info) => {
-                for info in info.parent_info.iter() {
-                    if info.style.get().Box.get().position == position::relative {
-                        rel_pos.x = rel_pos.x + left_right(info.style.get(),
+        match inline_fragment_context {
+            None => {}
+            Some(inline_fragment_context) => {
+                for range in inline_fragment_context.ranges() {
+                    if range.style.get().Box.get().position == position::relative {
+                        rel_pos.x = rel_pos.x + left_right(range.style.get(),
                                                            container_block_size.width);
-                        rel_pos.y = rel_pos.y + top_bottom(info.style.get(),
+                        rel_pos.y = rel_pos.y + top_bottom(range.style.get(),
                                                            container_block_size.height);
                     }
                 }
             },
-            &None => {}
         }
+
         rel_pos
     }
 
@@ -881,76 +760,73 @@ impl Box {
     pub fn paint_inline_background_border_if_applicable(&self,
                                                         list: &mut DisplayList,
                                                         absolute_bounds: &Rect<Au>,
-                                                        offset: &Point2D<Au>) {
+                                                        inline_fragment_context:
+                                                            InlineFragmentContext) {
         // FIXME: This causes a lot of background colors to be displayed when they are clearly not
         // needed. We could use display list optimization to clean this up, but it still seems
         // inefficient. What we really want is something like "nearest ancestor element that
         // doesn't have a box".
-        let info = self.inline_info.borrow();
-        match &*info {
-            &Some(ref box_info) => {
-                let mut bg_rect = absolute_bounds.clone();
-                for info in box_info.parent_info.as_slice().rev_iter() {
-                    // TODO (ksh8281) compute vertical-align, line-height
-                    bg_rect.origin.y = box_info.baseline + offset.y - info.font_ascent;
-                    bg_rect.size.height = info.font_ascent + info.font_descent;
-                    let background_color = info.style.get().resolve_color(
-                        info.style.get().Background.get().background_color);
+        let mut bg_rect = absolute_bounds.clone();
+        for range in inline_fragment_context.ranges() {
+            // TODO(ksh8281): Compute vertical-align, line-height.
+            // TODO(pcwalton): Take font ascent and font descent into account.
+            let background_color = range.style.get().resolve_color(range.style
+                                                                        .get()
+                                                                        .Background
+                                                                        .get()
+                                                                        .background_color);
 
-                    if !background_color.alpha.approx_eq(&0.0) {
-                        let solid_color_display_item = ~SolidColorDisplayItem {
-                            base: BaseDisplayItem {
-                                bounds: bg_rect.clone(),
-                                node: self.node,
-                            },
-                            color: background_color.to_gfx_color(),
-                        };
+            if !background_color.alpha.approx_eq(&0.0) {
+                let solid_color_display_item = ~SolidColorDisplayItem {
+                    base: BaseDisplayItem {
+                        bounds: bg_rect.clone(),
+                        node: self.node,
+                    },
+                    color: background_color.to_gfx_color(),
+                };
 
-                        list.push(SolidColorDisplayItemClass(solid_color_display_item))
-                    }
+                list.push(SolidColorDisplayItemClass(solid_color_display_item))
+            }
 
-                    let border = &info.border;
+            let border = range.border();
+            if border.is_zero() {
+                // Fast path.
+                continue
+            }
 
-                    // Fast path.
-                    if border.is_zero() {
-                        continue
-                    }
+            bg_rect.origin.y = bg_rect.origin.y - border.top;
+            bg_rect.size.height = bg_rect.size.height + border.top + border.bottom;
 
-                    bg_rect.origin.y = bg_rect.origin.y - border.top;
-                    bg_rect.size.height = bg_rect.size.height + border.top + border.bottom;
+            let style = range.style.get();
+            let top_color = style.resolve_color(style.Border.get().border_top_color);
+            let right_color = style.resolve_color(style.Border.get().border_right_color);
+            let bottom_color = style.resolve_color(style.Border.get().border_bottom_color);
+            let left_color = style.resolve_color(style.Border.get().border_left_color);
+            let top_style = style.Border.get().border_top_style;
+            let right_style = style.Border.get().border_right_style;
+            let bottom_style = style.Border.get().border_bottom_style;
+            let left_style = style.Border.get().border_left_style;
 
-                    let style = info.style.get();
-                    let top_color = style.resolve_color(style.Border.get().border_top_color);
-                    let right_color = style.resolve_color(style.Border.get().border_right_color);
-                    let bottom_color = style.resolve_color(style.Border.get().border_bottom_color);
-                    let left_color = style.resolve_color(style.Border.get().border_left_color);
-                    let top_style = style.Border.get().border_top_style;
-                    let right_style = style.Border.get().border_right_style;
-                    let bottom_style = style.Border.get().border_bottom_style;
-                    let left_style = style.Border.get().border_left_style;
+            let border_display_item = ~BorderDisplayItem {
+                base: BaseDisplayItem {
+                    bounds: bg_rect,
+                    node: self.node,
+                },
+                border: border.clone(),
+                color: SideOffsets2D::new(top_color.to_gfx_color(),
+                right_color.to_gfx_color(),
+                bottom_color.to_gfx_color(),
+                left_color.to_gfx_color()),
+                style: SideOffsets2D::new(top_style, right_style, bottom_style, left_style)
+            };
 
-                    let border_display_item = ~BorderDisplayItem {
-                        base: BaseDisplayItem {
-                            bounds: bg_rect,
-                            node: self.node,
-                        },
-                        border: border.clone(),
-                        color: SideOffsets2D::new(top_color.to_gfx_color(),
-                        right_color.to_gfx_color(),
-                        bottom_color.to_gfx_color(),
-                        left_color.to_gfx_color()),
-                        style: SideOffsets2D::new(top_style, right_style, bottom_style, left_style)
-                    };
+            list.push(BorderDisplayItemClass(border_display_item));
 
-                    list.push(BorderDisplayItemClass(border_display_item));
-
-                    bg_rect.origin.x = bg_rect.origin.x + border.left;
-                    bg_rect.size.width = bg_rect.size.width - border.left - border.right;
-                }
-            },
-            &None => {}
+            bg_rect.origin.x = bg_rect.origin.x + border.left;
+            bg_rect.size.width = bg_rect.size.width - border.left - border.right;
         }
     }
+
     /// Adds the display items necessary to paint the background of this box to the display list if
     /// necessary.
     pub fn paint_background_if_applicable(&self,
@@ -1070,7 +946,10 @@ impl Box {
 
     /// Adds the display items necessary to paint the borders of this box to a display list if
     /// necessary.
-    pub fn paint_borders_if_applicable(&self, list: &mut DisplayList, abs_bounds: &Rect<Au>) {
+    pub fn paint_borders_if_applicable(&self,
+                                       list: &mut DisplayList,
+                                       abs_bounds: &Rect<Au>,
+                                       inline_fragment_context: Option<InlineFragmentContext>) {
         // Fast path.
         let border = self.border.get();
         if border.is_zero() {
@@ -1088,9 +967,11 @@ impl Box {
         let left_style = style.Border.get().border_left_style;
 
         let mut abs_bounds = abs_bounds.clone();
-        abs_bounds.origin.x = abs_bounds.origin.x + self.noncontent_inline_left();
-        abs_bounds.size.width = abs_bounds.size.width - self.noncontent_inline_left()
-            - self.noncontent_inline_right();
+        abs_bounds.origin.x = abs_bounds.origin.x +
+            self.noncontent_inline_left(inline_fragment_context);
+        abs_bounds.size.width = abs_bounds.size.width -
+            self.noncontent_inline_left(inline_fragment_context) -
+            self.noncontent_inline_right(inline_fragment_context);
 
         // Append the border to the display list.
         let border_display_item = ~BorderDisplayItem {
@@ -1187,7 +1068,8 @@ impl Box {
                               builder: &DisplayListBuilder,
                               _: &DisplayListBuildingInfo,
                               flow_origin: Point2D<Au>,
-                              background_and_border_level: BackgroundAndBorderLevel) {
+                              background_and_border_level: BackgroundAndBorderLevel,
+                              inline_fragment_context: Option<InlineFragmentContext>) {
         // Box position wrt to the owning flow.
         let box_bounds = self.border_box.get();
         let absolute_box_bounds = box_bounds.translate(&flow_origin);
@@ -1215,9 +1097,14 @@ impl Box {
             // Add a background to the list, if this is an inline.
             //
             // FIXME(pcwalton): This is kind of ugly; merge with the call below?
-            self.paint_inline_background_border_if_applicable(list,
-                                                              &absolute_box_bounds,
-                                                              &flow_origin);
+            match inline_fragment_context {
+                None => {}
+                Some(inline_fragment_context) => {
+                    self.paint_inline_background_border_if_applicable(list,
+                                                                      &absolute_box_bounds,
+                                                                      inline_fragment_context);
+                }
+            }
 
             // Add the background to the list, if applicable.
             self.paint_background_if_applicable(list, builder, &absolute_box_bounds);
@@ -1225,7 +1112,7 @@ impl Box {
             // Add a border, if applicable.
             //
             // TODO: Outlines.
-            self.paint_borders_if_applicable(list, &absolute_box_bounds);
+            self.paint_borders_if_applicable(list, &absolute_box_bounds, inline_fragment_context);
         }
 
         match self.specific {
@@ -1236,12 +1123,11 @@ impl Box {
                 let text_color = self.style().Color.get().color.to_gfx_color();
 
                 // Compute text decorations.
-                let style_text_decoration = self.style().Text.get().text_decoration;
                 let text_decorations_in_effect = self.style()
                                                      .InheritedText
                                                      .get()
                                                      ._servo_text_decorations_in_effect;
-                let mut text_decorations = TextDecorations {
+                let text_decorations = TextDecorations {
                     underline: text_decorations_in_effect.underline.map(|c| c.to_gfx_color()),
                     overline: text_decorations_in_effect.overline.map(|c| c.to_gfx_color()),
                     line_through: text_decorations_in_effect.line_through
@@ -1250,10 +1136,10 @@ impl Box {
 
                 let mut bounds = absolute_box_bounds.clone();
                 bounds.origin.x = bounds.origin.x + self.noncontent_left()
-                                  + self.noncontent_inline_left();
+                                  + self.noncontent_inline_left(inline_fragment_context);
                 bounds.size.width = bounds.size.width - self.noncontent_width()
-                                    - self.noncontent_inline_left()
-                                    - self.noncontent_inline_right();
+                                    - self.noncontent_inline_left(inline_fragment_context)
+                                    - self.noncontent_inline_right(inline_fragment_context);
 
                 // Create the text box.
                 let text_display_item = ~TextDisplayItem {
@@ -1297,11 +1183,12 @@ impl Box {
                 let mut image_ref = image_box.image.borrow_mut();
                 let mut bounds = absolute_box_bounds.clone();
                 bounds.origin.x = bounds.origin.x + self.noncontent_left()
-                                  + self.noncontent_inline_left();
+                                  + self.noncontent_inline_left(inline_fragment_context);
                 bounds.origin.y = bounds.origin.y + self.noncontent_top();
-                bounds.size.width = bounds.size.width
-                                    - self.noncontent_width() - self.noncontent_inline_left()
-                                    - self.noncontent_inline_right();
+                bounds.size.width = bounds.size.width -
+                    self.noncontent_width() -
+                    self.noncontent_inline_left(inline_fragment_context) -
+                    self.noncontent_inline_right(inline_fragment_context);
                 bounds.size.height = bounds.size.height - self.noncontent_height();
 
                 match image_ref.get_image() {
@@ -1351,7 +1238,8 @@ impl Box {
     }
 
     /// Returns the intrinsic widths of this fragment.
-    pub fn intrinsic_widths(&self) -> IntrinsicWidths {
+    pub fn intrinsic_widths(&self, inline_fragment_context: Option<InlineFragmentContext>)
+                            -> IntrinsicWidths {
         let mut result = self.style_specified_intrinsic_width();
 
         match self.specific {
@@ -1378,16 +1266,14 @@ impl Box {
             UnscannedTextBox(..) => fail!("Unscanned text boxes should have been scanned by now!"),
         }
 
-        // Take borders and padding for parent inline boxes into account.
-        let inline_info = self.inline_info.get();
-        match inline_info {
+        // Take borders and padding for parent inline boxes into account, if necessary.
+        match inline_fragment_context {
             None => {}
-            Some(ref inline_info) => {
-                for inline_parent_info in inline_info.parent_info.iter() {
-                    let border_width = inline_parent_info.border.left +
-                        inline_parent_info.border.right;
-                    let padding_width = inline_parent_info.padding.left +
-                        inline_parent_info.padding.right;
+            Some(context) => {
+                for range in context.ranges() {
+                    let (border, padding) = (range.border(), range.padding());
+                    let border_width = border.left + border.right;
+                    let padding_width = padding.left + padding.right;
                     result.minimum_width = result.minimum_width + border_width + padding_width;
                     result.preferred_width = result.preferred_width + border_width + padding_width;
                 }
@@ -1580,12 +1466,6 @@ impl Box {
                 if pieces_processed_count == 1 || left_box.is_none() {
                     SplitDidNotFit(left_box, right_box)
                 } else {
-                    if left_box.is_some() {
-                        left_box.get_ref().clear_noncontent_inline_right();
-                    }
-                    if right_box.is_some() {
-                        right_box.get_ref().clear_noncontent_inline_left();
-                    }
                     SplitDidFit(left_box, right_box)
                 }
             }
@@ -1602,7 +1482,10 @@ impl Box {
 
     /// Assigns replaced width, padding, and margins for this box only if it is replaced content
     /// per CSS 2.1 § 10.3.2.
-    pub fn assign_replaced_width_if_necessary(&self, container_width: Au) {
+    pub fn assign_replaced_width_if_necessary(&self,
+                                              container_width: Au,
+                                              inline_fragment_context:
+                                                Option<InlineFragmentContext>) {
         match self.specific {
             GenericBox | IframeBox(_) | TableBox | TableCellBox | TableRowBox |
             TableWrapperBox => {}
@@ -1636,15 +1519,18 @@ impl Box {
 
                 let mut position = self.border_box.borrow_mut();
                 position.size.width = width + self.noncontent_width() +
-                    self.noncontent_inline_left() + self.noncontent_inline_right();
+                    self.noncontent_inline_left(inline_fragment_context) +
+                    self.noncontent_inline_right(inline_fragment_context);
                 image_box_info.computed_width.set(Some(width));
             }
             ScannedTextBox(_) => {
                 // Scanned text boxes will have already had their
                 // content_widths assigned by this point.
                 let mut position = self.border_box.borrow_mut();
-                position.size.width = position.size.width + self.noncontent_width() +
-                    self.noncontent_inline_left() + self.noncontent_inline_right();
+                position.size.width = position.size.width +
+                    self.noncontent_width() +
+                    self.noncontent_inline_left(inline_fragment_context) +
+                    self.noncontent_inline_right(inline_fragment_context);
             }
             TableColumnBox(_) => fail!("Table column boxes do not have width"),
             UnscannedTextBox(_) => fail!("Unscanned text boxes should have been scanned by now!"),
