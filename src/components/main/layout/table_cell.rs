@@ -100,9 +100,16 @@ impl Flow for TableCellFlow {
         let width_computer = InternalTable;
         width_computer.compute_used_width(&mut self.block_flow, ctx, containing_block_width);
 
-        let left_content_edge = self.block_flow.box_.border_box.get().origin.x + self.block_flow.box_.padding.get().left + self.block_flow.box_.border.get().left;
-        let padding_and_borders = self.block_flow.box_.padding.get().left + self.block_flow.box_.padding.get().right +
-                                  self.block_flow.box_.border.get().left + self.block_flow.box_.border.get().right;
+        let border = self.block_flow.box_.border_width(None);
+        let left_content_edge =
+            self.block_flow.box_.border_box.get().origin.x +
+            self.block_flow.box_.padding.get().left +
+            border.left;
+        let padding_and_borders =
+            self.block_flow.box_.padding.get().left +
+            self.block_flow.box_.padding.get().right +
+            border.left +
+            border.right;
         let content_width = self.block_flow.box_.border_box.get().size.width - padding_and_borders;
 
         self.block_flow.propagate_assigned_width_to_children(left_content_edge, content_width, None);

@@ -716,8 +716,6 @@ impl Flow for InlineFlow {
         for (fragment, context) in self.boxes.iter() {
             debug!("Flow: measuring {:s}", fragment.debug_str());
 
-            fragment.compute_borders(fragment.style());
-
             let box_intrinsic_widths = fragment.intrinsic_widths(Some(context));
             intrinsic_widths.minimum_width = geometry::max(intrinsic_widths.minimum_width,
                                                            box_intrinsic_widths.minimum_width);

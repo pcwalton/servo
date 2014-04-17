@@ -241,7 +241,6 @@ impl Flow for TableFlow {
             let child_base = flow::mut_base(kid);
             num_floats = num_floats + child_base.num_floats;
         }
-        self.block_flow.box_.compute_borders(self.block_flow.box_.style());
         self.block_flow.base.num_floats = num_floats;
         self.block_flow.base.intrinsic_widths.minimum_width = min_width;
         self.block_flow.base.intrinsic_widths.preferred_width = geometry::max(min_width, pref_width);
@@ -268,9 +267,13 @@ impl Flow for TableFlow {
         let width_computer = InternalTable;
         width_computer.compute_used_width(&mut self.block_flow, ctx, containing_block_width);
 
-        let left_content_edge = self.block_flow.box_.padding.get().left + self.block_flow.box_.border.get().left;
-        let padding_and_borders = self.block_flow.box_.padding.get().left + self.block_flow.box_.padding.get().right +
-                                  self.block_flow.box_.border.get().left + self.block_flow.box_.border.get().right;
+        let border = self.block_flow.box_.border_width(None);
+        let left_content_edge = self.block_flow.box_.padding.get().left + border.left;
+        let padding_and_borders =
+            self.block_flow.box_.padding.get().left +
+            self.block_flow.box_.padding.get().right +
+            border.left +
+            border.right;
         let content_width = self.block_flow.box_.border_box.get().size.width - padding_and_borders;
 
         match self.table_layout {

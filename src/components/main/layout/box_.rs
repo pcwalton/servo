@@ -80,11 +80,6 @@ pub struct Box {
     /// The size includes padding and border, but not margin.
     border_box: RefCell<Rect<Au>>,
 
-    /// The border of the content box.
-    ///
-    /// FIXME(pcwalton): This need not be stored in the box.
-    border: RefCell<SideOffsets2D<Au>>,
-
     /// The padding of the content box.
     padding: RefCell<SideOffsets2D<Au>>,
 
@@ -313,7 +308,9 @@ macro_rules! def_noncontent( ($side:ident, $get:ident) => (
     impl Box {
         pub fn $get(&self, inline_fragment_context: Option<InlineFragmentContext>) -> Au {
             match inline_fragment_context {
-                None => self.border.get().$side + self.padding.get().$side,
+                None => {
+                    self.border_width(inline_fragment_context).$side + self.padding.get().$side
+                }
                 Some(inline_fragment_context) => {
                     let mut val = Au(0);
                     for range in inline_fragment_context.ranges() {
@@ -347,7 +344,6 @@ impl Box {
             node: OpaqueNodeMethods::from_thread_safe_layout_node(node),
             style: node.style().clone(),
             border_box: RefCell::new(Au::zero_rect()),
-            border: RefCell::new(Zero::zero()),
             padding: RefCell::new(Zero::zero()),
             margin: RefCell::new(Zero::zero()),
             specific: constructor.build_specific_box_info_for_node(node),
@@ -361,7 +357,6 @@ impl Box {
             node: OpaqueNodeMethods::from_thread_safe_layout_node(node),
             style: node.style().clone(),
             border_box: RefCell::new(Au::zero_rect()),
-            border: RefCell::new(Zero::zero()),
             padding: RefCell::new(Zero::zero()),
             margin: RefCell::new(Zero::zero()),
             specific: specific,
@@ -386,7 +381,6 @@ impl Box {
             node: OpaqueNodeMethods::from_thread_safe_layout_node(node),
             style: Arc::new(node_style),
             border_box: RefCell::new(Au::zero_rect()),
-            border: RefCell::new(Zero::zero()),
             padding: RefCell::new(Zero::zero()),
             margin: RefCell::new(Zero::zero()),
             specific: specific,
@@ -403,7 +397,6 @@ impl Box {
             node: node,
             style: style,
             border_box: RefCell::new(Au::zero_rect()),
-            border: RefCell::new(Zero::zero()),
             padding: RefCell::new(Zero::zero()),
             margin: RefCell::new(Zero::zero()),
             specific: specific,
@@ -426,7 +419,6 @@ impl Box {
             node: self.node,
             style: self.style.clone(),
             border_box: RefCell::new(Rect(self.border_box.get().origin, size)),
-            border: RefCell::new(self.border.get()),
             padding: RefCell::new(self.padding.get()),
             margin: RefCell::new(self.margin.get()),
             specific: specific,
@@ -465,8 +457,10 @@ impl Box {
             (Au(0), Au(0))
         };
 
+        // FIXME(pcwalton): This won't work well for inlines: is this OK?
+        let border = self.border_width(None);
         let surround_width = margin_left + margin_right + padding_left + padding_right +
-                self.border.get().left + self.border.get().right;
+                border.left + border.right;
 
         IntrinsicWidths {
             minimum_width: width,
@@ -485,15 +479,24 @@ impl Box {
         Au::max(from_inline, minimum)
     }
 
-    /// Populates the box model border parameters from the given computed style.
-    ///
-    /// FIXME(pcwalton): This should not be necessary. Just go to the style.
-    pub fn compute_borders(&self, style: &ComputedValues) {
-        let border = match self.specific {
-            TableWrapperBox => SideOffsets2D::new(Au(0), Au(0), Au(0), Au(0)),
-            _ => model::border_from_style(style),
-        };
-        self.border.set(border)
+    /// Returns the widths of all the borders of this fragment.
+    #[inline]
+    pub fn border_width(&self, inline_fragment_context: Option<InlineFragmentContext>)
+                        -> SideOffsets2D<Au> {
+        match inline_fragment_context {
+            None => model::border_from_style(self.style()),
+            Some(inline_fragment_context) => {
+                let mut sum: SideOffsets2D<Au> = Zero::zero();
+                for range in inline_fragment_context.ranges() {
+                    let border = range.border();
+                    sum.top = sum.top + border.top;
+                    sum.right = sum.right + border.right;
+                    sum.bottom = sum.bottom + border.bottom;
+                    sum.left = sum.left + border.left;
+                }
+                sum
+            }
+        }
     }
 
     /// Compute and set margin-top and margin-bottom values.
@@ -535,10 +538,12 @@ impl Box {
         self.padding.set(padding)
     }
 
-    pub fn padding_box_size(&self) -> Size2D<Au> {
+    pub fn padding_box_size(&self, inline_fragment_context: Option<InlineFragmentContext>)
+                            -> Size2D<Au> {
         let border_box_size = self.border_box.get().size;
-        Size2D(border_box_size.width - self.border.get().left - self.border.get().right,
-               border_box_size.height - self.border.get().top - self.border.get().bottom)
+        let border = self.border_width(inline_fragment_context);
+        Size2D(border_box_size.width - border.left - border.right,
+               border_box_size.height - border.top - border.bottom)
     }
 
     pub fn noncontent_width(&self, inline_fragment_context: Option<InlineFragmentContext>) -> Au {
@@ -685,14 +690,14 @@ impl Box {
 
     /// Returns the left offset from margin edge to content edge.
     ///
-    /// FIXME(pcwalton): I think this method is pretty bogus. It's only used in one place.
+    /// FIXME(pcwalton): I think this method is pretty bogus, because it won't work for inlines.
     pub fn left_offset(&self) -> Au {
         match self.specific {
             TableWrapperBox => self.margin.get().left,
-            TableBox | TableCellBox => self.border.get().left + self.padding.get().left,
-            TableRowBox => self.border.get().left,
+            TableBox | TableCellBox => self.border_width(None).left + self.padding.get().left,
+            TableRowBox => self.border_width(None).left,
             TableColumnBox(_) => Au(0),
-            _ => self.margin.get().left + self.border.get().left + self.padding.get().left
+            _ => self.margin.get().left + self.border_width(None).left + self.padding.get().left
         }
     }
 
@@ -828,7 +833,7 @@ impl Box {
                                        abs_bounds: &Rect<Au>,
                                        inline_fragment_context: Option<InlineFragmentContext>) {
         // Fast path.
-        let border = self.border.get();
+        let border = self.border_width(inline_fragment_context);
         if border.is_zero() {
             return
         }
@@ -1502,9 +1507,8 @@ impl Box {
             UnscannedTextBox(_) => "UnscannedTextBox",
         };
 
-        format!("({}{}{}{})",
+        format!("({}{}{})",
                 class_name,
-                self.side_offsets_debug_string("b", self.border.get()),
                 self.side_offsets_debug_string("p", self.padding.get()),
                 self.side_offsets_debug_string("m", self.margin.get()))
     }
@@ -1532,10 +1536,9 @@ impl Box {
                                             offset: Point2D<Au>,
                                             inline_fragment_context: Option<InlineFragmentContext>,
                                             layout_context: &LayoutContext) {
-        let left = offset.x + self.margin.get().left + self.border.get().left +
-            self.padding.get().left;
-        let top = offset.y + self.margin.get().top + self.border.get().top +
-            self.padding.get().top;
+        let border = self.border_width(inline_fragment_context);
+        let left = offset.x + self.margin.get().left + border.left + self.padding.get().left;
+        let top = offset.y + self.margin.get().top + border.top + self.padding.get().top;
         let width = self.border_box.get().size.width -
             self.noncontent_width(inline_fragment_context);
         let height = self.border_box.get().size.height -
