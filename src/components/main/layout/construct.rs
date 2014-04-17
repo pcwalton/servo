@@ -57,6 +57,7 @@ use script::dom::node::{DocumentNodeTypeId, ElementNodeTypeId, ProcessingInstruc
 use script::dom::node::{TextNodeTypeId};
 use script::dom::text::Text;
 use servo_util::namespace;
+use servo_util::range::Range;
 use servo_util::smallvec::{SmallVec, SmallVec0};
 use servo_util::str::is_whitespace;
 use servo_util::url::{is_image_data, parse_url};
@@ -233,6 +234,36 @@ impl<T> OptVector<T> for Option<~[T]> {
     }
 }
 
+/// Holds inline boxes that we're gathering for children of a node.
+struct InlineBoxAccumulator {
+    boxes: InlineBoxes,
+}
+
+impl InlineBoxAccumulator {
+    fn new(node: &ThreadSafeLayoutNode) -> InlineBoxAccumulator {
+        let mut boxes = InlineBoxes::new();
+        boxes.map.push(node.style().clone(), Range::new(0, 0));
+        InlineBoxAccumulator {
+            boxes: boxes,
+        }
+    }
+
+    fn finish(self) -> InlineBoxes {
+        let InlineBoxAccumulator {
+            boxes: mut boxes
+        } = self;
+        let len = boxes.len();
+        boxes.map.get_mut(0).range.extend_to(len);
+        boxes
+    }
+}
+
+enum WhitespaceStrippingMode {
+    NoWhitespaceStripping,
+    StripWhitespaceFromStart,
+    StripWhitespaceFromEnd,
+}
+
 /// An object that knows how to create flows.
 pub struct FlowConstructor<'a> {
     /// The layout context.
@@ -322,12 +353,30 @@ impl<'a> FlowConstructor<'a> {
     /// otherwise.
     #[inline(always)]
     fn flush_inline_boxes_to_flow_or_list(&mut self,
-                                          boxes: InlineBoxes,
+                                          box_accumulator: InlineBoxAccumulator,
                                           flow: &mut ~Flow,
                                           flow_list: &mut ~[~Flow],
+                                          whitespace_stripping: WhitespaceStrippingMode,
                                           node: &ThreadSafeLayoutNode) {
+        let mut boxes = box_accumulator.finish();
         if boxes.len() == 0 {
             return
+        }
+
+        match whitespace_stripping {
+            NoWhitespaceStripping => {}
+            StripWhitespaceFromStart => {
+                strip_ignorable_whitespace_from_start(&mut boxes);
+                if boxes.len() == 0 {
+                    return
+                }
+            }
+            StripWhitespaceFromEnd => {
+                strip_ignorable_whitespace_from_end(&mut boxes);
+                if boxes.len() == 0 {
+                    return
+                }
+            }
         }
 
         let mut inline_flow = ~InlineFlow::from_boxes((*node).clone(), boxes) as ~Flow;
@@ -346,7 +395,8 @@ impl<'a> FlowConstructor<'a> {
                                                            consecutive_siblings: &mut ~[~Flow],
                                                            node: &ThreadSafeLayoutNode,
                                                            kid: ThreadSafeLayoutNode,
-                                                           inline_boxes: &mut InlineBoxes,
+                                                           inline_box_accumulator:
+                                                                &mut InlineBoxAccumulator,
                                                            abs_descendants: &mut Descendants,
                                                            first_box: &mut bool) {
         match kid.swap_out_construction_result() {
@@ -363,18 +413,22 @@ impl<'a> FlowConstructor<'a> {
                 } else {
                     // Strip ignorable whitespace from the start of this flow per CSS 2.1 §
                     // 9.2.1.1.
-                    if flow.is_table_kind() || *first_box {
-                        strip_ignorable_whitespace_from_start(inline_boxes);
-                        *first_box = false
-                    }
+                    let whitespace_stripping = if flow.is_table_kind() || *first_box {
+                        *first_box = false;
+                        StripWhitespaceFromStart
+                    } else {
+                        NoWhitespaceStripping
+                    };
 
                     // Flush any inline boxes that we were gathering up. This allows us to handle
                     // {ib} splits.
-                    debug!("flushing {} inline box(es) to flow A", inline_boxes.len());
+                    debug!("flushing {} inline box(es) to flow A",
+                           inline_box_accumulator.boxes.len());
                     self.flush_inline_boxes_to_flow_or_list(
-                        mem::replace(inline_boxes, InlineBoxes::new()),
+                        mem::replace(inline_box_accumulator, InlineBoxAccumulator::new(node)),
                         flow,
                         consecutive_siblings,
+                        whitespace_stripping,
                         node);
                     if !consecutive_siblings.is_empty() {
                         let consecutive_siblings = mem::replace(consecutive_siblings, ~[]);
@@ -403,21 +457,26 @@ impl<'a> FlowConstructor<'a> {
                                 predecessors: predecessors,
                                 flow: kid_flow
                             } = split;
-                            inline_boxes.push_all(predecessors);
+                            inline_box_accumulator.boxes.push_all(predecessors);
 
                             // If this is the first box in flow, then strip ignorable
                             // whitespace per CSS 2.1 § 9.2.1.1.
-                            if *first_box {
-                                strip_ignorable_whitespace_from_start(inline_boxes);
-                                *first_box = false
-                            }
+                            let whitespace_stripping = if *first_box {
+                                *first_box = false;
+                                StripWhitespaceFromStart
+                            } else {
+                                NoWhitespaceStripping
+                            };
 
                             // Flush any inline boxes that we were gathering up.
-                            debug!("flushing {} inline box(es) to flow A", inline_boxes.len());
+                            debug!("flushing {} inline box(es) to flow A",
+                                   inline_box_accumulator.boxes.len());
                             self.flush_inline_boxes_to_flow_or_list(
-                                    mem::replace(inline_boxes, InlineBoxes::new()),
+                                    mem::replace(inline_box_accumulator,
+                                                 InlineBoxAccumulator::new(node)),
                                     flow,
                                     consecutive_siblings,
+                                    whitespace_stripping,
                                     node);
 
                             // Push the flow generated by the {ib} split onto our list of
@@ -432,7 +491,7 @@ impl<'a> FlowConstructor<'a> {
                 }
 
                 // Add the boxes to the list we're maintaining.
-                inline_boxes.push_all(successor_boxes);
+                inline_box_accumulator.boxes.push_all(successor_boxes);
                 abs_descendants.push_descendants(kid_abs_descendants);
             }
             ConstructionItemConstructionResult(WhitespaceConstructionItem(..)) => {
@@ -457,7 +516,7 @@ impl<'a> FlowConstructor<'a> {
                                  node: &ThreadSafeLayoutNode)
                                  -> ConstructionResult {
         // Gather up boxes for the inline flows we might need to create.
-        let mut inline_boxes = InlineBoxes::new();
+        let mut inline_box_accumulator = InlineBoxAccumulator::new(node);
         let mut consecutive_siblings = ~[];
         let mut first_box = true;
 
@@ -472,18 +531,17 @@ impl<'a> FlowConstructor<'a> {
                                                                      &mut consecutive_siblings,
                                                                      node,
                                                                      kid,
-                                                                     &mut inline_boxes,
+                                                                     &mut inline_box_accumulator,
                                                                      &mut abs_descendants,
                                                                      &mut first_box);
         }
 
         // Perform a final flush of any inline boxes that we were gathering up to handle {ib}
         // splits, after stripping ignorable whitespace.
-        strip_ignorable_whitespace_from_end(&mut inline_boxes);
-        self.flush_inline_boxes_to_flow_or_list(mem::replace(&mut inline_boxes,
-                                                             InlineBoxes::new()),
+        self.flush_inline_boxes_to_flow_or_list(inline_box_accumulator,
                                                 &mut flow,
                                                 &mut consecutive_siblings,
+                                                StripWhitespaceFromEnd,
                                                 node);
         if !consecutive_siblings.is_empty() {
             self.generate_anonymous_missing_child(consecutive_siblings, &mut flow, node);
@@ -530,7 +588,7 @@ impl<'a> FlowConstructor<'a> {
     fn build_boxes_for_nonreplaced_inline_content(&mut self, node: &ThreadSafeLayoutNode)
                                                   -> ConstructionResult {
         let mut opt_inline_block_splits = None;
-        let mut box_accumulator = InlineBoxes::new();
+        let mut box_accumulator = InlineBoxAccumulator::new(node);
         let mut abs_descendants = Descendants::new();
 
         // Concatenate all the boxes of our kids, creating {ib} splits as necessary.
@@ -544,7 +602,8 @@ impl<'a> FlowConstructor<'a> {
                     // {ib} split. Flush the accumulator to our new split and make a new
                     // accumulator to hold any subsequent boxes we come across.
                     let split = InlineBlockSplit {
-                        predecessors: mem::replace(&mut box_accumulator, InlineBoxes::new()),
+                        predecessors: mem::replace(&mut box_accumulator,
+                                                   InlineBoxAccumulator::new(node)).finish(),
                         flow: flow,
                     };
                     opt_inline_block_splits.push(split);
@@ -566,11 +625,12 @@ impl<'a> FlowConstructor<'a> {
                                     predecessors: predecessors,
                                     flow: kid_flow
                                 } = split;
-                                box_accumulator.push_all(predecessors);
+                                box_accumulator.boxes.push_all(predecessors);
 
                                 let split = InlineBlockSplit {
-                                    predecessors: mem::replace(&mut box_accumulator,
-                                                               InlineBoxes::new()),
+                                    predecessors:
+                                        mem::replace(&mut box_accumulator,
+                                                     InlineBoxAccumulator::new(node)).finish(),
                                     flow: kid_flow,
                                 };
                                 opt_inline_block_splits.push(split)
@@ -579,7 +639,7 @@ impl<'a> FlowConstructor<'a> {
                     }
 
                     // Push residual boxes.
-                    box_accumulator.push_all(successors);
+                    box_accumulator.boxes.push_all(successors);
                     abs_descendants.push_descendants(kid_abs_descendants);
                 }
                 ConstructionItemConstructionResult(WhitespaceConstructionItem(whitespace_node,
@@ -590,7 +650,7 @@ impl<'a> FlowConstructor<'a> {
                     let fragment = Box::from_opaque_node_and_style(whitespace_node,
                                                                    whitespace_style.clone(),
                                                                    box_info);
-                    box_accumulator.push(fragment, whitespace_style)
+                    box_accumulator.boxes.push(fragment, whitespace_style)
                 }
                 ConstructionItemConstructionResult(TableColumnBoxConstructionItem(_)) => {
                     // TODO: Implement anonymous table objects for missing parents
@@ -600,11 +660,11 @@ impl<'a> FlowConstructor<'a> {
         }
 
         // Finally, make a new construction result.
-        if opt_inline_block_splits.len() > 0 || box_accumulator.len() > 0
+        if opt_inline_block_splits.len() > 0 || box_accumulator.boxes.len() > 0
                 || abs_descendants.len() > 0 {
             let construction_item = InlineBoxesConstructionItem(InlineBoxesConstructionResult {
                 splits: opt_inline_block_splits,
-                boxes: box_accumulator,
+                boxes: box_accumulator.finish(),
                 abs_descendants: abs_descendants,
             });
             ConstructionItemConstructionResult(construction_item)
@@ -631,12 +691,12 @@ impl<'a> FlowConstructor<'a> {
                 node.style().clone()))
         }
 
-        let mut box_accumulator = InlineBoxes::new();
-        box_accumulator.push(Box::new(self, node), node.style().clone());
+        let mut boxes = InlineBoxes::new();
+        boxes.push(Box::new(self, node), node.style().clone());
 
         let construction_item = InlineBoxesConstructionItem(InlineBoxesConstructionResult {
             splits: None,
-            boxes: box_accumulator,
+            boxes: boxes,
             abs_descendants: Descendants::new(),
         });
         ConstructionItemConstructionResult(construction_item)

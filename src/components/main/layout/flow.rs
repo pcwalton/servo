@@ -612,6 +612,7 @@ pub struct BaseFlow {
     /// Offset wrt the nearest positioned ancestor - aka the Containing Block
     /// for any absolutely positioned elements.
     absolute_static_x_offset: Au,
+
     /// Offset wrt the Initial Containing Block.
     fixed_static_x_offset: Au,
 

@@ -324,6 +324,9 @@ macro_rules! def_noncontent( ($side:ident, $get:ident, $inline_get:ident) => (
                 None => {}
                 Some(inline_fragment_context) => {
                     for range in inline_fragment_context.ranges() {
+                        println!("adding padding from range ({}): {}",
+                                 stringify!($side),
+                                 range.padding().$side);
                         val = val + range.border().$side + range.padding().$side
                     }
                 }
@@ -1490,18 +1493,31 @@ impl Box {
             GenericBox | IframeBox(_) | TableBox | TableCellBox | TableRowBox |
             TableWrapperBox => {}
             ImageBox(ref image_box_info) => {
-                self.compute_padding(self.style(), container_width);
+                //self.compute_padding(self.style(), container_width);
 
                 // TODO(ksh8281): compute border,margin
-                let width = ImageBoxInfo::style_length(self.style().Box.get().width,
+                let width = Auto;
+                let height = Auto;
+                /*if inline_fragment_context.is_none() {
+                    width = ImageBoxInfo::style_length(self.style().Box.get().width,
                                                        image_box_info.dom_width,
                                                        container_width);
 
-                // FIXME(ksh8281): we shouldn't figure height this way
-                // now, we don't know about size of parent's height
-                let height = ImageBoxInfo::style_length(self.style().Box.get().height,
-                                                       image_box_info.dom_height,
-                                                       Au::new(0));
+                    // FIXME(ksh8281): we shouldn't figure height this way
+                    // now, we don't know about size of parent's height
+                    height = ImageBoxInfo::style_length(self.style().Box.get().height,
+                                                        image_box_info.dom_height,
+                                                        Au::new(0));
+                } else {
+                    width = match image_box_info.dom_width {
+                        None => Auto,
+                        Some(w) => Specified(w),
+                    };
+                    height = match image_box_info.dom_height {
+                        None => Auto,
+                        Some(h) => Specified(h),
+                    };
+                }*/
 
                 let width = match (width,height) {
                     (Auto,Auto) => {
@@ -1518,9 +1534,13 @@ impl Box {
                 };
 
                 let mut position = self.border_box.borrow_mut();
-                position.size.width = width + self.noncontent_width() +
+                position.size.width = width +
                     self.noncontent_inline_left(inline_fragment_context) +
                     self.noncontent_inline_right(inline_fragment_context);
+                println!("setting width: {:?}/{:?}/{:?}",
+                         width,
+                         self.noncontent_inline_left(inline_fragment_context),
+                         self.noncontent_inline_right(inline_fragment_context));
                 image_box_info.computed_width.set(Some(width));
             }
             ScannedTextBox(_) => {

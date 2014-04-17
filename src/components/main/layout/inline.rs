@@ -21,7 +21,7 @@ use gfx::display_list::{ContentLevel, StackingContext};
 use servo_util::geometry::Au;
 use servo_util::geometry;
 use servo_util::range::Range;
-use servo_util::smallvec::{SmallVec, SmallVec0, SmallVec4};
+use servo_util::smallvec::{SmallVec, SmallVec0};
 use std::iter::Enumerate;
 use std::mem;
 use std::slice::Items;
@@ -502,8 +502,8 @@ impl InlineBoxes {
 
     /// Pushes a new inline box.
     pub fn push(&mut self, fragment: Box, style: Arc<ComputedValues>) {
-        self.boxes.push(fragment);
-        self.map.push(style, Range::new(self.boxes.len(), 1))
+        self.map.push(style, Range::new(self.boxes.len(), 1));
+        self.boxes.push(fragment)
     }
 
     /// Merges another set of inline boxes with this one.
@@ -512,8 +512,9 @@ impl InlineBoxes {
             boxes: other_boxes,
             map: other_map
         } = other;
+        let adjustment = self.boxes.len();
+        self.map.push_all(other_map, adjustment);
         self.boxes.push_all_move(other_boxes);
-        self.map.push_all(other_map);
     }
 
     /// Returns an iterator that iterates over all boxes along with the appropriate context.
@@ -1057,20 +1058,25 @@ impl FragmentMap {
 
     /// Pushes the ranges in another fragment map onto the end of this one, adjusting indices as
     /// necessary.
-    fn push_all(&mut self, other: FragmentMap) {
-        let original_length = self.list.len();
-
+    fn push_all(&mut self, other: FragmentMap, adjustment: uint) {
         let FragmentMap {
             list: mut other_list
         } = other;
+
         for other_range in other_list.move_iter() {
             let FragmentRange {
                 style: other_style,
                 range: mut other_range
             } = other_range;
-            other_range.shift_by(original_length as int);
+
+            other_range.shift_by(adjustment as int);
             self.push(other_style, other_range)
         }
+    }
+
+    /// Returns the range with the given index.
+    pub fn get_mut<'a>(&'a mut self, index: uint) -> &'a mut FragmentRange {
+        &mut self.list.as_mut_slice()[index]
     }
 
     /// Iterates over all ranges that contain the box with the given index, outermost first.
@@ -1093,9 +1099,14 @@ impl FragmentMap {
     /// `layout::construct::strip_ignorable_whitespace_from_start` for an example of some code that
     /// needlessly has to clone boxes.
     pub fn fixup(&mut self, old_fragments: &[Box], new_fragments: &[Box]) {
+        println!("before fixup: {} ranges with {} boxes:", self.list.len(), old_fragments.len());
+        for range in self.list.iter() {
+            println!(">>> {:?}", range.range);
+        }
+
         // TODO(pcwalton): Post Rust upgrade, use `with_capacity` here.
         let mut old_list = mem::replace(&mut self.list, SmallVec0::new());
-        let mut worklist = SmallVec4::new();
+        let mut worklist = SmallVec0::new();        // FIXME(pcwalton): was smallvec4
         let mut old_list_iter = old_list.move_iter().peekable();
         let mut new_fragments_iter = new_fragments.iter().enumerate().peekable();
 
@@ -1128,11 +1139,11 @@ impl FragmentMap {
             loop {
                 match old_list_iter.peek() {
                     None => break,
-                    Some(fragment_range) if fragment_range.range.begin() > old_fragment_index => {
-                        // We haven't gotten to the appropriate old fragment yet, so stop.
-                        break
-                    }
-                    Some(_) => {
+                    Some(fragment_range) => {
+                        if fragment_range.range.begin() > old_fragment_index {
+                            // We haven't gotten to the appropriate old fragment yet, so stop.
+                            break
+                        }
                         // Note that it can be the case that `fragment_range.range.begin() < i`.
                         // This is OK, as it corresponds to the case in which a fragment got
                         // deleted entirely (e.g. ignorable whitespace got nuked). In that case we
@@ -1155,11 +1166,12 @@ impl FragmentMap {
             loop {
                 match worklist.as_slice().last() {
                     None => break,
-                    Some(last_work_item) if last_work_item.old_end_index > old_fragment_index => {
-                        // Haven't gotten to it yet.
-                        break
+                    Some(last_work_item) => {
+                        if last_work_item.old_end_index > old_fragment_index + 1 {
+                            // Haven't gotten to it yet.
+                            break
+                        }
                     }
-                    Some(_) => {}
                 }
 
                 let new_last_index = match new_fragments_iter.peek() {
@@ -1179,6 +1191,8 @@ impl FragmentMap {
                 self.list.push(FragmentRange::new(style, range))
             }
         }
+
+        println!("after fixup: {} ranges", self.list.len());
     }
 }
 
@@ -1198,6 +1212,7 @@ impl<'a> InlineFragmentContext<'a> {
     }
 
     pub fn ranges(&self) -> RangeIterator<'a> {
+        println!("there are {} ranges", self.map.list.len());
         self.map.ranges_for_index(self.index)
     }
 }

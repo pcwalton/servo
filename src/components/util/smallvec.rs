@@ -184,6 +184,11 @@ pub trait SmallVec<T> : SmallVecPrivate<T> {
         self.slice(0, self.len())
     }
 
+    fn as_mut_slice<'a>(&'a mut self) -> &'a mut [T] {
+        let len = self.len();
+        self.mut_slice(0, len)
+    }
+
     fn mut_slice<'a>(&'a mut self, start: uint, end: uint) -> &'a mut [T] {
         assert!(start <= end);
         assert!(end <= self.len());
