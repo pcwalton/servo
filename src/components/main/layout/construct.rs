@@ -234,26 +234,43 @@ impl<T> OptVector<T> for Option<~[T]> {
     }
 }
 
-/// Holds inline boxes that we're gathering for children of a node.
+/// Holds inline boxes that we're gathering for children of an inline node.
 struct InlineBoxAccumulator {
+    /// The list of boxes.
     boxes: InlineBoxes,
+
+    /// Whether we've created a range to enclose all the boxes. This will be true if the outer node
+    /// is an inline and false otherwise.
+    has_enclosing_range: bool,
 }
 
 impl InlineBoxAccumulator {
-    fn new(node: &ThreadSafeLayoutNode) -> InlineBoxAccumulator {
+    fn new() -> InlineBoxAccumulator {
+        InlineBoxAccumulator {
+            boxes: InlineBoxes::new(),
+            has_enclosing_range: false,
+        }
+    }
+
+    fn from_inline_node(node: &ThreadSafeLayoutNode) -> InlineBoxAccumulator {
         let mut boxes = InlineBoxes::new();
         boxes.map.push(node.style().clone(), Range::new(0, 0));
         InlineBoxAccumulator {
             boxes: boxes,
+            has_enclosing_range: true,
         }
     }
 
     fn finish(self) -> InlineBoxes {
         let InlineBoxAccumulator {
-            boxes: mut boxes
+            boxes: mut boxes,
+            has_enclosing_range
         } = self;
-        let len = boxes.len();
-        boxes.map.get_mut(0).range.extend_to(len);
+
+        if has_enclosing_range {
+            let len = boxes.len();
+            boxes.map.get_mut(0).range.extend_to(len);
+        }
         boxes
     }
 }
@@ -425,7 +442,7 @@ impl<'a> FlowConstructor<'a> {
                     debug!("flushing {} inline box(es) to flow A",
                            inline_box_accumulator.boxes.len());
                     self.flush_inline_boxes_to_flow_or_list(
-                        mem::replace(inline_box_accumulator, InlineBoxAccumulator::new(node)),
+                        mem::replace(inline_box_accumulator, InlineBoxAccumulator::new()),
                         flow,
                         consecutive_siblings,
                         whitespace_stripping,
@@ -473,7 +490,7 @@ impl<'a> FlowConstructor<'a> {
                                    inline_box_accumulator.boxes.len());
                             self.flush_inline_boxes_to_flow_or_list(
                                     mem::replace(inline_box_accumulator,
-                                                 InlineBoxAccumulator::new(node)),
+                                                 InlineBoxAccumulator::new()),
                                     flow,
                                     consecutive_siblings,
                                     whitespace_stripping,
@@ -516,7 +533,7 @@ impl<'a> FlowConstructor<'a> {
                                  node: &ThreadSafeLayoutNode)
                                  -> ConstructionResult {
         // Gather up boxes for the inline flows we might need to create.
-        let mut inline_box_accumulator = InlineBoxAccumulator::new(node);
+        let mut inline_box_accumulator = InlineBoxAccumulator::new();
         let mut consecutive_siblings = ~[];
         let mut first_box = true;
 
@@ -588,7 +605,7 @@ impl<'a> FlowConstructor<'a> {
     fn build_boxes_for_nonreplaced_inline_content(&mut self, node: &ThreadSafeLayoutNode)
                                                   -> ConstructionResult {
         let mut opt_inline_block_splits = None;
-        let mut box_accumulator = InlineBoxAccumulator::new(node);
+        let mut box_accumulator = InlineBoxAccumulator::from_inline_node(node);
         let mut abs_descendants = Descendants::new();
 
         // Concatenate all the boxes of our kids, creating {ib} splits as necessary.
@@ -602,8 +619,9 @@ impl<'a> FlowConstructor<'a> {
                     // {ib} split. Flush the accumulator to our new split and make a new
                     // accumulator to hold any subsequent boxes we come across.
                     let split = InlineBlockSplit {
-                        predecessors: mem::replace(&mut box_accumulator,
-                                                   InlineBoxAccumulator::new(node)).finish(),
+                        predecessors:
+                            mem::replace(&mut box_accumulator,
+                                         InlineBoxAccumulator::from_inline_node(node)).finish(),
                         flow: flow,
                     };
                     opt_inline_block_splits.push(split);
@@ -630,7 +648,8 @@ impl<'a> FlowConstructor<'a> {
                                 let split = InlineBlockSplit {
                                     predecessors:
                                         mem::replace(&mut box_accumulator,
-                                                     InlineBoxAccumulator::new(node)).finish(),
+                                                     InlineBoxAccumulator::from_inline_node(node))
+                                            .finish(),
                                     flow: kid_flow,
                                 };
                                 opt_inline_block_splits.push(split)
