@@ -1141,7 +1141,7 @@ impl BlockFlow {
         // For relatively-positioned descendants, the containing block formed by a block is
         // just the content box. The containing block for absolutely-positioned descendants,
         // on the other hand, only established if we are positioned.
-        info.relative_containing_block_size = self.box_.content_box_size();
+        info.relative_containing_block_size = self.box_.content_box_size(None);
         if self.is_positioned() {
             info.absolute_containing_block_position =
                 self.base.abs_position +
@@ -1229,7 +1229,8 @@ impl BlockFlow {
         let static_y_offset = self.static_y_offset;
 
         // This is the stored content height value from assign-height
-        let content_height = self.box_.border_box.get().size.height - self.box_.noncontent_height();
+        let content_height = self.box_.border_box.get().size.height -
+            self.box_.noncontent_height(None);
 
         let style = self.box_.style();
 
@@ -1248,14 +1249,14 @@ impl BlockFlow {
         let (top, bottom) =
             (MaybeAuto::from_style(style.PositionOffsets.get().top, containing_block_height),
              MaybeAuto::from_style(style.PositionOffsets.get().bottom, containing_block_height));
-        let available_height = containing_block_height - self.box_.noncontent_height();
+        let available_height = containing_block_height - self.box_.noncontent_height(None);
 
         let mut solution = None;
         if self.is_replaced_content() {
             // Calculate used value of height just like we do for inline replaced elements.
             // TODO: Pass in the containing block height when Box's
             // assign-height can handle it correctly.
-            self.box_.assign_replaced_height_if_necessary();
+            self.box_.assign_replaced_height_if_necessary(None);
             // TODO: Right now, this content height value includes the
             // margin because of erroneous height calculation in Box_.
             // Check this when that has been fixed.
@@ -1298,8 +1299,9 @@ impl BlockFlow {
 
         let mut position = self.box_.border_box.get();
         position.origin.y = Au(0);
+
         // Border box height
-        let border_and_padding = self.box_.noncontent_height();
+        let border_and_padding = self.box_.noncontent_height(None);
         position.size.height = solution.height + border_and_padding;
         self.box_.border_box.set(position);
 
@@ -1594,7 +1596,7 @@ impl Flow for BlockFlow {
 
     fn assign_height(&mut self, ctx: &mut LayoutContext) {
         // Assign height for box if it is an image box.
-        self.box_.assign_replaced_height_if_necessary();
+        self.box_.assign_replaced_height_if_necessary(None);
 
         if self.is_float() {
             debug!("assign_height_float: assigning height for float");
@@ -1780,7 +1782,7 @@ pub trait WidthAndMarginsComputer {
         let (left, right) =
             (MaybeAuto::from_style(style.PositionOffsets.get().left, containing_block_width),
              MaybeAuto::from_style(style.PositionOffsets.get().right, containing_block_width));
-        let available_width = containing_block_width - block.box_.noncontent_width();
+        let available_width = containing_block_width - block.box_.noncontent_width(None);
         return WidthConstraintInput::new(computed_width,
                                          margin_left,
                                          margin_right,
@@ -1813,7 +1815,7 @@ pub trait WidthAndMarginsComputer {
         position_ref.origin.x = box_.margin.borrow().left;
 
         // Border box width
-        position_ref.size.width = solution.width + box_.noncontent_width();
+        position_ref.size.width = solution.width + box_.noncontent_width(None);
     }
 
     /// Set the x coordinate of the given flow if it is absolutely positioned.

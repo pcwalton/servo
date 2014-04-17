@@ -783,8 +783,8 @@ impl Flow for InlineFlow {
         debug!("assign_height_inline: floats in: {:?}", self.base.floats);
 
         // assign height for inline boxes
-        for (fragment, _) in self.boxes.iter() {
-            fragment.assign_replaced_height_if_necessary();
+        for (fragment, context) in self.boxes.iter() {
+            fragment.assign_replaced_height_if_necessary(Some(context));
         }
 
         let scanner_floats = self.base.floats.clone();
@@ -814,7 +814,9 @@ impl Flow for InlineFlow {
 
             for box_i in line.range.eachi() {
                 let cur_box = self.boxes.boxes.get(box_i);
-                let top = cur_box.noncontent_top();
+
+                // FIXME(pcwalton): This `top` value doesn't take the inline context into account.
+                let top = cur_box.noncontent_top(None);
 
                 // FIXME(pcwalton): Move into `box.rs` like the rest of box-specific layout code?
                 let (top_from_base, bottom_from_base, ascent) = match cur_box.specific {
@@ -823,7 +825,9 @@ impl Flow for InlineFlow {
 
                         // TODO: margin, border, padding's top and bottom should be calculated in
                         // advance, since baseline of image is bottom margin edge.
-                        let bottom = cur_box.noncontent_bottom();
+                        // FIXME(pcwalton): This should take the inline fragment context into
+                        // account.
+                        let bottom = cur_box.noncontent_bottom(None);
                         let noncontent_height = top + bottom;
                         height = height + noncontent_height;
 

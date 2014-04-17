@@ -98,7 +98,8 @@ impl TableRowFlow {
                 // TODO: Percentage height
                 let child_specified_height = MaybeAuto::from_style(child_box.style().Box.get().height,
                                                                    Au::new(0)).specified_or_zero();
-                max_y = geometry::max(max_y, child_specified_height + child_box.noncontent_height());
+                max_y = geometry::max(max_y,
+                                      child_specified_height + child_box.noncontent_height(None));
             }
             let child_node = flow::mut_base(kid);
             child_node.position.origin.y = cur_y;
