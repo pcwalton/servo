@@ -845,9 +845,9 @@ impl Box {
         let left_color = style.resolve_color(style.Border.get().border_left_color);
 
         let mut abs_bounds = abs_bounds.clone();
-        abs_bounds.origin.x = abs_bounds.origin.x + self.noncontent_left(inline_fragment_context);
+        /*abs_bounds.origin.x = abs_bounds.origin.x + self.noncontent_left(inline_fragment_context);
         abs_bounds.size.width = abs_bounds.size.width -
-            self.noncontent_width(inline_fragment_context);
+            self.noncontent_width(inline_fragment_context);*/
 
         // Append the border to the display list.
         let border_display_item = ~BorderDisplayItem {
@@ -999,8 +999,7 @@ impl Box {
                 };
 
                 let mut bounds = absolute_box_bounds.clone();
-                bounds.origin.x = bounds.origin.x +
-                    self.noncontent_left(inline_fragment_context);
+                bounds.origin.x = bounds.origin.x + self.noncontent_left(inline_fragment_context);
                 bounds.size.width = bounds.size.width -
                     self.noncontent_width(inline_fragment_context);
 
