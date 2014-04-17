@@ -314,9 +314,6 @@ macro_rules! def_noncontent( ($side:ident, $get:ident) => (
                 Some(inline_fragment_context) => {
                     let mut val = Au(0);
                     for range in inline_fragment_context.ranges() {
-                        println!("adding padding from range ({}): {}",
-                                 stringify!($side),
-                                 range.padding().$side);
                         val = val + range.border().$side + range.padding().$side
                     }
                     val
@@ -1398,10 +1395,6 @@ impl Box {
                 position.size.width = width +
                     self.noncontent_left(inline_fragment_context) +
                     self.noncontent_right(inline_fragment_context);
-                println!("setting width: {:?}/{:?}/{:?}",
-                         width,
-                         self.noncontent_left(inline_fragment_context),
-                         self.noncontent_right(inline_fragment_context));
                 image_box_info.computed_width.set(Some(width));
             }
             ScannedTextBox(_) => {

@@ -1101,11 +1101,6 @@ impl FragmentMap {
     /// `layout::construct::strip_ignorable_whitespace_from_start` for an example of some code that
     /// needlessly has to clone boxes.
     pub fn fixup(&mut self, old_fragments: &[Box], new_fragments: &[Box]) {
-        println!("before fixup: {} ranges with {} boxes:", self.list.len(), old_fragments.len());
-        for range in self.list.iter() {
-            println!(">>> {:?}", range.range);
-        }
-
         // TODO(pcwalton): Post Rust upgrade, use `with_capacity` here.
         let mut old_list = mem::replace(&mut self.list, SmallVec0::new());
         let mut worklist = SmallVec0::new();        // FIXME(pcwalton): was smallvec4
@@ -1193,8 +1188,6 @@ impl FragmentMap {
                 self.list.push(FragmentRange::new(style, range))
             }
         }
-
-        println!("after fixup: {} ranges", self.list.len());
     }
 }
 
@@ -1214,7 +1207,6 @@ impl<'a> InlineFragmentContext<'a> {
     }
 
     pub fn ranges(&self) -> RangeIterator<'a> {
-        println!("there are {} ranges", self.map.list.len());
         self.map.ranges_for_index(self.index)
     }
 }
