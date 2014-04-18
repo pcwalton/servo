@@ -115,8 +115,8 @@ pub enum SpecificBoxInfo {
 pub struct ImageBoxInfo {
     /// The image held within this box.
     image: RefCell<ImageHolder>,
-    computed_width: RefCell<Option<Au>>,
-    computed_height: RefCell<Option<Au>>,
+    computed_width: Option<Au>,
+    computed_height: Option<Au>,
     dom_width: Option<Au>,
     dom_height: Option<Au>,
 }
@@ -140,8 +140,8 @@ impl ImageBoxInfo {
 
         ImageBoxInfo {
             image: RefCell::new(ImageHolder::new(image_url, local_image_cache)),
-            computed_width: RefCell::new(None),
-            computed_height: RefCell::new(None),
+            computed_width: None,
+            computed_height: None,
             dom_width: convert_length(node,"width"),
             dom_height: convert_length(node,"height"),
         }
@@ -149,16 +149,13 @@ impl ImageBoxInfo {
 
     /// Returns the calculated width of the image, accounting for the width attribute.
     pub fn computed_width(&self) -> Au {
-        match &*self.computed_width.borrow() {
-            &Some(width) => {
-                width
-            },
-            &None => {
-                fail!("image width is not computed yet!");
-            }
+        match self.computed_width {
+            Some(width) => width,
+            None => fail!("image width is not computed yet!"),
         }
     }
-    /// Returns width of image(just original width)
+
+    /// Returns the original width of the image.
     pub fn image_width(&self) -> Au {
         let mut image_ref = self.image.borrow_mut();
         Au::from_px(image_ref.get_size().unwrap_or(Size2D(0,0)).width)
@@ -185,17 +182,13 @@ impl ImageBoxInfo {
     }
     /// Returns the calculated height of the image, accounting for the height attribute.
     pub fn computed_height(&self) -> Au {
-        match &*self.computed_height.borrow() {
-            &Some(height) => {
-                height
-            },
-            &None => {
-                fail!("image height is not computed yet!");
-            }
+        match self.computed_height {
+            Some(height) => height,
+            None => fail!("image height is not computed yet!"),
         }
     }
 
-    /// Returns height of image(just original height)
+    /// Returns the original height of the image.
     pub fn image_height(&self) -> Au {
         let mut image_ref = self.image.borrow_mut();
         Au::from_px(image_ref.get_size().unwrap_or(Size2D(0,0)).height)
@@ -1349,19 +1342,34 @@ impl Box {
                                                 Option<InlineFragmentContext>) {
         match self.specific {
             GenericBox | IframeBox(_) | TableBox | TableCellBox | TableRowBox |
-            TableWrapperBox => {}
-            ImageBox(ref image_box_info) => {
+            TableWrapperBox => return,
+            TableColumnBox(_) => fail!("Table column boxes do not have width"),
+            UnscannedTextBox(_) => fail!("Unscanned text boxes should have been scanned by now!"),
+            ImageBox(_) | ScannedTextBox(_) => {}
+        };
+
+        let style_width = self.style().Box.get().width;
+        let style_height = self.style().Box.get().height;
+        let noncontent_width = self.noncontent_width(inline_fragment_context);
+
+        match self.specific {
+            ScannedTextBox(_) => {
+                // Scanned text boxes will have already had their content widths assigned by this
+                // point.
+                self.border_box.size.width = self.border_box.size.width + noncontent_width
+            }
+            ImageBox(ref mut image_box_info) => {
                 // TODO(ksh8281): compute border,margin
-                let width = Auto;
-                let height = Auto;
-                /*if inline_fragment_context.is_none() {
-                    width = ImageBoxInfo::style_length(self.style().Box.get().width,
+                let width;
+                let height;
+                if inline_fragment_context.is_none() {
+                    width = ImageBoxInfo::style_length(style_width,
                                                        image_box_info.dom_width,
                                                        container_width);
 
                     // FIXME(ksh8281): we shouldn't figure height this way
                     // now, we don't know about size of parent's height
-                    height = ImageBoxInfo::style_length(self.style().Box.get().height,
+                    height = ImageBoxInfo::style_length(style_height,
                                                         image_box_info.dom_height,
                                                         Au::new(0));
                 } else {
@@ -1373,7 +1381,7 @@ impl Box {
                         None => Auto,
                         Some(h) => Specified(h),
                     };
-                }*/
+                }
 
                 let width = match (width,height) {
                     (Auto,Auto) => {
@@ -1389,19 +1397,10 @@ impl Box {
                     }
                 };
 
-                self.border_box.size.width = width +
-                    self.noncontent_left(inline_fragment_context) +
-                    self.noncontent_right(inline_fragment_context);
-                image_box_info.computed_width.set(Some(width));
+                self.border_box.size.width = width + noncontent_width;
+                image_box_info.computed_width = Some(width);
             }
-            ScannedTextBox(_) => {
-                // Scanned text boxes will have already had their content widths assigned by this
-                // point.
-                self.border_box.size.width = self.border_box.size.width +
-                    self.noncontent_width(inline_fragment_context);
-            }
-            TableColumnBox(_) => fail!("Table column boxes do not have width"),
-            UnscannedTextBox(_) => fail!("Unscanned text boxes should have been scanned by now!"),
+            _ => fail!("this case should have been handled above"),
         }
     }
 
@@ -1413,19 +1412,27 @@ impl Box {
                                                 Option<InlineFragmentContext>) {
         match self.specific {
             GenericBox | IframeBox(_) | TableBox | TableCellBox | TableRowBox |
-            TableWrapperBox => {}
-            ImageBox(ref image_box_info) => {
+            TableWrapperBox => return,
+            TableColumnBox(_) => fail!("Table column boxes do not have height"),
+            UnscannedTextBox(_) => fail!("Unscanned text boxes should have been scanned by now!"),
+            ImageBox(_) | ScannedTextBox(_) => {}
+        }
+
+        let style_width = self.style().Box.get().width;
+        let style_height = self.style().Box.get().height;
+        let noncontent_height = self.noncontent_height(inline_fragment_context);
+
+        match self.specific {
+            ImageBox(ref mut image_box_info) => {
                 // TODO(ksh8281): compute border,margin,padding
                 let width = image_box_info.computed_width();
                 // FIXME(ksh8281): we shouldn't assign height this way
                 // we don't know about size of parent's height
-                let height = ImageBoxInfo::style_length(self.style().Box.get().height,
+                let height = ImageBoxInfo::style_length(style_height,
                                                         image_box_info.dom_height,
-                                                        Au::new(0));
+                                                        Au(0));
 
-                let height = match (self.style().Box.get().width,
-                                    image_box_info.dom_width,
-                                    height) {
+                let height = match (style_width, image_box_info.dom_width, height) {
                     (LPA_Auto, None, Auto) => {
                         image_box_info.image_height()
                     },
@@ -1439,18 +1446,15 @@ impl Box {
                     }
                 };
 
-                image_box_info.computed_height.set(Some(height));
-                self.border_box.size.height = height +
-                    self.noncontent_height(inline_fragment_context)
+                image_box_info.computed_height = Some(height);
+                self.border_box.size.height = height + noncontent_height
             }
             ScannedTextBox(_) => {
                 // Scanned text boxes' content heights are calculated by the text run scanner
                 // during flow construction.
-                self.border_box.size.height = self.border_box.size.height +
-                    self.noncontent_height(inline_fragment_context)
+                self.border_box.size.height = self.border_box.size.height + noncontent_height
             }
-            TableColumnBox(_) => fail!("Table column boxes do not have height"),
-            UnscannedTextBox(_) => fail!("Unscanned text boxes should have been scanned by now!"),
+            _ => fail!("should have been handled above"),
         }
     }
 
