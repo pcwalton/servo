@@ -316,7 +316,7 @@ pub trait ImmutableFlowUtils {
     fn need_anonymous_flow(self, child: &Flow) -> bool;
 
     /// Generates missing child flow of this flow.
-    fn generate_missing_child_flow(self, node: &ThreadSafeLayoutNode) -> ~Flow;
+    fn generate_missing_child_flow(self, node: &ThreadSafeLayoutNode) -> ~Flow:Share;
 
     /// Returns true if this flow has no children.
     fn is_leaf(self) -> bool;
@@ -373,7 +373,7 @@ pub trait MutableFlowUtils {
 pub trait MutableOwnedFlowUtils {
     /// Adds a new flow as a child of this flow. Removes the flow from the given leaf set if
     /// it's present.
-    fn add_new_child(&mut self, new_child: ~Flow);
+    fn add_new_child(&mut self, new_child: ~Flow:Share);
 
     /// Finishes a flow. Once a flow is finished, no more child flows or boxes may be added to it.
     /// This will normally run the bubble-widths (minimum and preferred -- i.e. intrinsic -- width)
@@ -558,8 +558,8 @@ pub struct BaseFlow {
     restyle_damage: RestyleDamage,
 
     /// The children of this flow.
-    children: FlowList,
-    next_sibling: Link,
+    children: FlowList, // XXX !share
+    next_sibling: Link, // XXX !share
     prev_sibling: Rawlink,
 
     /* layout computations */
@@ -629,6 +629,7 @@ pub struct BaseFlow {
     flags: FlowFlags,
 }
 
+#[unsafe_destructor]
 impl Drop for BaseFlow {
     fn drop(&mut self) {
         if !self.destroyed {
@@ -764,15 +765,15 @@ impl<'a> ImmutableFlowUtils for &'a Flow {
     }
 
     /// Generates missing child flow of this flow.
-    fn generate_missing_child_flow(self, node: &ThreadSafeLayoutNode) -> ~Flow {
+    fn generate_missing_child_flow(self, node: &ThreadSafeLayoutNode) -> ~Flow:Share {
         match self.class() {
             TableFlowClass | TableRowGroupFlowClass => {
                 let box_ = Box::new_anonymous_table_box(node, TableRowBox);
-                ~TableRowFlow::from_node_and_box(node, box_) as ~Flow
+                ~TableRowFlow::from_node_and_box(node, box_) as ~Flow:Share
             },
             TableRowFlowClass => {
                 let box_ = Box::new_anonymous_table_box(node, TableCellBox);
-                ~TableCellFlow::from_node_and_box(node, box_) as ~Flow
+                ~TableCellFlow::from_node_and_box(node, box_) as ~Flow:Share
             },
             _ => {
                 fail!("no need to generate a missing child")
@@ -994,9 +995,9 @@ impl<'a> MutableFlowUtils for &'a mut Flow {
     }
 }
 
-impl MutableOwnedFlowUtils for ~Flow {
+impl MutableOwnedFlowUtils for ~Flow:Share {
     /// Adds a new flow as a child of this flow. Fails if this flow is marked as a leaf.
-    fn add_new_child(&mut self, mut new_child: ~Flow) {
+    fn add_new_child(&mut self, mut new_child: ~Flow:Share) {
         {
             let kid_base = mut_base(new_child);
             kid_base.parallel.parent = parallel::mut_owned_flow_to_unsafe_flow(self);

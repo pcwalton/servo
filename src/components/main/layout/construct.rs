@@ -76,7 +76,7 @@ pub enum ConstructionResult {
     /// This node contributed a flow at the proper position in the tree.
     /// Nothing more needs to be done for this node. It has bubbled up fixed
     /// and absolute descendant flows that have a CB above it.
-    FlowConstructionResult(~Flow, AbsDescendants),
+    FlowConstructionResult(~Flow:Share, AbsDescendants),
 
     /// This node contributed some object or objects that will be needed to construct a proper flow
     /// later up the tree, but these objects have not yet found their home.
@@ -162,7 +162,7 @@ pub struct InlineBlockSplit {
     predecessors: InlineBoxes,
 
     /// The flow that caused this {ib} split.
-    flow: ~Flow,
+    flow: ~Flow:Share,
 }
 
 impl InlineBlockSplit {
@@ -371,8 +371,8 @@ impl<'a> FlowConstructor<'a> {
     #[inline(always)]
     fn flush_inline_boxes_to_flow_or_list(&mut self,
                                           box_accumulator: InlineBoxAccumulator,
-                                          flow: &mut ~Flow,
-                                          flow_list: &mut ~[~Flow],
+                                          flow: &mut ~Flow:Share,
+                                          flow_list: &mut ~[~Flow:Share],
                                           whitespace_stripping: WhitespaceStrippingMode,
                                           node: &ThreadSafeLayoutNode) {
         let mut boxes = box_accumulator.finish();
@@ -396,7 +396,7 @@ impl<'a> FlowConstructor<'a> {
             }
         }
 
-        let mut inline_flow = ~InlineFlow::from_boxes((*node).clone(), boxes) as ~Flow;
+        let mut inline_flow = ~InlineFlow::from_boxes((*node).clone(), boxes) as ~Flow:Share;
         TextRunScanner::new().scan_for_runs(self.font_context(), inline_flow);
         inline_flow.finish(self.layout_context);
 
@@ -408,8 +408,9 @@ impl<'a> FlowConstructor<'a> {
     }
 
     fn build_block_flow_using_children_construction_result(&mut self,
-                                                           flow: &mut ~Flow,
-                                                           consecutive_siblings: &mut ~[~Flow],
+                                                           flow: &mut ~Flow:Share,
+                                                           consecutive_siblings:
+                                                                &mut ~[~Flow:Share],
                                                            node: &ThreadSafeLayoutNode,
                                                            kid: ThreadSafeLayoutNode,
                                                            inline_box_accumulator:
@@ -529,7 +530,7 @@ impl<'a> FlowConstructor<'a> {
     /// Also, deal with the absolute and fixed descendants bubbled up by
     /// children nodes.
     fn build_flow_using_children(&mut self,
-                                 mut flow: ~Flow,
+                                 mut flow: ~Flow:Share,
                                  node: &ThreadSafeLayoutNode)
                                  -> ConstructionResult {
         // Gather up boxes for the inline flows we might need to create.
@@ -587,7 +588,7 @@ impl<'a> FlowConstructor<'a> {
     /// other `BlockFlow`s or `InlineFlow`s underneath it, depending on whether {ib} splits needed
     /// to happen.
     fn build_flow_for_block(&mut self, node: &ThreadSafeLayoutNode) -> ConstructionResult {
-        let flow = ~BlockFlow::from_node(self, node) as ~Flow;
+        let flow = ~BlockFlow::from_node(self, node) as ~Flow:Share;
         self.build_flow_using_children(flow, node)
     }
 
@@ -595,7 +596,7 @@ impl<'a> FlowConstructor<'a> {
     /// a `BlockFlow` underneath it.
     fn build_flow_for_floated_block(&mut self, node: &ThreadSafeLayoutNode, float_kind: FloatKind)
                                     -> ConstructionResult {
-        let flow = ~BlockFlow::float_from_node(self, node, float_kind) as ~Flow;
+        let flow = ~BlockFlow::float_from_node(self, node, float_kind) as ~Flow:Share;
         self.build_flow_using_children(flow, node)
     }
 
@@ -736,7 +737,7 @@ impl<'a> FlowConstructor<'a> {
 
     /// TableCaptionFlow is populated underneath TableWrapperFlow
     fn place_table_caption_under_table_wrapper(&mut self,
-                                               table_wrapper_flow: &mut ~Flow,
+                                               table_wrapper_flow: &mut ~Flow:Share,
                                                node: &ThreadSafeLayoutNode) {
         for kid in node.children() {
             match kid.swap_out_construction_result() {
@@ -753,8 +754,8 @@ impl<'a> FlowConstructor<'a> {
     /// Generates an anonymous table flow according to CSS 2.1 § 17.2.1, step 2.
     /// If necessary, generate recursively another anonymous table flow.
     fn generate_anonymous_missing_child(&mut self,
-                                        child_flows: ~[~Flow],
-                                        flow: &mut ~Flow,
+                                        child_flows: ~[~Flow:Share],
+                                        flow: &mut ~Flow:Share,
                                         node: &ThreadSafeLayoutNode) {
         let mut anonymous_flow = flow.generate_missing_child_flow(node);
         let mut consecutive_siblings = ~[];
@@ -781,10 +782,10 @@ impl<'a> FlowConstructor<'a> {
     /// other `TableCaptionFlow`s or `TableFlow`s underneath it.
     fn build_flow_for_table_wrapper(&mut self, node: &ThreadSafeLayoutNode) -> ConstructionResult {
         let box_ = Box::new_from_specific_info(node, TableWrapperBox);
-        let mut wrapper_flow = ~TableWrapperFlow::from_node_and_box(node, box_) as ~Flow;
+        let mut wrapper_flow = ~TableWrapperFlow::from_node_and_box(node, box_) as ~Flow:Share;
 
         let table_box_ = Box::new_from_specific_info(node, TableBox);
-        let table_flow = ~TableFlow::from_node_and_box(node, table_box_) as ~Flow;
+        let table_flow = ~TableFlow::from_node_and_box(node, table_box_) as ~Flow:Share;
 
         // We first populate the TableFlow with other flows than TableCaptionFlow.
         // We then populate the TableWrapperFlow with TableCaptionFlow, and attach
@@ -830,7 +831,7 @@ impl<'a> FlowConstructor<'a> {
     /// Builds a flow for a node with `display: table-caption`. This yields a `TableCaptionFlow`
     /// with possibly other `BlockFlow`s or `InlineFlow`s underneath it.
     fn build_flow_for_table_caption(&mut self, node: &ThreadSafeLayoutNode) -> ConstructionResult {
-        let flow = ~TableCaptionFlow::from_node(self, node) as ~Flow;
+        let flow = ~TableCaptionFlow::from_node(self, node) as ~Flow:Share;
         self.build_flow_using_children(flow, node)
     }
 
@@ -838,7 +839,7 @@ impl<'a> FlowConstructor<'a> {
     /// with possibly other `TableRowFlow`s underneath it.
     fn build_flow_for_table_rowgroup(&mut self, node: &ThreadSafeLayoutNode) -> ConstructionResult {
         let box_ = Box::new_from_specific_info(node, TableRowBox);
-        let flow = ~TableRowGroupFlow::from_node_and_box(node, box_) as ~Flow;
+        let flow = ~TableRowGroupFlow::from_node_and_box(node, box_) as ~Flow:Share;
         self.build_flow_using_children(flow, node)
     }
 
@@ -846,7 +847,7 @@ impl<'a> FlowConstructor<'a> {
     /// possibly other `TableCellFlow`s underneath it.
     fn build_flow_for_table_row(&mut self, node: &ThreadSafeLayoutNode) -> ConstructionResult {
         let box_ = Box::new_from_specific_info(node, TableRowBox);
-        let flow = ~TableRowFlow::from_node_and_box(node, box_) as ~Flow;
+        let flow = ~TableRowFlow::from_node_and_box(node, box_) as ~Flow:Share;
         self.build_flow_using_children(flow, node)
     }
 
@@ -854,7 +855,7 @@ impl<'a> FlowConstructor<'a> {
     /// possibly other `BlockFlow`s or `InlineFlow`s underneath it.
     fn build_flow_for_table_cell(&mut self, node: &ThreadSafeLayoutNode) -> ConstructionResult {
         let box_ = Box::new_from_specific_info(node, TableCellBox);
-        let flow = ~TableCellFlow::from_node_and_box(node, box_) as ~Flow;
+        let flow = ~TableCellFlow::from_node_and_box(node, box_) as ~Flow:Share;
         self.build_flow_using_children(flow, node)
     }
 
@@ -893,7 +894,8 @@ impl<'a> FlowConstructor<'a> {
             let specific = TableColumnBox(TableColumnBoxInfo::new(node));
             col_boxes.push( Box::new_from_specific_info(node, specific) );
         }
-        let mut flow = ~TableColGroupFlow::from_node_and_boxes(node, box_, col_boxes) as ~Flow;
+        let mut flow = ~TableColGroupFlow::from_node_and_boxes(node, box_, col_boxes) as
+            ~Flow:Share;
         flow.finish(self.layout_context);
 
         FlowConstructionResult(flow, Descendants::new())

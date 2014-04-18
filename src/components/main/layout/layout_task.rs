@@ -425,7 +425,7 @@ impl LayoutTask {
     }
 
     /// Retrieves the flow tree root from the root node.
-    fn get_layout_root(&self, node: LayoutNode) -> ~Flow {
+    fn get_layout_root(&self, node: LayoutNode) -> ~Flow:Share {
         let mut layout_data_ref = node.mutate_layout_data();
         let result = match &mut *layout_data_ref {
             &Some(ref mut layout_data) => {
@@ -491,7 +491,7 @@ impl LayoutTask {
     /// benchmarked against those two. It is marked `#[inline(never)]` to aid profiling.
     #[inline(never)]
     fn solve_constraints_parallel(&mut self,
-                                  layout_root: &mut ~Flow,
+                                  layout_root: &mut ~Flow:Share,
                                   layout_context: &mut LayoutContext) {
         if layout_context.opts.bubble_widths_separately {
             let mut traversal = BubbleWidthsTraversal {
@@ -517,13 +517,13 @@ impl LayoutTask {
     /// This is only on in debug builds.
     #[inline(never)]
     #[cfg(debug)]
-    fn verify_flow_tree(&mut self, layout_root: &mut ~Flow) {
+    fn verify_flow_tree(&mut self, layout_root: &mut ~Flow:Share) {
         let mut traversal = FlowTreeVerificationTraversal;
         layout_root.traverse_preorder(&mut traversal);
     }
 
     #[cfg(not(debug))]
-    fn verify_flow_tree(&mut self, _: &mut ~Flow) {
+    fn verify_flow_tree(&mut self, _: &mut ~Flow:Share) {
     }
 
     /// The high-level routine that performs layout tasks.

@@ -6,14 +6,52 @@ use image::base::Image;
 use image_cache_task::{ImageReady, ImageNotReady, ImageFailed};
 use local_image_cache::LocalImageCache;
 
-use sync::{Arc, MutexArc};
 use geom::size::Size2D;
+use std::cast;
 use std::mem;
+use std::ptr;
+use sync::{Arc, MutexArc};
 use url::Url;
 
 // FIXME: Nasty coupling here This will be a problem if we want to factor out image handling from
 // the network stack. This should probably be factored out into an interface and use dependency
 // injection.
+
+/// An unfortunate hack to make this `MutexArc` `Share`.
+pub struct LocalImageCacheHandle {
+    data: *uint,
+}
+
+impl Drop for LocalImageCacheHandle {
+    fn drop(&mut self) {
+        unsafe {
+            let _: ~MutexArc<LocalImageCache> =
+                cast::transmute(mem::replace(&mut self.data, ptr::null()));
+        }
+    }
+}
+
+impl Clone for LocalImageCacheHandle {
+    fn clone(&self) -> LocalImageCacheHandle {
+        LocalImageCacheHandle::new(self.get().clone())
+    }
+}
+
+impl LocalImageCacheHandle {
+    fn new(cache: MutexArc<LocalImageCache>) -> LocalImageCacheHandle {
+        unsafe {
+            LocalImageCacheHandle {
+                data: cast::transmute(~cache),
+            }
+        }
+    }
+
+    fn get<'a>(&'a self) -> &'a MutexArc<LocalImageCache> {
+        unsafe {
+            cast::transmute::<*uint,&'a MutexArc<LocalImageCache>>(self.data)
+        }
+    }
+}
 
 /// A struct to store image data. The image will be loaded once the first time it is requested,
 /// and an Arc will be stored.  Clones of this Arc are given out on demand.
@@ -22,7 +60,7 @@ pub struct ImageHolder {
     url: Url,
     image: Option<Arc<~Image>>,
     cached_size: Size2D<int>,
-    local_image_cache: MutexArc<LocalImageCache>,
+    local_image_cache: LocalImageCacheHandle,
 }
 
 impl ImageHolder {
@@ -32,7 +70,7 @@ impl ImageHolder {
             url: url,
             image: None,
             cached_size: Size2D(0,0),
-            local_image_cache: local_image_cache.clone(),
+            local_image_cache: LocalImageCacheHandle::new(local_image_cache.clone()),
         };
 
         // Tell the image cache we're going to be interested in this url
@@ -40,7 +78,7 @@ impl ImageHolder {
         // but they are intended to be spread out in time. Ideally prefetch
         // should be done as early as possible and decode only once we
         // are sure that the image will be used.
-        holder.local_image_cache.access(|local_image_cache| {
+        holder.local_image_cache.get().access(|local_image_cache| {
             local_image_cache.prefetch(&holder.url);
             local_image_cache.decode(&holder.url);
         });
@@ -75,7 +113,7 @@ impl ImageHolder {
         // the image and store it for the future
         if self.image.is_none() {
             let port =
-                self.local_image_cache.access(|local_image_cache| {
+                self.local_image_cache.get().access(|local_image_cache| {
                     local_image_cache.get_image(&self.url)
                 });
             match port.recv() {
