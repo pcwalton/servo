@@ -117,18 +117,18 @@ impl TableRowFlow {
         // Assign the height of own box
         //
         // FIXME(pcwalton): Take `cur_y` into account.
-        let mut position = self.block_flow.box_.border_box.get();
+        let mut position = self.block_flow.box_.border_box;
         position.size.height = height;
-        self.block_flow.box_.border_box.set(position);
+        self.block_flow.box_.border_box = position;
         self.block_flow.base.position.size.height = height;
 
         // Assign the height of kid boxes, which is the same value as own height.
         for kid in self.block_flow.base.child_iter() {
             {
-                let kid_box_ = kid.as_table_cell().box_();
-                let mut position = kid_box_.border_box.get();
+                let kid_box_ = kid.as_table_cell().mut_box();
+                let mut position = kid_box_.border_box;
                 position.size.height = height;
-                kid_box_.border_box.set(position);
+                kid_box_.border_box = position;
             }
             let child_node = flow::mut_base(kid);
             child_node.position.size.height = height;

@@ -170,8 +170,8 @@ impl Flow for TableWrapperFlow {
         let width_computer = TableWrapper;
         width_computer.compute_used_width_table_wrapper(self, ctx, containing_block_width);
 
-        let left_content_edge = self.block_flow.box_.border_box.get().origin.x;
-        let content_width = self.block_flow.box_.border_box.get().size.width;
+        let left_content_edge = self.block_flow.box_.border_box.origin.x;
+        let content_width = self.block_flow.box_.border_box.size.width;
 
         match self.table_layout {
             FixedLayout | _ if self.is_float() =>

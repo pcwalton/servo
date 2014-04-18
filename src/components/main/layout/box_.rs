@@ -78,7 +78,7 @@ pub struct Box {
 
     /// The position of this box relative to its owning flow.
     /// The size includes padding and border, but not margin.
-    border_box: RefCell<Rect<Au>>,
+    border_box: Rect<Au>,
 
     /// The padding of the content box.
     padding: RefCell<SideOffsets2D<Au>>,
@@ -90,6 +90,8 @@ pub struct Box {
     specific: SpecificBoxInfo,
 
     /// New-line chracter(\n)'s positions(relative, not absolute)
+    ///
+    /// FIXME(pcwalton): This is very inefficient; remove.
     new_line_pos: ~[uint],
 }
 
@@ -340,7 +342,7 @@ impl Box {
         Box {
             node: OpaqueNodeMethods::from_thread_safe_layout_node(node),
             style: node.style().clone(),
-            border_box: RefCell::new(Au::zero_rect()),
+            border_box: Au::zero_rect(),
             padding: RefCell::new(Zero::zero()),
             margin: RefCell::new(Zero::zero()),
             specific: constructor.build_specific_box_info_for_node(node),
@@ -353,7 +355,7 @@ impl Box {
         Box {
             node: OpaqueNodeMethods::from_thread_safe_layout_node(node),
             style: node.style().clone(),
-            border_box: RefCell::new(Au::zero_rect()),
+            border_box: Au::zero_rect(),
             padding: RefCell::new(Zero::zero()),
             margin: RefCell::new(Zero::zero()),
             specific: specific,
@@ -377,7 +379,7 @@ impl Box {
         Box {
             node: OpaqueNodeMethods::from_thread_safe_layout_node(node),
             style: Arc::new(node_style),
-            border_box: RefCell::new(Au::zero_rect()),
+            border_box: Au::zero_rect(),
             padding: RefCell::new(Zero::zero()),
             margin: RefCell::new(Zero::zero()),
             specific: specific,
@@ -393,7 +395,7 @@ impl Box {
         Box {
             node: node,
             style: style,
-            border_box: RefCell::new(Au::zero_rect()),
+            border_box: Au::zero_rect(),
             padding: RefCell::new(Zero::zero()),
             margin: RefCell::new(Zero::zero()),
             specific: specific,
@@ -415,7 +417,7 @@ impl Box {
         Box {
             node: self.node,
             style: self.style.clone(),
-            border_box: RefCell::new(Rect(self.border_box.get().origin, size)),
+            border_box: Rect(self.border_box.origin, size),
             padding: RefCell::new(self.padding.get()),
             margin: RefCell::new(self.margin.get()),
             specific: specific,
@@ -537,7 +539,7 @@ impl Box {
 
     pub fn padding_box_size(&self, inline_fragment_context: Option<InlineFragmentContext>)
                             -> Size2D<Au> {
-        let border_box_size = self.border_box.get().size;
+        let border_box_size = self.border_box.size;
         let border = self.border_width(inline_fragment_context);
         Size2D(border_box_size.width - border.left - border.right,
                border_box_size.height - border.top - border.bottom)
@@ -870,7 +872,7 @@ impl Box {
                                              stacking_context: &mut StackingContext,
                                              flow_origin: Point2D<Au>,
                                              text_box: &ScannedTextBoxInfo) {
-        let box_bounds = self.border_box.get();
+        let box_bounds = self.border_box;
         let absolute_box_bounds = box_bounds.translate(&flow_origin);
 
         // Compute the text box bounds and draw a border surrounding them.
@@ -908,7 +910,7 @@ impl Box {
     fn build_debug_borders_around_box(&self,
                                       stacking_context: &mut StackingContext,
                                       flow_origin: Point2D<Au>) {
-        let box_bounds = self.border_box.get();
+        let box_bounds = self.border_box;
         let absolute_box_bounds = box_bounds.translate(&flow_origin);
 
         // This prints a debug border around the border of this box.
@@ -944,7 +946,7 @@ impl Box {
                               background_and_border_level: BackgroundAndBorderLevel,
                               inline_fragment_context: Option<InlineFragmentContext>) {
         // Box position wrt to the owning flow.
-        let box_bounds = self.border_box.get();
+        let box_bounds = self.border_box;
         let absolute_box_bounds = box_bounds.translate(&flow_origin);
         debug!("Box::build_display_list at rel={}, abs={}: {:s}",
                box_bounds,
@@ -1185,7 +1187,7 @@ impl Box {
     /// Return the size of the content box.
     pub fn content_box_size(&self, inline_fragment_context: Option<InlineFragmentContext>)
                             -> Size2D<Au> {
-        let border_box_size = self.border_box.get().size;
+        let border_box_size = self.border_box.size;
         Size2D(border_box_size.width - self.noncontent_width(inline_fragment_context),
                border_box_size.height - self.noncontent_height(inline_fragment_context))
     }
@@ -1309,7 +1311,7 @@ impl Box {
                 let left_box = if left_range.length() > 0 {
                     let new_text_box_info = ScannedTextBoxInfo::new(text_box_info.run.clone(), left_range);
                     let mut new_metrics = new_text_box_info.run.get().metrics_for_range(&left_range);
-                    new_metrics.bounding_box.size.height = self.border_box.get().size.height;
+                    new_metrics.bounding_box.size.height = self.border_box.size.height;
                     Some(self.transform(new_metrics.bounding_box.size,
                                         ScannedTextBox(new_text_box_info)))
                 } else {
@@ -1319,7 +1321,7 @@ impl Box {
                 let right_box = right_range.map_or(None, |range: Range| {
                     let new_text_box_info = ScannedTextBoxInfo::new(text_box_info.run.clone(), range);
                     let mut new_metrics = new_text_box_info.run.get().metrics_for_range(&range);
-                    new_metrics.bounding_box.size.height = self.border_box.get().size.height;
+                    new_metrics.bounding_box.size.height = self.border_box.size.height;
                     Some(self.transform(new_metrics.bounding_box.size,
                                         ScannedTextBox(new_text_box_info)))
                 });
@@ -1343,7 +1345,7 @@ impl Box {
 
     /// Assigns replaced width, padding, and margins for this box only if it is replaced content
     /// per CSS 2.1 § 10.3.2.
-    pub fn assign_replaced_width_if_necessary(&self,
+    pub fn assign_replaced_width_if_necessary(&mut self,
                                               container_width: Au,
                                               inline_fragment_context:
                                                 Option<InlineFragmentContext>) {
@@ -1391,17 +1393,15 @@ impl Box {
                     }
                 };
 
-                let mut position = self.border_box.borrow_mut();
-                position.size.width = width +
+                self.border_box.size.width = width +
                     self.noncontent_left(inline_fragment_context) +
                     self.noncontent_right(inline_fragment_context);
                 image_box_info.computed_width.set(Some(width));
             }
             ScannedTextBox(_) => {
-                // Scanned text boxes will have already had their
-                // content_widths assigned by this point.
-                let mut position = self.border_box.borrow_mut();
-                position.size.width = position.size.width +
+                // Scanned text boxes will have already had their content widths assigned by this
+                // point.
+                self.border_box.size.width = self.border_box.size.width +
                     self.noncontent_width(inline_fragment_context);
             }
             TableColumnBox(_) => fail!("Table column boxes do not have width"),
@@ -1412,7 +1412,7 @@ impl Box {
     /// Assign height for this box if it is replaced content.
     ///
     /// Ideally, this should follow CSS 2.1 § 10.6.2
-    pub fn assign_replaced_height_if_necessary(&self,
+    pub fn assign_replaced_height_if_necessary(&mut self,
                                                inline_fragment_context:
                                                 Option<InlineFragmentContext>) {
         match self.specific {
@@ -1443,17 +1443,15 @@ impl Box {
                     }
                 };
 
-                let mut position = self.border_box.borrow_mut();
                 image_box_info.computed_height.set(Some(height));
-                position.size.height = height + self.noncontent_height(inline_fragment_context)
+                self.border_box.size.height = height +
+                    self.noncontent_height(inline_fragment_context)
             }
             ScannedTextBox(_) => {
-                // Scanned text boxes will have already had their widths assigned by this point
-                let mut position = self.border_box.borrow_mut();
-                // Scanned text boxes' content heights are calculated by the
-                // text run scanner during Flow construction.
-                position.size.height
-                    = position.size.height + self.noncontent_height(inline_fragment_context)
+                // Scanned text boxes' content heights are calculated by the text run scanner
+                // during flow construction.
+                self.border_box.size.height = self.border_box.size.height +
+                    self.noncontent_height(inline_fragment_context)
             }
             TableColumnBox(_) => fail!("Table column boxes do not have height"),
             UnscannedTextBox(_) => fail!("Unscanned text boxes should have been scanned by now!"),
@@ -1531,10 +1529,8 @@ impl Box {
         let border = self.border_width(inline_fragment_context);
         let left = offset.x + self.margin.get().left + border.left + self.padding.get().left;
         let top = offset.y + self.margin.get().top + border.top + self.padding.get().top;
-        let width = self.border_box.get().size.width -
-            self.noncontent_width(inline_fragment_context);
-        let height = self.border_box.get().size.height -
-            self.noncontent_height(inline_fragment_context);
+        let width = self.border_box.size.width - self.noncontent_width(inline_fragment_context);
+        let height = self.border_box.size.height - self.noncontent_height(inline_fragment_context);
         let origin = Point2D(geometry::to_frac_px(left) as f32, geometry::to_frac_px(top) as f32);
         let size = Size2D(geometry::to_frac_px(width) as f32, geometry::to_frac_px(height) as f32);
         let rect = Rect(origin, size);

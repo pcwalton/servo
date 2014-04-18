@@ -274,7 +274,7 @@ impl Flow for TableFlow {
             self.block_flow.box_.padding.get().right +
             border.left +
             border.right;
-        let content_width = self.block_flow.box_.border_box.get().size.width - padding_and_borders;
+        let content_width = self.block_flow.box_.border_box.size.width - padding_and_borders;
 
         match self.table_layout {
             FixedLayout => {

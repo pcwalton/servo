@@ -24,7 +24,7 @@ use servo_util::range::Range;
 use servo_util::smallvec::{SmallVec, SmallVec0};
 use std::iter::Enumerate;
 use std::mem;
-use std::slice::Items;
+use std::slice::{Items, MutItems};
 use std::u16;
 use style::computed_values::{text_align, vertical_align, white_space};
 use style::ComputedValues;
@@ -190,7 +190,7 @@ impl LineboxScanner {
                               -> (Rect<Au>, Au) {
         debug!("LineboxScanner: Trying to place first box of line {}", self.lines.len());
 
-        let first_box_size = first_box.border_box.get().size;
+        let first_box_size = first_box.border_box.size;
         let splittable = first_box.can_split();
         debug!("LineboxScanner: box size: {}, splittable: {}", first_box_size, splittable);
         let line_is_empty: bool = self.pending_line.range.length() == 0;
@@ -244,9 +244,9 @@ impl LineboxScanner {
 
                 debug!("LineboxScanner: case=box split and fit");
                 let actual_box_width = match (left, right) {
-                    (Some(l_box), Some(_))  => l_box.border_box.get().size.width,
-                    (Some(l_box), None)     => l_box.border_box.get().size.width,
-                    (None, Some(r_box))     => r_box.border_box.get().size.width,
+                    (Some(l_box), Some(_))  => l_box.border_box.size.width,
+                    (Some(l_box), None)     => l_box.border_box.size.width,
+                    (None, Some(r_box))     => r_box.border_box.size.width,
                     (None, None)            => fail!("This case makes no sense.")
                 };
                 return (line_bounds, actual_box_width);
@@ -258,9 +258,9 @@ impl LineboxScanner {
 
                 debug!("LineboxScanner: case=box split and fit didn't fit; trying to push it down");
                 let actual_box_width = match (left, right) {
-                    (Some(l_box), Some(_))  => l_box.border_box.get().size.width,
-                    (Some(l_box), None)     => l_box.border_box.get().size.width,
-                    (None, Some(r_box))     => r_box.border_box.get().size.width,
+                    (Some(l_box), Some(_))  => l_box.border_box.size.width,
+                    (Some(l_box), None)     => l_box.border_box.size.width,
+                    (None, Some(r_box))     => r_box.border_box.size.width,
                     (None, None)            => fail!("This case makes no sense.")
                 };
 
@@ -359,7 +359,7 @@ impl LineboxScanner {
         debug!("LineboxScanner: Trying to append box to line {:u} (box size: {}, green zone: \
                 {}): {:s}",
                self.lines.len(),
-               in_box.border_box.get().size,
+               in_box.border_box.size,
                self.pending_line.green_zone,
                in_box.debug_str());
 
@@ -379,7 +379,7 @@ impl LineboxScanner {
         // horizontally. We'll try to place the whole box on this line and break somewhere if it
         // doesn't fit.
 
-        let new_width = self.pending_line.bounds.size.width + in_box.border_box.get().size.width;
+        let new_width = self.pending_line.bounds.size.width + in_box.border_box.size.width;
         if new_width <= green_zone.width {
             debug!("LineboxScanner: case=box fits without splitting");
             self.push_box_to_line(in_box);
@@ -450,9 +450,9 @@ impl LineboxScanner {
         }
         self.pending_line.range.extend_by(1);
         self.pending_line.bounds.size.width = self.pending_line.bounds.size.width +
-            box_.border_box.get().size.width;
+            box_.border_box.size.width;
         self.pending_line.bounds.size.height = Au::max(self.pending_line.bounds.size.height,
-                                                       box_.border_box.get().size.height);
+                                                       box_.border_box.size.height);
         self.new_boxes.push(box_);
     }
 }
@@ -466,6 +466,22 @@ pub struct BoxIterator<'a> {
 impl<'a> Iterator<(&'a Box, InlineFragmentContext<'a>)> for BoxIterator<'a> {
     #[inline]
     fn next(&mut self) -> Option<(&'a Box, InlineFragmentContext<'a>)> {
+        match self.iter.next() {
+            None => None,
+            Some((i, fragment)) => Some((fragment, InlineFragmentContext::new(self.map, i))),
+        }
+    }
+}
+
+/// Mutable iterator over boxes.
+pub struct MutBoxIterator<'a> {
+    iter: Enumerate<MutItems<'a,Box>>,
+    map: &'a FragmentMap,
+}
+
+impl<'a> Iterator<(&'a mut Box, InlineFragmentContext<'a>)> for MutBoxIterator<'a> {
+    #[inline]
+    fn next(&mut self) -> Option<(&'a mut Box, InlineFragmentContext<'a>)> {
         match self.iter.next() {
             None => None,
             Some((i, fragment)) => Some((fragment, InlineFragmentContext::new(self.map, i))),
@@ -525,9 +541,23 @@ impl InlineBoxes {
         }
     }
 
+    /// Returns an iterator that iterates over all boxes along with the appropriate context and
+    /// allows those boxes to be mutated.
+    pub fn mut_iter<'a>(&'a mut self) -> MutBoxIterator<'a> {
+        MutBoxIterator {
+            iter: self.boxes.as_mut_slice().mut_iter().enumerate(),
+            map: &self.map,
+        }
+    }
+
     /// A convenience function to return the box at a given index.
     pub fn get<'a>(&'a self, index: uint) -> &'a Box {
         self.boxes.get(index)
+    }
+
+    /// A convenience function to return a mutable reference to the box at a given index.
+    pub fn get_mut<'a>(&'a mut self, index: uint) -> &'a mut Box {
+        self.boxes.get_mut(index)
     }
 }
 
@@ -663,7 +693,7 @@ impl InlineFlow {
     }
 
     /// Sets box X positions based on alignment for one line.
-    fn set_horizontal_box_positions(boxes: &InlineBoxes,
+    fn set_horizontal_box_positions(boxes: &mut InlineBoxes,
                                     line: &LineBox,
                                     linebox_align: text_align::T) {
         // Figure out how much width we have.
@@ -682,9 +712,9 @@ impl InlineFlow {
         };
 
         for i in line.range.eachi() {
-            let box_ = boxes.get(i);
-            let size = box_.border_box.get().size;
-            box_.border_box.set(Rect(Point2D(offset_x, box_.border_box.get().origin.y), size));
+            let box_ = boxes.get_mut(i);
+            let size = box_.border_box.size;
+            box_.border_box = Rect(Point2D(offset_x, box_.border_box.origin.y), size);
             offset_x = offset_x + size.width;
         }
     }
@@ -738,7 +768,7 @@ impl Flow for InlineFlow {
 
         {
             let this = &mut *self;
-            for (fragment, context) in this.boxes.iter() {
+            for (fragment, context) in this.boxes.mut_iter() {
                 fragment.assign_replaced_width_if_necessary(self.base.position.size.width,
                                                             Some(context))
             }
@@ -781,7 +811,7 @@ impl Flow for InlineFlow {
         debug!("assign_height_inline: floats in: {:?}", self.base.floats);
 
         // assign height for inline boxes
-        for (fragment, context) in self.boxes.iter() {
+        for (fragment, context) in self.boxes.mut_iter() {
             fragment.assign_replaced_height_if_necessary(Some(context));
         }
 
@@ -798,7 +828,7 @@ impl Flow for InlineFlow {
         // Now, go through each line and lay out the boxes inside.
         for line in self.lines.mut_iter() {
             // Lay out boxes horizontally.
-            InlineFlow::set_horizontal_box_positions(&self.boxes, line, text_align);
+            InlineFlow::set_horizontal_box_positions(&mut self.boxes, line, text_align);
 
             // Set the top y position of the current linebox.
             // `line_height_offset` is updated at the end of the previous loop.
@@ -811,7 +841,7 @@ impl Flow for InlineFlow {
             let (mut biggest_top, mut biggest_bottom) = (Au(0), Au(0));
 
             for box_i in line.range.eachi() {
-                let cur_box = self.boxes.boxes.get(box_i);
+                let cur_box = self.boxes.boxes.get_mut(box_i);
 
                 // FIXME(pcwalton): This `top` value doesn't take the inline context into account.
                 let top = cur_box.noncontent_top(None);
@@ -847,13 +877,13 @@ impl Flow for InlineFlow {
 
                         // Offset from the top of the box is 1/2 of the leading + ascent
                         let text_offset = text_ascent + (line_height - em_size).scale_by(0.5);
-                        text_bounds.translate(&Point2D(cur_box.border_box.get().origin.x, Au(0)));
+                        text_bounds.translate(&Point2D(cur_box.border_box.origin.x, Au(0)));
 
                         (text_offset, line_height - text_offset, text_ascent)
                     },
                     GenericBox | IframeBox(_) | TableBox | TableCellBox | TableRowBox |
                     TableWrapperBox => {
-                        let height = cur_box.border_box.get().size.height;
+                        let height = cur_box.border_box.size.height;
                         (height, Au::new(0), height)
                     },
                     TableColumnBox(_) => fail!("Table column boxes do not have height"),
@@ -909,7 +939,7 @@ impl Flow for InlineFlow {
                     bottommost = bottom_from_base;
                 }
 
-                cur_box.border_box.borrow_mut().origin.y = line.bounds.origin.y + offset + top;
+                cur_box.border_box.origin.y = line.bounds.origin.y + offset + top;
             }
 
             // Calculate the distance from baseline to the top of the biggest box with 'bottom'
@@ -931,15 +961,14 @@ impl Flow for InlineFlow {
 
             // All boxes' y position is updated following the new baseline offset.
             for box_i in line.range.eachi() {
-                let cur_box = self.boxes.get(box_i);
+                let cur_box = self.boxes.get_mut(box_i);
                 let adjust_offset = match cur_box.vertical_align() {
                     vertical_align::top => Au::new(0),
                     vertical_align::bottom => baseline_offset + bottommost,
                     _ => baseline_offset,
                 };
 
-                cur_box.border_box.borrow_mut().origin.y = cur_box.border_box.get().origin.y +
-                    adjust_offset;
+                cur_box.border_box.origin.y = cur_box.border_box.origin.y + adjust_offset;
             }
 
             // This is used to set the top y position of the next linebox in the next loop.
