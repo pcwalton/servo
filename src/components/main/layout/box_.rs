@@ -38,7 +38,6 @@ use servo_util::namespace;
 use servo_util::smallvec::{SmallVec, SmallVec0};
 use servo_util::str::is_whitespace;
 use std::cast;
-use std::cell::RefCell;
 use std::from_str::FromStr;
 use std::num::Zero;
 use style::{ComputedValues, TElement, TNode, cascade, initial_values};
@@ -114,7 +113,7 @@ pub enum SpecificBoxInfo {
 #[deriving(Clone)]
 pub struct ImageBoxInfo {
     /// The image held within this box.
-    image: RefCell<ImageHolder>,
+    image: ImageHolder,
     computed_width: Option<Au>,
     computed_height: Option<Au>,
     dom_width: Option<Au>,
@@ -139,7 +138,7 @@ impl ImageBoxInfo {
         }
 
         ImageBoxInfo {
-            image: RefCell::new(ImageHolder::new(image_url, local_image_cache)),
+            image: ImageHolder::new(image_url, local_image_cache),
             computed_width: None,
             computed_height: None,
             dom_width: convert_length(node,"width"),
@@ -156,8 +155,8 @@ impl ImageBoxInfo {
     }
 
     /// Returns the original width of the image.
-    pub fn image_width(&self) -> Au {
-        let mut image_ref = self.image.borrow_mut();
+    pub fn image_width(&mut self) -> Au {
+        let image_ref = &mut self.image;
         Au::from_px(image_ref.get_size().unwrap_or(Size2D(0,0)).width)
     }
 
@@ -189,8 +188,8 @@ impl ImageBoxInfo {
     }
 
     /// Returns the original height of the image.
-    pub fn image_height(&self) -> Au {
-        let mut image_ref = self.image.borrow_mut();
+    pub fn image_height(&mut self) -> Au {
+        let image_ref = &mut self.image;
         Au::from_px(image_ref.get_size().unwrap_or(Size2D(0,0)).height)
     }
 }
@@ -834,15 +833,10 @@ impl Box {
         let bottom_color = style.resolve_color(style.Border.get().border_bottom_color);
         let left_color = style.resolve_color(style.Border.get().border_left_color);
 
-        let mut abs_bounds = abs_bounds.clone();
-        /*abs_bounds.origin.x = abs_bounds.origin.x + self.noncontent_left(inline_fragment_context);
-        abs_bounds.size.width = abs_bounds.size.width -
-            self.noncontent_width(inline_fragment_context);*/
-
         // Append the border to the display list.
         let border_display_item = ~BorderDisplayItem {
             base: BaseDisplayItem {
-                bounds: abs_bounds,
+                bounds: *abs_bounds,
                 node: self.node,
             },
             border: border,
@@ -929,7 +923,7 @@ impl Box {
     /// * `dirty`: The dirty rectangle in the coordinate system of the owning flow.
     /// * `flow_origin`: Position of the origin of the owning flow wrt the display list root flow.
     ///   box.
-    pub fn build_display_list(&self,
+    pub fn build_display_list(&mut self,
                               stacking_context: &mut StackingContext,
                               builder: &DisplayListBuilder,
                               _: &DisplayListBuildingInfo,
@@ -1031,40 +1025,50 @@ impl Box {
                 // should have a real `SERVO_DEBUG` system.
                 debug!("{:?}", self.build_debug_borders_around_box(stacking_context, flow_origin))
             },
-            ImageBox(ref image_box) => {
-                let mut image_ref = image_box.image.borrow_mut();
+            ImageBox(_) => {
+                let noncontent_left = self.noncontent_left(inline_fragment_context);
+                let noncontent_top = self.noncontent_top(inline_fragment_context);
+                let noncontent_width = self.noncontent_width(inline_fragment_context);
+                let noncontent_height = self.noncontent_height(inline_fragment_context);
+
                 let mut bounds = absolute_box_bounds.clone();
-                bounds.origin.x = bounds.origin.x + self.noncontent_left(inline_fragment_context);
-                bounds.origin.y = bounds.origin.y + self.noncontent_top(inline_fragment_context);
-                bounds.size.width = bounds.size.width -
-                    self.noncontent_width(inline_fragment_context);
-                bounds.size.height = bounds.size.height -
-                    self.noncontent_height(inline_fragment_context);
+                bounds.origin.x = bounds.origin.x + noncontent_left;
+                bounds.origin.y = bounds.origin.y + noncontent_top;
+                bounds.size.width = bounds.size.width - noncontent_width;
+                bounds.size.height = bounds.size.height - noncontent_height;
 
-                match image_ref.get_image() {
-                    Some(image) => {
-                        debug!("(building display list) building image box");
+                match self.specific {
+                    ImageBox(ref mut image_box) => {
+                        let image_ref = &mut image_box.image;
+                        match image_ref.get_image() {
+                            Some(image) => {
+                                debug!("(building display list) building image box");
 
-                        // Place the image into the display list.
-                        let image_display_item = ~ImageDisplayItem {
-                            base: BaseDisplayItem {
-                                bounds: bounds,
-                                node: self.node,
-                            },
-                            image: image.clone(),
-                            stretch_size: bounds.size,
-                        };
-                        stacking_context.content.push(ImageDisplayItemClass(image_display_item))
+                                // Place the image into the display list.
+                                let image_display_item = ~ImageDisplayItem {
+                                    base: BaseDisplayItem {
+                                        bounds: bounds,
+                                        node: self.node,
+                                    },
+                                    image: image.clone(),
+                                    stretch_size: bounds.size,
+                                };
+                                stacking_context.content
+                                                .push(ImageDisplayItemClass(image_display_item))
+                            }
+                            None => {
+                                // No image data at all? Do nothing.
+                                //
+                                // TODO: Add some kind of placeholder image.
+                                debug!("(building display list) no image :(");
+                            }
+                        }
                     }
-                    None => {
-                        // No image data at all? Do nothing.
-                        //
-                        // TODO: Add some kind of placeholder image.
-                        debug!("(building display list) no image :(");
-                    }
+                    _ => fail!("shouldn't get here"),
                 }
-                // FIXME(pcwalton): This is a bit of an abuse of the logging infrastructure. We
-                // should have a real `SERVO_DEBUG` system.
+
+                // FIXME(pcwalton): This is a bit of an abuse of the logging
+                // infrastructure. We should have a real `SERVO_DEBUG` system.
                 debug!("{:?}", self.build_debug_borders_around_box(stacking_context, flow_origin))
             }
         }
@@ -1091,14 +1095,14 @@ impl Box {
     }
 
     /// Returns the intrinsic widths of this fragment.
-    pub fn intrinsic_widths(&self, inline_fragment_context: Option<InlineFragmentContext>)
+    pub fn intrinsic_widths(&mut self, inline_fragment_context: Option<InlineFragmentContext>)
                             -> IntrinsicWidths {
         let mut result = self.style_specified_intrinsic_width();
 
         match self.specific {
             GenericBox | IframeBox(_) | TableBox | TableCellBox | TableColumnBox(_) | TableRowBox |
             TableWrapperBox => {}
-            ImageBox(ref image_box_info) => {
+            ImageBox(ref mut image_box_info) => {
                 let image_width = image_box_info.image_width();
                 result.minimum_width = geometry::max(result.minimum_width, image_width);
                 result.preferred_width = geometry::max(result.preferred_width, image_width);

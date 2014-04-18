@@ -591,7 +591,7 @@ impl InlineFlow {
         self.boxes = InlineBoxes::new();
     }
 
-    pub fn build_display_list_inline(&self,
+    pub fn build_display_list_inline(&mut self,
                                      stacking_context: &mut StackingContext,
                                      builder: &DisplayListBuilder,
                                      info: &DisplayListBuildingInfo) {
@@ -604,7 +604,7 @@ impl InlineFlow {
         // not recurse on a line if nothing in it can intersect the dirty region.
         debug!("Flow: building display list for {:u} inline boxes", self.boxes.len());
 
-        for (fragment, context) in self.boxes.iter() {
+        for (fragment, context) in self.boxes.mut_iter() {
             let rel_offset = fragment.relative_position(&info.relative_containing_block_size,
                                                         Some(context));
             fragment.build_display_list(stacking_context,
@@ -743,7 +743,7 @@ impl Flow for InlineFlow {
         }
 
         let mut intrinsic_widths = IntrinsicWidths::new();
-        for (fragment, context) in self.boxes.iter() {
+        for (fragment, context) in self.boxes.mut_iter() {
             debug!("Flow: measuring {:s}", fragment.debug_str());
 
             let box_intrinsic_widths = fragment.intrinsic_widths(Some(context));
