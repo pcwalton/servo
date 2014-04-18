@@ -84,7 +84,7 @@ pub struct Box {
     padding: SideOffsets2D<Au>,
 
     /// The margin of the content box.
-    margin: RefCell<SideOffsets2D<Au>>,
+    margin: SideOffsets2D<Au>,
 
     /// Info specific to the kind of box. Keep this enum small.
     specific: SpecificBoxInfo,
@@ -344,7 +344,7 @@ impl Box {
             style: node.style().clone(),
             border_box: Au::zero_rect(),
             padding: Zero::zero(),
-            margin: RefCell::new(Zero::zero()),
+            margin: Zero::zero(),
             specific: constructor.build_specific_box_info_for_node(node),
             new_line_pos: ~[],
         }
@@ -357,7 +357,7 @@ impl Box {
             style: node.style().clone(),
             border_box: Au::zero_rect(),
             padding: Zero::zero(),
-            margin: RefCell::new(Zero::zero()),
+            margin: Zero::zero(),
             specific: specific,
             new_line_pos: ~[],
         }
@@ -381,7 +381,7 @@ impl Box {
             style: Arc::new(node_style),
             border_box: Au::zero_rect(),
             padding: Zero::zero(),
-            margin: RefCell::new(Zero::zero()),
+            margin: Zero::zero(),
             specific: specific,
             new_line_pos: ~[],
         }
@@ -397,7 +397,7 @@ impl Box {
             style: style,
             border_box: Au::zero_rect(),
             padding: Zero::zero(),
-            margin: RefCell::new(Zero::zero()),
+            margin: Zero::zero(),
             specific: specific,
             new_line_pos: ~[],
         }
@@ -419,7 +419,7 @@ impl Box {
             style: self.style.clone(),
             border_box: Rect(self.border_box.origin, size),
             padding: self.padding,
-            margin: RefCell::new(self.margin.get()),
+            margin: self.margin,
             specific: specific,
             new_line_pos: self.new_line_pos.clone(),
         }
@@ -503,24 +503,22 @@ impl Box {
     /// If a value is specified or is a percentage, we calculate the right value here.
     /// If it is auto, it is up to assign-height to ignore this value and
     /// calculate the correct margin values.
-    pub fn compute_margin_top_bottom(&self, containing_block_width: Au) {
+    pub fn compute_margin_top_bottom(&mut self, containing_block_width: Au) {
         match self.specific {
             TableBox | TableCellBox | TableRowBox | TableColumnBox(_) => {
-                self.margin.set(SideOffsets2D::new(Au(0), Au(0), Au(0), Au(0)))
+                self.margin = SideOffsets2D::new(Au(0), Au(0), Au(0), Au(0));
+                return
             },
-            _ => {
-                let style = self.style();
-                // Note: CSS 2.1 defines margin % values wrt CB *width* (not height).
-                let margin_top = MaybeAuto::from_style(style.Margin.get().margin_top,
-                                                       containing_block_width).specified_or_zero();
-                let margin_bottom = MaybeAuto::from_style(style.Margin.get().margin_bottom,
-                                                          containing_block_width).specified_or_zero();
-                let mut margin = self.margin.get();
-                margin.top = margin_top;
-                margin.bottom = margin_bottom;
-                self.margin.set(margin);
-            }
+            _ => {}
         }
+
+        // Note: CSS 2.1 defines margin % values wrt CB *width* (not height).
+        let margin_top = MaybeAuto::from_style(self.style().Margin.get().margin_top,
+                                               containing_block_width).specified_or_zero();
+        let margin_bottom = MaybeAuto::from_style(self.style().Margin.get().margin_bottom,
+                                                  containing_block_width).specified_or_zero();
+        self.margin.top = margin_top;
+        self.margin.bottom = margin_bottom;
     }
 
     /// Populates the box model padding parameters from the given computed style.
@@ -692,11 +690,11 @@ impl Box {
     /// FIXME(pcwalton): I think this method is pretty bogus, because it won't work for inlines.
     pub fn left_offset(&self) -> Au {
         match self.specific {
-            TableWrapperBox => self.margin.get().left,
+            TableWrapperBox => self.margin.left,
             TableBox | TableCellBox => self.border_width(None).left + self.padding.left,
             TableRowBox => self.border_width(None).left,
             TableColumnBox(_) => Au(0),
-            _ => self.margin.get().left + self.border_width(None).left + self.padding.left,
+            _ => self.margin.left + self.border_width(None).left + self.padding.left,
         }
     }
 
@@ -1498,7 +1496,7 @@ impl Box {
         format!("({}{}{})",
                 class_name,
                 self.side_offsets_debug_string("p", self.padding),
-                self.side_offsets_debug_string("m", self.margin.get()))
+                self.side_offsets_debug_string("m", self.margin))
     }
 
     /// A helper function to return a debug string describing the side offsets for one of the rect
@@ -1525,8 +1523,8 @@ impl Box {
                                             inline_fragment_context: Option<InlineFragmentContext>,
                                             layout_context: &LayoutContext) {
         let border = self.border_width(inline_fragment_context);
-        let left = offset.x + self.margin.get().left + border.left + self.padding.left;
-        let top = offset.y + self.margin.get().top + border.top + self.padding.top;
+        let left = offset.x + self.margin.left + border.left + self.padding.left;
+        let top = offset.y + self.margin.top + border.top + self.padding.top;
         let width = self.border_box.size.width - self.noncontent_width(inline_fragment_context);
         let height = self.border_box.size.height - self.noncontent_height(inline_fragment_context);
         let origin = Point2D(geometry::to_frac_px(left) as f32, geometry::to_frac_px(top) as f32);

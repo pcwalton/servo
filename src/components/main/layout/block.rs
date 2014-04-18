@@ -1039,9 +1039,9 @@ impl BlockFlow {
         let noncontent_width = self.box_.padding.left + self.box_.padding.right + border.left +
             border.right;
 
-        let full_noncontent_width = noncontent_width + self.box_.margin.get().left +
-            self.box_.margin.get().right;
-        let margin_height = self.box_.margin.get().top + self.box_.margin.get().bottom;
+        let full_noncontent_width = noncontent_width + self.box_.margin.left +
+            self.box_.margin.right;
+        let margin_height = self.box_.margin.top + self.box_.margin.bottom;
 
         let info = PlacementInfo {
             size: Size2D(self.base.position.size.width + full_noncontent_width,
@@ -1083,7 +1083,7 @@ impl BlockFlow {
         let mut cur_y = Au(0);
 
         let border = self.box_.border_width(None);
-        let top_offset = self.box_.margin.get().top + border.top + self.box_.padding.top;
+        let top_offset = self.box_.margin.top + border.top + self.box_.padding.top;
         cur_y = cur_y + top_offset;
 
         // cur_y is now at the top content edge
@@ -1101,7 +1101,7 @@ impl BlockFlow {
         let mut position = self.box_.border_box;
 
         // The associated box is the border box of this flow.
-        position.origin.y = self.box_.margin.get().top;
+        position.origin.y = self.box_.margin.top;
 
         noncontent_height = self.box_.padding.top + self.box_.padding.bottom + border.top +
             border.bottom;
@@ -1238,7 +1238,7 @@ impl BlockFlow {
         {
             // Non-auto margin-top and margin-bottom values have already been
             // calculated during assign-width.
-            let margin = self.box_.margin.get();
+            let margin = self.box_.margin;
             let margin_top = match MaybeAuto::from_style(self.box_.style().Margin.get().margin_top,
                                                          Au(0)) {
                 Auto => Auto,
@@ -1302,10 +1302,8 @@ impl BlockFlow {
         }
 
         let solution = solution.unwrap();
-        let mut margin = self.box_.margin.get();
-        margin.top = solution.margin_top;
-        margin.bottom = solution.margin_bottom;
-        self.box_.margin.set(margin);
+        self.box_.margin.top = solution.margin_top;
+        self.box_.margin.bottom = solution.margin_bottom;
 
         let mut position = self.box_.border_box;
         position.origin.y = Au(0);
@@ -1315,7 +1313,7 @@ impl BlockFlow {
         position.size.height = solution.height + border_and_padding;
         self.box_.border_box = position;
 
-        self.base.position.origin.y = solution.top + margin.top;
+        self.base.position.origin.y = solution.top + self.box_.margin.top;
         self.base.position.size.height = solution.height + border_and_padding;
     }
 
@@ -1770,16 +1768,16 @@ pub trait WidthAndMarginsComputer {
                                        -> WidthConstraintInput {
         let containing_block_width = self.containing_block_width(block, parent_flow_width, ctx);
         let computed_width = self.initial_computed_width(block, parent_flow_width, ctx);
+
+        // We calculate and set margin-top and margin-bottom here
+        // because CSS 2.1 defines % on this wrt CB *width*.
         block.box_.compute_padding(containing_block_width);
+        block.box_.compute_margin_top_bottom(containing_block_width);
 
         let style = block.box_.style();
 
         // The text alignment of a block flow is the text alignment of its box's style.
         block.base.flags.set_text_align(style.InheritedText.get().text_align);
-
-        // We calculate and set margin-top and margin-bottom here
-        // because CSS 2.1 defines % on this wrt CB *width*.
-        block.box_.compute_margin_top_bottom(containing_block_width);
 
         let (margin_left, margin_right) =
             (MaybeAuto::from_style(style.Margin.get().margin_left, containing_block_width),
@@ -1810,14 +1808,12 @@ pub trait WidthAndMarginsComputer {
                                       block: &mut BlockFlow,
                                       solution: WidthConstraintSolution) {
         let box_ = block.box_();
-        let mut margin = box_.margin.get();
-        margin.left = solution.margin_left;
-        margin.right = solution.margin_right;
-        box_.margin.set(margin);
+        box_.margin.left = solution.margin_left;
+        box_.margin.right = solution.margin_right;
 
         // The associated box is the border box of this flow.
         // Left border edge.
-        box_.border_box.origin.x = box_.margin.borrow().left;
+        box_.border_box.origin.x = box_.margin.left;
         // Border box width.
         box_.border_box.size.width = solution.width + box_.noncontent_width(None);
     }

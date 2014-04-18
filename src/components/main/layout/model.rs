@@ -104,7 +104,7 @@ impl MarginCollapseInfo {
             self.state = AccumulatingMarginIn
         }
 
-        self.top_margin = AdjoiningMargins::from_margin(fragment.margin.get().top)
+        self.top_margin = AdjoiningMargins::from_margin(fragment.margin.top)
     }
 
     pub fn finish_and_compute_collapsible_margins(mut self,
@@ -138,7 +138,7 @@ impl MarginCollapseInfo {
 
         // Different logic is needed here depending on whether this flow can collapse its bottom
         // margin with its children.
-        let bottom_margin = fragment.margin.get().bottom;
+        let bottom_margin = fragment.margin.bottom;
         if !can_collapse_bottom_margin_with_kids {
             match state {
                 MarginsCollapseThroughFinalMarginState => {
