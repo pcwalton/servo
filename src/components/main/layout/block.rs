@@ -820,14 +820,14 @@ impl BlockFlow {
 
         // The sum of our top border and top padding.
         let border = self.box_.border_width(None);
-        let top_offset = border.top + self.box_.padding.get().top;
+        let top_offset = border.top + self.box_.padding.top;
         translate_including_floats(&mut cur_y, top_offset, inorder, &mut self.base.floats);
 
         let can_collapse_top_margin_with_kids =
             margins_may_collapse == MarginsMayCollapse &&
             !self.is_absolutely_positioned() &&
             self.box_.border_width(None).top == Au(0) &&
-            self.box_.padding.get().top == Au(0);
+            self.box_.padding.top == Au(0);
         margin_collapse_info.initialize_top_margin(&self.box_,
                                                    can_collapse_top_margin_with_kids);
 
@@ -939,7 +939,7 @@ impl BlockFlow {
             margins_may_collapse == MarginsMayCollapse &&
             !self.is_absolutely_positioned() &&
             self.box_.border_width(None).bottom == Au(0) &&
-            self.box_.padding.get().bottom == Au(0);
+            self.box_.padding.bottom == Au(0);
         let (collapsible_margins, delta) =
             margin_collapse_info.finish_and_compute_collapsible_margins(
             &self.box_,
@@ -989,7 +989,7 @@ impl BlockFlow {
         translate_including_floats(&mut cur_y, delta, inorder, &mut floats);
 
         // Compute content height and noncontent height.
-        let bottom_offset = border.bottom + self.box_.padding.get().bottom;
+        let bottom_offset = border.bottom + self.box_.padding.bottom;
         translate_including_floats(&mut cur_y, bottom_offset, inorder, &mut floats);
 
         // Now that `cur_y` is at the bottom of the border box, compute the final border box
@@ -1036,8 +1036,8 @@ impl BlockFlow {
         };
 
         let border = self.box_.border_width(None);
-        let noncontent_width = self.box_.padding.get().left + self.box_.padding.get().right +
-            border.left + border.right;
+        let noncontent_width = self.box_.padding.left + self.box_.padding.right + border.left +
+            border.right;
 
         let full_noncontent_width = noncontent_width + self.box_.margin.get().left +
             self.box_.margin.get().right;
@@ -1083,7 +1083,7 @@ impl BlockFlow {
         let mut cur_y = Au(0);
 
         let border = self.box_.border_width(None);
-        let top_offset = self.box_.margin.get().top + border.top + self.box_.padding.get().top;
+        let top_offset = self.box_.margin.get().top + border.top + self.box_.padding.top;
         cur_y = cur_y + top_offset;
 
         // cur_y is now at the top content edge
@@ -1103,8 +1103,8 @@ impl BlockFlow {
         // The associated box is the border box of this flow.
         position.origin.y = self.box_.margin.get().top;
 
-        noncontent_height = self.box_.padding.get().top + self.box_.padding.get().bottom +
-            border.top + border.bottom;
+        noncontent_height = self.box_.padding.top + self.box_.padding.bottom + border.top +
+            border.bottom;
 
         // Calculate content height, taking `min-height` and `max-height` into account.
 
@@ -1412,7 +1412,7 @@ impl BlockFlow {
             // Pass yourself as a new Containing Block
             // The static x offset for any immediate kid flows will be the
             // left padding
-            kid_abs_cb_x_offset = self.box_.padding.get().left;
+            kid_abs_cb_x_offset = self.box_.padding.left;
         } else {
             // For kids, the left margin edge will be at our left content edge.
             // The current static offset is at our left margin
@@ -1572,10 +1572,10 @@ impl Flow for BlockFlow {
 
         // Move in from the left border edge
         let border = self.box_.border_width(None);
-        let left_content_edge = self.box_.border_box.origin.x
-            + self.box_.padding.get().left + border.left;
-        let padding_and_borders = self.box_.padding.get().left + self.box_.padding.get().right +
-            border.left + border.right;
+        let left_content_edge = self.box_.border_box.origin.x + self.box_.padding.left +
+            border.left;
+        let padding_and_borders = self.box_.padding.left + self.box_.padding.right + border.left +
+            border.right;
         let content_width = self.box_.border_box.size.width - padding_and_borders;
 
         if self.is_float() {
@@ -1767,15 +1767,15 @@ pub trait WidthAndMarginsComputer {
                                        block: &mut BlockFlow,
                                        parent_flow_width: Au,
                                        ctx: &mut LayoutContext)
-                       -> WidthConstraintInput {
+                                       -> WidthConstraintInput {
         let containing_block_width = self.containing_block_width(block, parent_flow_width, ctx);
         let computed_width = self.initial_computed_width(block, parent_flow_width, ctx);
+        block.box_.compute_padding(containing_block_width);
+
         let style = block.box_.style();
 
         // The text alignment of a block flow is the text alignment of its box's style.
         block.base.flags.set_text_align(style.InheritedText.get().text_align);
-
-        block.box_.compute_padding(style, containing_block_width);
 
         // We calculate and set margin-top and margin-bottom here
         // because CSS 2.1 defines % on this wrt CB *width*.

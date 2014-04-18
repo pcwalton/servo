@@ -81,7 +81,7 @@ pub struct Box {
     border_box: Rect<Au>,
 
     /// The padding of the content box.
-    padding: RefCell<SideOffsets2D<Au>>,
+    padding: SideOffsets2D<Au>,
 
     /// The margin of the content box.
     margin: RefCell<SideOffsets2D<Au>>,
@@ -311,7 +311,7 @@ macro_rules! def_noncontent( ($side:ident, $get:ident) => (
         pub fn $get(&self, inline_fragment_context: Option<InlineFragmentContext>) -> Au {
             match inline_fragment_context {
                 None => {
-                    self.border_width(inline_fragment_context).$side + self.padding.get().$side
+                    self.border_width(inline_fragment_context).$side + self.padding.$side
                 }
                 Some(inline_fragment_context) => {
                     let mut val = Au(0);
@@ -343,7 +343,7 @@ impl Box {
             node: OpaqueNodeMethods::from_thread_safe_layout_node(node),
             style: node.style().clone(),
             border_box: Au::zero_rect(),
-            padding: RefCell::new(Zero::zero()),
+            padding: Zero::zero(),
             margin: RefCell::new(Zero::zero()),
             specific: constructor.build_specific_box_info_for_node(node),
             new_line_pos: ~[],
@@ -356,7 +356,7 @@ impl Box {
             node: OpaqueNodeMethods::from_thread_safe_layout_node(node),
             style: node.style().clone(),
             border_box: Au::zero_rect(),
-            padding: RefCell::new(Zero::zero()),
+            padding: Zero::zero(),
             margin: RefCell::new(Zero::zero()),
             specific: specific,
             new_line_pos: ~[],
@@ -380,7 +380,7 @@ impl Box {
             node: OpaqueNodeMethods::from_thread_safe_layout_node(node),
             style: Arc::new(node_style),
             border_box: Au::zero_rect(),
-            padding: RefCell::new(Zero::zero()),
+            padding: Zero::zero(),
             margin: RefCell::new(Zero::zero()),
             specific: specific,
             new_line_pos: ~[],
@@ -396,7 +396,7 @@ impl Box {
             node: node,
             style: style,
             border_box: Au::zero_rect(),
-            padding: RefCell::new(Zero::zero()),
+            padding: Zero::zero(),
             margin: RefCell::new(Zero::zero()),
             specific: specific,
             new_line_pos: ~[],
@@ -418,7 +418,7 @@ impl Box {
             node: self.node,
             style: self.style.clone(),
             border_box: Rect(self.border_box.origin, size),
-            padding: RefCell::new(self.padding.get()),
+            padding: self.padding,
             margin: RefCell::new(self.margin.get()),
             specific: specific,
             new_line_pos: self.new_line_pos.clone(),
@@ -524,17 +524,17 @@ impl Box {
     }
 
     /// Populates the box model padding parameters from the given computed style.
-    pub fn compute_padding(&self, style: &ComputedValues, containing_block_width: Au) {
+    pub fn compute_padding(&mut self, containing_block_width: Au) {
         let padding = match self.specific {
             TableColumnBox(_) | TableRowBox | TableWrapperBox => {
                 SideOffsets2D::new(Au(0), Au(0), Au(0), Au(0))
             },
             GenericBox | IframeBox(_) | ImageBox(_) | TableBox | TableCellBox | ScannedTextBox(_) |
             UnscannedTextBox(_) => {
-                model::padding_from_style(style, containing_block_width)
+                model::padding_from_style(self.style(), containing_block_width)
             }
         };
-        self.padding.set(padding)
+        self.padding = padding
     }
 
     pub fn padding_box_size(&self, inline_fragment_context: Option<InlineFragmentContext>)
@@ -693,10 +693,10 @@ impl Box {
     pub fn left_offset(&self) -> Au {
         match self.specific {
             TableWrapperBox => self.margin.get().left,
-            TableBox | TableCellBox => self.border_width(None).left + self.padding.get().left,
+            TableBox | TableCellBox => self.border_width(None).left + self.padding.left,
             TableRowBox => self.border_width(None).left,
             TableColumnBox(_) => Au(0),
-            _ => self.margin.get().left + self.border_width(None).left + self.padding.get().left
+            _ => self.margin.get().left + self.border_width(None).left + self.padding.left,
         }
     }
 
@@ -1353,8 +1353,6 @@ impl Box {
             GenericBox | IframeBox(_) | TableBox | TableCellBox | TableRowBox |
             TableWrapperBox => {}
             ImageBox(ref image_box_info) => {
-                //self.compute_padding(self.style(), container_width);
-
                 // TODO(ksh8281): compute border,margin
                 let width = Auto;
                 let height = Auto;
@@ -1499,7 +1497,7 @@ impl Box {
 
         format!("({}{}{})",
                 class_name,
-                self.side_offsets_debug_string("p", self.padding.get()),
+                self.side_offsets_debug_string("p", self.padding),
                 self.side_offsets_debug_string("m", self.margin.get()))
     }
 
@@ -1527,8 +1525,8 @@ impl Box {
                                             inline_fragment_context: Option<InlineFragmentContext>,
                                             layout_context: &LayoutContext) {
         let border = self.border_width(inline_fragment_context);
-        let left = offset.x + self.margin.get().left + border.left + self.padding.get().left;
-        let top = offset.y + self.margin.get().top + border.top + self.padding.get().top;
+        let left = offset.x + self.margin.get().left + border.left + self.padding.left;
+        let top = offset.y + self.margin.get().top + border.top + self.padding.top;
         let width = self.border_box.size.width - self.noncontent_width(inline_fragment_context);
         let height = self.border_box.size.height - self.noncontent_height(inline_fragment_context);
         let origin = Point2D(geometry::to_frac_px(left) as f32, geometry::to_frac_px(top) as f32);

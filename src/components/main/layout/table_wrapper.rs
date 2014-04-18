@@ -222,14 +222,15 @@ impl Flow for TableWrapperFlow {
 }
 
 struct TableWrapper;
+
 impl TableWrapper {
     fn compute_used_width_table_wrapper(&self,
                                         table_wrapper: &mut TableWrapperFlow,
                                         ctx: &mut LayoutContext,
                                         parent_flow_width: Au) {
         let input = self.compute_width_constraint_inputs_table_wrapper(table_wrapper,
-                                                                           parent_flow_width,
-                                                                           ctx);
+                                                                       parent_flow_width,
+                                                                       ctx);
 
         let solution = self.solve_width_constraints(&mut table_wrapper.block_flow, input);
 

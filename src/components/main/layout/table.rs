@@ -268,10 +268,10 @@ impl Flow for TableFlow {
         width_computer.compute_used_width(&mut self.block_flow, ctx, containing_block_width);
 
         let border = self.block_flow.box_.border_width(None);
-        let left_content_edge = self.block_flow.box_.padding.get().left + border.left;
+        let left_content_edge = self.block_flow.box_.padding.left + border.left;
         let padding_and_borders =
-            self.block_flow.box_.padding.get().left +
-            self.block_flow.box_.padding.get().right +
+            self.block_flow.box_.padding.left +
+            self.block_flow.box_.padding.right +
             border.left +
             border.right;
         let content_width = self.block_flow.box_.border_box.size.width - padding_and_borders;
@@ -323,8 +323,8 @@ impl Flow for TableFlow {
 /// Table, TableRowGroup, TableRow, TableCell types.
 /// Their widths are calculated in the same way and do not have margins.
 pub struct InternalTable;
-impl WidthAndMarginsComputer for InternalTable {
 
+impl WidthAndMarginsComputer for InternalTable {
     /// Compute the used value of width, taking care of min-width and max-width.
     ///
     /// CSS Section 10.4: Minimum and Maximum widths

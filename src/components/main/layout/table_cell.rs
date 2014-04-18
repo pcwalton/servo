@@ -107,11 +107,11 @@ impl Flow for TableCellFlow {
         let border = self.block_flow.box_.border_width(None);
         let left_content_edge =
             self.block_flow.box_.border_box.origin.x +
-            self.block_flow.box_.padding.get().left +
+            self.block_flow.box_.padding.left +
             border.left;
         let padding_and_borders =
-            self.block_flow.box_.padding.get().left +
-            self.block_flow.box_.padding.get().right +
+            self.block_flow.box_.padding.left +
+            self.block_flow.box_.padding.right +
             border.left +
             border.right;
         let content_width = self.block_flow.box_.border_box.size.width - padding_and_borders;
