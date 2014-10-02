@@ -742,7 +742,7 @@ impl BlockFlow {
     /// calculated in the bubble-inline-sizes traversal.
     fn get_shrink_to_fit_inline_size(&self, available_inline_size: Au) -> Au {
         min(self.base.intrinsic_inline_sizes.preferred_inline_size,
-                      max(self.base.intrinsic_inline_sizes.minimum_inline_size, available_inline_size))
+            max(self.base.intrinsic_inline_sizes.minimum_inline_size, available_inline_size))
     }
 
     /// If this is the root flow, shifts all kids down and adjusts our size to account for
@@ -1514,15 +1514,11 @@ impl Flow for BlockFlow {
         let mut intrinsic_inline_sizes = IntrinsicISizes::new();
         let mut left_float_width = Au(0);
         let mut right_float_width = Au(0);
-        for child_ctx in self.base.child_iter() {
-            assert!(child_ctx.is_block_flow() ||
-                    child_ctx.is_inline_flow() ||
-                    child_ctx.is_table_kind());
-
-            let float_kind = child_ctx.float_kind();
-            let child_base = flow::mut_base(child_ctx);
-
-            if !fixed_width {
+        for kid in self.base.child_iter() {
+            let is_absolutely_positioned = kid.is_absolutely_positioned();
+            let float_kind = kid.float_kind();
+            let child_base = flow::mut_base(kid);
+            if !is_absolutely_positioned && !fixed_width {
                 intrinsic_inline_sizes.minimum_inline_size =
                     max(intrinsic_inline_sizes.minimum_inline_size,
                                   child_base.intrinsic_inline_sizes.total_minimum_inline_size());
@@ -1552,12 +1548,15 @@ impl Flow for BlockFlow {
                           left_float_width + right_float_width);
 
         let fragment_intrinsic_inline_sizes = self.fragment.intrinsic_inline_sizes(layout_context);
-        intrinsic_inline_sizes.minimum_inline_size = max(intrinsic_inline_sizes.minimum_inline_size,
-                                                       fragment_intrinsic_inline_sizes.minimum_inline_size);
-        intrinsic_inline_sizes.preferred_inline_size = max(intrinsic_inline_sizes.preferred_inline_size,
-                                                         fragment_intrinsic_inline_sizes.preferred_inline_size);
-        intrinsic_inline_sizes.surround_inline_size = intrinsic_inline_sizes.surround_inline_size +
-                                                         fragment_intrinsic_inline_sizes.surround_inline_size;
+        intrinsic_inline_sizes.minimum_inline_size =
+            max(intrinsic_inline_sizes.minimum_inline_size,
+                fragment_intrinsic_inline_sizes.minimum_inline_size);
+        intrinsic_inline_sizes.preferred_inline_size =
+            max(intrinsic_inline_sizes.preferred_inline_size,
+                fragment_intrinsic_inline_sizes.preferred_inline_size);
+        intrinsic_inline_sizes.surround_inline_size =
+            intrinsic_inline_sizes.surround_inline_size +
+            fragment_intrinsic_inline_sizes.surround_inline_size;
         self.base.intrinsic_inline_sizes = intrinsic_inline_sizes;
 
         match self.fragment.style().get_box().float {
