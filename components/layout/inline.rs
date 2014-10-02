@@ -942,7 +942,21 @@ impl InlineFlow {
     /// `style` is the style of the block.
     pub fn compute_minimum_ascent_and_descent(&self,
                                               font_context: &mut FontContext,
-                                              style: &ComputedValues) -> (Au, Au) {
+                                              style: &ComputedValues)
+                                              -> (Au, Au) {
+        // As a special case, if this flow contains only hypothetical fragments, then the entire
+        // flow is hypothetical and takes up no space. See CSS 2.1 § 10.3.7.
+        let mut only_contains_hypothetical_fragments = true;
+        for fragment in self.fragments.fragments.iter() {
+            if !fragment.is_hypothetical() {
+                only_contains_hypothetical_fragments = false;
+                break
+            }
+        }
+        if only_contains_hypothetical_fragments {
+            return (Au(0), Au(0))
+        }
+
         let font_style = text::computed_style_to_font_style(style);
         let font_metrics = text::font_metrics_for_style(font_context, &font_style);
         let line_height = text::line_height_from_style(style, &font_metrics);

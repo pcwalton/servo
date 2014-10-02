@@ -90,6 +90,9 @@ pub struct Opts {
 
     /// The initial requested size of the window.
     pub initial_window_size: TypedSize2D<ScreenPx, uint>,
+
+    /// Dumps the flow tree after a layout.
+    pub dump_flow_tree: bool,
 }
 
 fn print_usage(app: &str, opts: &[getopts::OptGroup]) {
@@ -126,6 +129,7 @@ pub fn from_cmdline_args(args: &[String]) -> Option<Opts> {
         getopts::optflag("", "trace-layout", "Write layout trace to external file for debugging."),
         getopts::optflag("", "devtools", "Start remote devtools server"),
         getopts::optopt("", "resolution", "Set window resolution.", "800x600"),
+        getopts::optflag("", "dump-flow-tree", "Dump the flow (render) tree during each layout."),
         getopts::optflag("h", "help", "Print this message")
     );
 
@@ -238,6 +242,7 @@ pub fn from_cmdline_args(args: &[String]) -> Option<Opts> {
         trace_layout: trace_layout,
         devtools_server: opt_match.opt_present("devtools"),
         initial_window_size: initial_window_size,
+        dump_flow_tree: opt_match.opt_present("dump-flow-tree"),
     })
 }
 
