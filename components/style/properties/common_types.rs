@@ -19,7 +19,7 @@ pub mod specified {
     use super::{Au, CSSFloat};
     pub use cssparser::Color as CSSColor;
 
-    #[deriving(Clone)]
+    #[deriving(Clone, Encodable)]
     pub enum Length {
         Au_(Au),  // application units
         Em(CSSFloat),
@@ -102,7 +102,7 @@ pub mod specified {
         }
     }
 
-    #[deriving(Clone)]
+    #[deriving(Clone, Encodable)]
     pub enum LengthOrPercentageOrAuto {
         LPA_Length(Length),
         LPA_Percentage(CSSFloat),  // [0 .. 100%] maps to [0.0 .. 1.0]
@@ -262,7 +262,7 @@ pub mod computed {
         }
     }
 
-    #[deriving(PartialEq, Clone)]
+    #[deriving(PartialEq, Clone, Encodable)]
     pub enum LengthOrPercentageOrAuto {
         LPA_Length(Au),
         LPA_Percentage(CSSFloat),

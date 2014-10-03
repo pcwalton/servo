@@ -279,6 +279,7 @@ impl IntrinsicISizes {
 }
 
 /// Useful helper data type when computing values for blocks and positioned elements.
+#[deriving(PartialEq)]
 pub enum MaybeAuto {
     Auto,
     Specified(Au),
@@ -290,7 +291,9 @@ impl MaybeAuto {
                       -> MaybeAuto {
         match length {
             computed::LPA_Auto => Auto,
-            computed::LPA_Percentage(percent) => Specified(containing_length.scale_by(percent)),
+            computed::LPA_Percentage(percent) => {
+                Specified(containing_length.scale_by(percent))
+            }
             computed::LPA_Length(length) => Specified(length)
         }
     }

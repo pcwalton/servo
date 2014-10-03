@@ -576,8 +576,8 @@ impl Fragment {
 
         // FIXME(#2261, pcwalton): This won't work well for inlines: is this OK?
         let border = self.border_width();
-        let surround_inline_size = margin_inline_start + margin_inline_end + padding_inline_start + padding_inline_end +
-                border.inline_start_end();
+        let surround_inline_size = margin_inline_start + margin_inline_end + padding_inline_start +
+            padding_inline_end + border.inline_start_end();
 
         IntrinsicISizes {
             minimum_inline_size: inline_size,
