@@ -1668,7 +1668,8 @@ impl Fragment {
             InlineBlockFragment(ref mut info) => {
                 // Not the primary fragment, so we do not take the noncontent size into account.
                 let block_flow = info.flow_ref.get_mut().as_block();
-                self.border_box.size.block = block_flow.base.position.size.block;
+                self.border_box.size.block = block_flow.base.position.size.block +
+                    block_flow.fragment.margin.block_start_end()
             }
             InlineAbsoluteHypotheticalFragment(ref mut info) => {
                 // Not the primary fragment, so we do not take the noncontent size into account.
@@ -1702,7 +1703,9 @@ impl Fragment {
                 let font_style = text::computed_style_to_font_style(&*self.style);
                 let font_metrics = text::font_metrics_for_style(layout_context.font_context(),
                                                                 &font_style);
-                InlineMetrics::from_block_height(&font_metrics, block_flow.base.position.size.block)
+                InlineMetrics::from_block_height(&font_metrics,
+                                                 block_flow.base.position.size.block +
+                                                 block_flow.fragment.margin.block_start_end())
             }
             InlineAbsoluteHypotheticalFragment(_) => {
                 // Hypothetical boxes take up no space.

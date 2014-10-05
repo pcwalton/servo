@@ -1464,6 +1464,10 @@ impl BlockFlow {
         // TODO(pcwalton): If the inline-size of this flow is different from the size we estimated
         // earlier, lay it out again.
     }
+
+    fn is_inline_block(&self) -> bool {
+        self.fragment.style().get_box().display == display::inline_block
+    }
 }
 
 impl Flow for BlockFlow {
@@ -1682,7 +1686,7 @@ impl Flow for BlockFlow {
             // Assign block-size for fragment if it is an image fragment.
             self.fragment.assign_replaced_block_size_if_necessary();
             self.base.position.size.block = self.fragment.border_box.size.block;
-        } else if self.is_root() || self.is_float() {
+        } else if self.is_root() || self.is_float() || self.is_inline_block() {
             // Root element margins should never be collapsed according to CSS § 8.3.1.
             debug!("assign_block_size: assigning block_size for root flow");
             self.assign_block_size_block_base(ctx, MarginsMayNotCollapse);

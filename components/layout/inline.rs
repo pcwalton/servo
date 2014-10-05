@@ -1201,16 +1201,23 @@ impl Flow for InlineFlow {
     }
 
     fn compute_absolute_position(&mut self) {
-        for f in self.fragments.fragments.iter_mut() {
-            match f.specific {
+        for fragment in self.fragments.fragments.iter_mut() {
+            match fragment.specific {
                 InlineBlockFragment(ref mut info) => {
                     let block_flow = info.flow_ref.get_mut().as_block();
 
                     // FIXME(#2795): Get the real container size
                     let container_size = Size2D::zero();
+
+                    // Subtle: The border box of the fragment includes the margin of the block.
+                    // (That is, the fragment's border box is the block's margin box.) However,
+                    // block absolute positions represent the border box, not the margin box. Thus,
+                    // we need to subtract out the margin of the fragment to get the block's border
+                    // box.
+                    let margin_box = fragment.border_box - fragment.margin;
                     block_flow.base.abs_position =
                         self.base.abs_position +
-                        f.border_box.start.to_physical(self.base.writing_mode, container_size);
+                        margin_box.start.to_physical(self.base.writing_mode, container_size);
                 }
                 _ => {}
             }
