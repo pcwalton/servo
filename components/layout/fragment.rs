@@ -1262,10 +1262,13 @@ impl Fragment {
                                                    image_inline_size);
             }
             InputFragment(ref input_fragment_info) => {
-                let font_style = text::computed_style_to_font_style(&*self.style);
-                let input_inline_size = input_fragment_info.input_inline_size(&font_style, layout_context);
-                result.minimum_inline_size = input_inline_size;
-                result.preferred_inline_size = input_inline_size;
+                if self.style().content_inline_size() == LPA_Auto {
+                    let font_style = text::computed_style_to_font_style(&*self.style);
+                    let input_inline_size =
+                        input_fragment_info.input_inline_size(&font_style, layout_context);
+                    result.minimum_inline_size = input_inline_size;
+                    result.preferred_inline_size = input_inline_size;
+                }
             }
             ScannedTextFragment(ref text_fragment_info) => {
                 let range = &text_fragment_info.range;
