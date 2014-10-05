@@ -626,7 +626,7 @@ impl<'ln> ThreadSafeLayoutNode<'ln> {
         }
     }
 
-    pub fn get_pseudo_element_type(&self) ->  PseudoElementType {
+    pub fn get_pseudo_element_type(&self) -> PseudoElementType {
         self.pseudo
     }
 
