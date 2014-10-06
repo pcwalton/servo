@@ -192,6 +192,10 @@ impl Flow for TableRowFlow {
                     LPA_Percentage(percentage) => percentage,
                 },
                 preferred: child_base.intrinsic_inline_sizes.preferred_inline_size,
+                constrained: match child_specified_inline_size {
+                    LPA_Length(_) => true,
+                    LPA_Auto | LPA_Percentage(_) => false,
+                },
             };
             min_inline_size = min_inline_size + child_column_inline_size.minimum_length;
             pref_inline_size = pref_inline_size + child_column_inline_size.preferred;

@@ -104,6 +104,7 @@ impl TableFlow {
                 minimum_length: max(parent_sizes.minimum_length, child_sizes.minimum_length),
                 percentage: parent_sizes.greatest_percentage(child_sizes),
                 preferred: max(parent_sizes.preferred, child_sizes.preferred),
+                constrained: parent_sizes.constrained || child_sizes.constrained
             };
 
             total_minimum_inline_size = total_minimum_inline_size + parent_sizes.minimum_length;
@@ -174,6 +175,7 @@ impl Flow for TableFlow {
                             LPA_Percentage(percentage) => percentage,
                         },
                         preferred: Au(0),
+                        constrained: false,
                     })
                 }
             } else if kid.is_table_rowgroup() || kid.is_table_row() {
@@ -390,6 +392,8 @@ pub struct ColumnInlineSize {
     pub minimum_length: Au,
     /// The largest specified size of this column as a percentage (`width` property).
     pub percentage: CSSFloat,
+    /// Whether the column inline size is *constrained* per INTRINSIC § 4.1.
+    pub constrained: bool,
 }
 
 impl ColumnInlineSize {
