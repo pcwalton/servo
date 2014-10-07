@@ -740,7 +740,7 @@ impl BlockFlow {
     ///
     /// This is where we use the preferred inline-sizes and minimum inline-sizes
     /// calculated in the bubble-inline-sizes traversal.
-    fn get_shrink_to_fit_inline_size(&self, available_inline_size: Au) -> Au {
+    pub fn get_shrink_to_fit_inline_size(&self, available_inline_size: Au) -> Au {
         min(self.base.intrinsic_inline_sizes.preferred_inline_size,
             max(self.base.intrinsic_inline_sizes.minimum_inline_size, available_inline_size))
     }

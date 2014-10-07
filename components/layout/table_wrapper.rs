@@ -14,18 +14,17 @@
 #![deny(unsafe_block)]
 
 use block::{BlockFlow, BlockNonReplaced, FloatNonReplaced, ISizeAndMarginsComputer};
-use block::{ISizeConstraintInput, MarginsMayNotCollapse};
+use block::{MarginsMayNotCollapse};
 use construct::FlowConstructor;
 use context::LayoutContext;
 use floats::FloatKind;
 use flow::{TableWrapperFlowClass, FlowClass, Flow, ImmutableFlowUtils};
 use fragment::Fragment;
-use model::{Specified, specified};
 use table::ColumnInlineSize;
 use wrapper::ThreadSafeLayoutNode;
 
 use servo_util::geometry::Au;
-use std::cmp::max;
+use std::cmp::{max, min};
 use std::fmt;
 use style::CSSFloat;
 use style::computed_values::{clear, float, table_layout};
@@ -106,53 +105,14 @@ impl TableWrapperFlow {
         self.block_flow.build_display_list_block(layout_context);
     }
 
-    /// The main logic that computes the inline-size for each table column.
-    fn calculate_table_column_sizes(&mut self, mut input: ISizeConstraintInput)
-                                    -> ISizeConstraintInput {
-        // Get inline-start and inline-end paddings, borders for table.
-        // We get these values from the fragment's style since table_wrapper doesn't have its own
-        // border or padding. input.available_inline_size is same as containing_block_inline_size
-        // in table_wrapper.
-        let padding = self.block_flow.fragment.style().logical_padding();
-        let border = self.block_flow.fragment.style().logical_border_width();
-        let padding_and_borders =
-            specified(padding.inline_start, input.available_inline_size) +
-            specified(padding.inline_end, input.available_inline_size) +
-            border.inline_start +
-            border.inline_end;
-
-        let computed_inline_size = match self.table_layout {
-            FixedLayout => {
-                let fixed_cells_inline_size = self.column_inline_sizes
-                                                  .iter()
-                                                  .fold(Au(0), |sum, inline_size| {
-                        sum + inline_size.minimum(input.available_inline_size)
-                    });
-
-                let mut computed_inline_size = input.computed_inline_size.specified_or_zero();
-
-                // Compare border-edge inline-sizes. Because fixed_cells_inline_size indicates
-                // content-inline-size, padding and border values are added to
-                // fixed_cells_inline_size.
-                computed_inline_size = max(fixed_cells_inline_size + padding_and_borders,
-                                           computed_inline_size);
-                computed_inline_size
-            },
-            AutoLayout => {
-                self.calculate_table_column_sizes_for_automatic_layout(input.available_inline_size)
-            }
-        };
-        input.computed_inline_size = Specified(computed_inline_size);
-        input
-    }
-
-    /// Calculates table column sizes for automatic layout per INTRINSIC § 4.3. Returns the total
-    /// used inline size.
-    fn calculate_table_column_sizes_for_automatic_layout(&mut self, available_inline_size: Au)
-                                                         -> Au {
-        // Define the *assignable inline-size* as the used inline-size of the table minus the total
-        // horizontal border spacing.
-        let assignable_inline_size = available_inline_size;
+    /// Calculates table column sizes for automatic layout per INTRINSIC § 4.3.
+    fn calculate_table_column_sizes_for_automatic_layout(&mut self) {
+        // FIXME(pcwalton, spec): INTRINSIC § 8 does not properly define how to compute this, but
+        // says "the basic idea is the same as the shrink-to-fit width that CSS2.1 defines". So we
+        // just use the shrink-to-fit inline size.
+        let available_inline_size = self.block_flow.fragment.border_box.size.inline;
+        let available_inline_size =
+            self.block_flow.get_shrink_to_fit_inline_size(available_inline_size);
 
         // Compute all the guesses for the column sizes, and sum them.
         let mut total_guess = AutoLayoutCandidateGuess::new();
@@ -160,47 +120,46 @@ impl TableWrapperFlow {
             self.column_inline_sizes.iter().map(|column_inline_size| {
                 let guess = AutoLayoutCandidateGuess::from_column_inline_size(
                     column_inline_size,
-                    assignable_inline_size);
+                    available_inline_size);
                 total_guess = total_guess + guess;
                 guess
             }).collect();
 
         // Assign inline sizes.
-        let which = WhichAutoLayoutCandidateGuessToUse::select(&total_guess,
-                                                               assignable_inline_size);
+        let selection = SelectedAutoLayoutCandidateGuess::select(&total_guess,
+                                                                 available_inline_size);
+        println!("selected {}", selection);
         let mut total_used_inline_size = Au(0);
         for (column_inline_size, guess) in self.column_inline_sizes
                                                .mut_iter()
                                                .zip(guesses.iter()) {
-            column_inline_size.minimum_length = guess.calculate(which);
+            column_inline_size.minimum_length = guess.calculate(selection);
             column_inline_size.percentage = 0.0;
             total_used_inline_size = total_used_inline_size + column_inline_size.minimum_length
         }
 
         // Distribute excess inline-size if necessary per INTRINSIC § 4.4.
+        //
+        // FIXME(pcwalton, spec): How do I deal with fractional excess?
         let excess_inline_size = available_inline_size - total_used_inline_size;
-        if excess_inline_size > Au(0) && which == UsePreferredGuessAndDistributeExcessInlineSize {
+        if excess_inline_size > Au(0) &&
+                selection == UsePreferredGuessAndDistributeExcessInlineSize {
             let mut info = ExcessInlineSizeDistributionInfo::new();
             for column_inline_size in self.column_inline_sizes.iter() {
                 info.update(column_inline_size)
             }
+
+            let mut total_distributed_excess_size = Au(0);
             for column_inline_size in self.column_inline_sizes.mut_iter() {
                 info.distribute_excess_inline_size_to_column(column_inline_size,
-                                                             excess_inline_size)
+                                                             excess_inline_size,
+                                                             &mut total_distributed_excess_size)
             }
+            total_used_inline_size = available_inline_size
         }
 
-        // debugging thing
-        let mut used = Au(0);
-        for column_inline_size in self.column_inline_sizes.iter() {
-            used = used + column_inline_size.minimum_length
-        }
-        println!("total used size {}, excess {}, available {}",
-                 used,
-                 excess_inline_size,
-                 available_inline_size);
-        
-        available_inline_size
+        self.block_flow.fragment.border_box.size.inline = total_used_inline_size;
+        self.block_flow.base.position.size.inline = total_used_inline_size
     }
 
     fn compute_used_inline_size(&mut self,
@@ -216,9 +175,6 @@ impl TableWrapperFlow {
                                                                    parent_flow_inline_size,
                                                                    layout_context)
         };
-
-        // Compute the inline sizes of the columns.
-        input = self.calculate_table_column_sizes(input);
 
         // Delegate to the appropriate inline size computer to write the constraint solutions in.
         if self.is_float() {
@@ -298,6 +254,13 @@ impl Flow for TableWrapperFlow {
         }
 
         self.compute_used_inline_size(layout_context, containing_block_inline_size);
+
+        match self.table_layout {
+            FixedLayout => {}
+            AutoLayout => {
+                self.calculate_table_column_sizes_for_automatic_layout()
+            }
+        }
 
         let inline_start_content_edge = self.block_flow.fragment.border_box.start.i;
         let content_inline_size = self.block_flow.fragment.border_box.size.inline;
@@ -410,7 +373,13 @@ impl AutoLayoutCandidateGuess {
             minimum_percentage_guess: minimum_percentage_guess,
             // FIXME(pcwalton): We need the notion of *constrainedness* per INTRINSIC § 4 to
             // implement this one correctly.
-            minimum_specified_guess: minimum_percentage_guess,
+            minimum_specified_guess: if column_inline_size.percentage > 0.0 {
+                minimum_percentage_guess
+            } else if column_inline_size.constrained {
+                column_inline_size.preferred
+            } else {
+                column_inline_size.minimum_length
+            },
             preferred_guess: if column_inline_size.percentage > 0.0 {
                 minimum_percentage_guess
             } else {
@@ -419,20 +388,20 @@ impl AutoLayoutCandidateGuess {
         }
     }
 
-    /// Calculates the inline-size, interpolating appropriately based on the value of `which`.
+    /// Calculates the inline-size, interpolating appropriately based on the value of `selection`.
     ///
     /// This does *not* distribute excess inline-size. That must be done later if necessary.
-    fn calculate(&self, which: WhichAutoLayoutCandidateGuessToUse) -> Au {
-        match which {
+    fn calculate(&self, selection: SelectedAutoLayoutCandidateGuess) -> Au {
+        match selection {
             UseMinimumGuess => self.minimum_guess,
-            InterpolateBetweenMinimumGuessAndMinimumPercentageGuess => {
-                interp(self.minimum_guess, self.minimum_percentage_guess)
+            InterpolateBetweenMinimumGuessAndMinimumPercentageGuess(weight) => {
+                interp(self.minimum_guess, self.minimum_percentage_guess, weight)
             }
-            InterpolateBetweenMinimumPercentageGuessAndMinimumSpecifiedGuess => {
-                interp(self.minimum_percentage_guess, self.minimum_specified_guess)
+            InterpolateBetweenMinimumPercentageGuessAndMinimumSpecifiedGuess(weight) => {
+                interp(self.minimum_percentage_guess, self.minimum_specified_guess, weight)
             }
-            InterpolateBetweenMinimumSpecifiedGuessAndPreferredGuess => {
-                interp(self.minimum_specified_guess, self.preferred_guess)
+            InterpolateBetweenMinimumSpecifiedGuessAndPreferredGuess(weight) => {
+                interp(self.minimum_specified_guess, self.preferred_guess, weight)
             }
             UsePreferredGuessAndDistributeExcessInlineSize => {
                 self.preferred_guess
@@ -454,39 +423,56 @@ impl Add<AutoLayoutCandidateGuess,AutoLayoutCandidateGuess> for AutoLayoutCandid
     }
 }
 
+/// The `CSSFloat` member specifies the weight of the smaller of the two guesses, on a scale from
+/// 0.0 to 1.0.
 #[deriving(PartialEq, Show)]
-enum WhichAutoLayoutCandidateGuessToUse {
+enum SelectedAutoLayoutCandidateGuess {
     UseMinimumGuess,
-    InterpolateBetweenMinimumGuessAndMinimumPercentageGuess,
-    InterpolateBetweenMinimumPercentageGuessAndMinimumSpecifiedGuess,
-    InterpolateBetweenMinimumSpecifiedGuessAndPreferredGuess,
+    InterpolateBetweenMinimumGuessAndMinimumPercentageGuess(CSSFloat),
+    InterpolateBetweenMinimumPercentageGuessAndMinimumSpecifiedGuess(CSSFloat),
+    InterpolateBetweenMinimumSpecifiedGuessAndPreferredGuess(CSSFloat),
     UsePreferredGuessAndDistributeExcessInlineSize,
 }
 
-impl WhichAutoLayoutCandidateGuessToUse {
+impl SelectedAutoLayoutCandidateGuess {
     /// See INTRINSIC § 4.3.
     ///
     /// FIXME(pcwalton, INTRINSIC spec): INTRINSIC doesn't specify whether these are exclusive or
     /// inclusive ranges.
     fn select(guess: &AutoLayoutCandidateGuess, assignable_inline_size: Au)
-              -> WhichAutoLayoutCandidateGuessToUse {
+              -> SelectedAutoLayoutCandidateGuess {
         if assignable_inline_size < guess.minimum_guess {
             UseMinimumGuess
         } else if assignable_inline_size < guess.minimum_percentage_guess {
-            InterpolateBetweenMinimumGuessAndMinimumPercentageGuess
+            let weight = weight(guess.minimum_guess,
+                                assignable_inline_size,
+                                guess.minimum_percentage_guess);
+            InterpolateBetweenMinimumGuessAndMinimumPercentageGuess(weight)
         } else if assignable_inline_size < guess.minimum_specified_guess {
-            InterpolateBetweenMinimumPercentageGuessAndMinimumSpecifiedGuess
+            let weight = weight(guess.minimum_percentage_guess,
+                                assignable_inline_size,
+                                guess.minimum_specified_guess);
+            InterpolateBetweenMinimumPercentageGuessAndMinimumSpecifiedGuess(weight)
         } else if assignable_inline_size < guess.preferred_guess {
-            InterpolateBetweenMinimumSpecifiedGuessAndPreferredGuess
+            let weight = weight(guess.minimum_specified_guess,
+                                assignable_inline_size,
+                                guess.preferred_guess);
+            InterpolateBetweenMinimumSpecifiedGuessAndPreferredGuess(weight)
         } else {
             UsePreferredGuessAndDistributeExcessInlineSize
         }
     }
 }
 
-/// Linear interpolation with equal weights, as specified by INTRINSIC § 4.3.
-fn interp(a: Au, b: Au) -> Au {
-    (a + b).scale_by(0.5)
+/// Computes the weight needed to linearly interpolate `middle` between two guesses `low` and
+/// `high` as specified by INTRINSIC § 4.3.
+fn weight(low: Au, middle: Au, high: Au) -> CSSFloat {
+    (middle - low).to_subpx() / (high - low).to_subpx()
+}
+
+/// Linearly interpolates between two guesses, as specified by INTRINSIC § 4.3.
+fn interp(low: Au, high: Au, weight: CSSFloat) -> Au {
+    low + (high - low).scale_by(weight)
 }
 
 struct ExcessInlineSizeDistributionInfo {
@@ -531,7 +517,8 @@ impl ExcessInlineSizeDistributionInfo {
     #[inline]
     fn distribute_excess_inline_size_to_column(&self,
                                                column_inline_size: &mut ColumnInlineSize,
-                                               excess_inline_size: Au) {
+                                               excess_inline_size: Au,
+                                               total_distributed_excess_size: &mut Au) {
         let proportion =
             if self.preferred_inline_size_of_nonconstrained_columns_with_no_percentage > Au(0) {
                 column_inline_size.preferred.to_subpx() /
@@ -548,8 +535,14 @@ impl ExcessInlineSizeDistributionInfo {
             } else {
                 1.0 / (self.column_count as CSSFloat)
             };
+
+        // The `min` here has the effect of throwing away fractional excess at the end of the
+        // table.
+        let amount_to_distribute = min(excess_inline_size.scale_by(proportion),
+                                       excess_inline_size - *total_distributed_excess_size);
+        *total_distributed_excess_size = *total_distributed_excess_size + amount_to_distribute;
         column_inline_size.minimum_length = column_inline_size.minimum_length +
-            excess_inline_size.scale_by(proportion)
+            amount_to_distribute
     }
 }
 
