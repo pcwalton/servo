@@ -12,16 +12,15 @@ use flow;
 use fragment::{Fragment, InlineBlockFragment, ScannedTextFragment, ScannedTextFragmentInfo};
 use fragment::{SplitInfo};
 use layout_debug;
-use model::IntrinsicISizes;
+use model::IntrinsicISizesComputation;
 use text;
 use wrapper::ThreadSafeLayoutNode;
 
 use collections::{Deque, RingBuf};
-use geom::Rect;
+use geom::{Rect, Size2D};
 use gfx::display_list::ContentLevel;
 use gfx::font::FontMetrics;
 use gfx::font_context::FontContext;
-use geom::Size2D;
 use gfx::text::glyph::CharIndex;
 use servo_util::geometry::Au;
 use servo_util::logical_geometry::{LogicalRect, LogicalSize};
@@ -1011,24 +1010,12 @@ impl Flow for InlineFlow {
             flow::mut_base(kid).floats = Floats::new(writing_mode);
         }
 
-        let mut intrinsic_inline_sizes = IntrinsicISizes::new();
+        let mut computation = IntrinsicISizesComputation::new();
         for fragment in self.fragments.fragments.iter_mut() {
             debug!("Flow: measuring {}", *fragment);
-
-            let fragment_intrinsic_inline_sizes =
-                fragment.intrinsic_inline_sizes();
-            intrinsic_inline_sizes.minimum_inline_size = max(
-                intrinsic_inline_sizes.minimum_inline_size,
-                fragment_intrinsic_inline_sizes.minimum_inline_size);
-            intrinsic_inline_sizes.preferred_inline_size =
-                intrinsic_inline_sizes.preferred_inline_size +
-                fragment_intrinsic_inline_sizes.preferred_inline_size;
-            intrinsic_inline_sizes.surround_inline_size =
-                intrinsic_inline_sizes.surround_inline_size +
-                fragment_intrinsic_inline_sizes.surround_inline_size;
+            computation.union_inline(&fragment.compute_intrinsic_inline_sizes().finish())
         }
-
-        self.base.intrinsic_inline_sizes = intrinsic_inline_sizes;
+        self.base.intrinsic_inline_sizes = computation.finish()
     }
 
     /// Recursively (top-down) determines the actual inline-size of child contexts and fragments. When called

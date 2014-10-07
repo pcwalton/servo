@@ -119,6 +119,10 @@ impl Flow for TableCellFlow {
         let padding_and_borders = self.block_flow.fragment.border_padding.inline_start_end();
         let content_inline_size =
             self.block_flow.fragment.border_box.size.inline - padding_and_borders;
+        println!("table cell ISCE={} PAB={} CIS={}",
+                 inline_start_content_edge,
+                 padding_and_borders,
+                 content_inline_size);
 
         self.block_flow.propagate_assigned_inline_size_to_children(inline_start_content_edge,
                                                                    content_inline_size,

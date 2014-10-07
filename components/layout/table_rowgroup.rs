@@ -14,11 +14,11 @@ use flow::{TableRowGroupFlowClass, FlowClass, Flow, ImmutableFlowUtils};
 use flow;
 use fragment::Fragment;
 use layout_debug;
+use model::IntrinsicISizesComputation;
 use table::{ColumnInlineSize, InternalTable, TableFlow};
 use wrapper::ThreadSafeLayoutNode;
 
 use servo_util::geometry::Au;
-use std::cmp::max;
 use std::fmt;
 
 /// A table formatting context.
@@ -125,7 +125,7 @@ impl Flow for TableRowGroupFlow {
         let _scope = layout_debug_scope!("table_rowgroup::bubble_inline_sizes {:s}",
                                          self.block_flow.base.debug_id());
 
-        let (mut min_inline_size, mut pref_inline_size) = (Au(0), Au(0));
+        let mut computation = IntrinsicISizesComputation::new();
         for kid in self.block_flow.base.child_iter() {
             assert!(kid.is_table_row());
 
@@ -135,11 +135,9 @@ impl Flow for TableRowGroupFlow {
                 debug_assert!(self.column_inline_sizes.is_empty());
                 self.column_inline_sizes = kid.column_inline_sizes().clone();
             } else {
-                let (minimum, preferred) =
+                let mut child_intrinsic_sizes =
                     TableFlow::update_column_inline_sizes(&mut self.column_inline_sizes,
                                                           kid.column_inline_sizes());
-                min_inline_size = minimum;
-                pref_inline_size = preferred;
 
                 // update the number of column inline-sizes from table-rows.
                 let column_count = self.column_inline_sizes.len();
@@ -148,16 +146,20 @@ impl Flow for TableRowGroupFlow {
                     let this_column_inline_size = *kid.column_inline_sizes().get(i);
 
                     // FIXME(pcwalton): Ignoring the percentage here seems dubious.
-                    min_inline_size = min_inline_size + this_column_inline_size.minimum_length;
-                    pref_inline_size = pref_inline_size + this_column_inline_size.preferred;
+                    child_intrinsic_sizes.minimum_inline_size =
+                        child_intrinsic_sizes.minimum_inline_size +
+                        this_column_inline_size.minimum_length;
+                    child_intrinsic_sizes.preferred_inline_size =
+                        child_intrinsic_sizes.preferred_inline_size +
+                        this_column_inline_size.preferred;
                     self.column_inline_sizes.push(this_column_inline_size);
                 }
+
+                computation.union_block(&child_intrinsic_sizes)
             }
         }
 
-        self.block_flow.base.intrinsic_inline_sizes.minimum_inline_size = min_inline_size;
-        self.block_flow.base.intrinsic_inline_sizes.preferred_inline_size = max(min_inline_size,
-                                                                                pref_inline_size);
+        self.block_flow.base.intrinsic_inline_sizes = computation.finish()
     }
 
     /// Recursively (top-down) determines the actual inline-size of child contexts and fragments.

@@ -107,12 +107,32 @@ impl TableWrapperFlow {
 
     /// Calculates table column sizes for automatic layout per INTRINSIC § 4.3.
     fn calculate_table_column_sizes_for_automatic_layout(&mut self) {
+        // Find the padding and border of our first child, which is the table itself.
+        //
+        // This is a little weird because we're computing border/padding/margins for our child,
+        // when normally the child computes it itself. But it has to be this way because the
+        // padding will affect where we place the child. This is an odd artifact of the way that
+        // tables are separated into table flows and table wrapper flows.
+        let available_inline_size = self.block_flow.fragment.border_box.size.inline;
+        let mut table_border_padding = Au(0);
+        for kid in self.block_flow.base.child_iter() {
+            if kid.is_table() {
+                let kid_block = kid.as_block();
+                kid_block.fragment.compute_border_padding_margins(available_inline_size);
+                table_border_padding = kid_block.fragment.border_padding.inline_start_end();
+                break
+            }
+        }
+        println!("table border padding={}", table_border_padding);
+
         // FIXME(pcwalton, spec): INTRINSIC § 8 does not properly define how to compute this, but
         // says "the basic idea is the same as the shrink-to-fit width that CSS2.1 defines". So we
         // just use the shrink-to-fit inline size.
-        let available_inline_size = self.block_flow.fragment.border_box.size.inline;
         let available_inline_size =
             self.block_flow.get_shrink_to_fit_inline_size(available_inline_size);
+        println!("CTCSFAL: BB {}, available inline size {}",
+                 self.block_flow.fragment.border_box,
+                 available_inline_size);
 
         // Compute all the guesses for the column sizes, and sum them.
         let mut total_guess = AutoLayoutCandidateGuess::new();
@@ -158,8 +178,10 @@ impl TableWrapperFlow {
             total_used_inline_size = available_inline_size
         }
 
-        self.block_flow.fragment.border_box.size.inline = total_used_inline_size;
-        self.block_flow.base.position.size.inline = total_used_inline_size
+        self.block_flow.fragment.border_box.size.inline = total_used_inline_size +
+            table_border_padding;
+        self.block_flow.base.position.size.inline = total_used_inline_size +
+            table_border_padding;
     }
 
     fn compute_used_inline_size(&mut self,
@@ -220,7 +242,7 @@ impl Flow for TableWrapperFlow {
         self.block_flow.float_kind()
     }
 
-    fn bubble_inline_sizes(&mut self, ctx: &LayoutContext) {
+    fn bubble_inline_sizes(&mut self, layout_context: &LayoutContext) {
         // Get the column inline-sizes info from the table flow.
         for kid in self.block_flow.base.child_iter() {
             debug_assert!(kid.is_table_caption() || kid.is_table());
@@ -229,7 +251,7 @@ impl Flow for TableWrapperFlow {
             }
         }
 
-        self.block_flow.bubble_inline_sizes(ctx);
+        self.block_flow.bubble_inline_sizes(layout_context);
     }
 
     fn assign_inline_sizes(&mut self, layout_context: &LayoutContext) {

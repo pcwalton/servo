@@ -22,9 +22,8 @@ use flow::{MutableFlowUtils, PreorderFlowTraversal, PostorderFlowTraversal, mut_
 use flow;
 use fragment::{Fragment, ImageFragment, InlineBlockFragment, ScannedTextFragment};
 use layout_debug;
-use model::{Auto, IntrinsicISizes, MarginCollapseInfo, MarginsCollapse};
-use model::{MarginsCollapseThrough, MaybeAuto, NoCollapsibleMargins, Specified, specified};
-use model::{specified_or_none};
+use model::{Auto, MarginCollapseInfo, MarginsCollapse, MarginsCollapseThrough, MaybeAuto};
+use model::{NoCollapsibleMargins, Specified, specified, specified_or_none};
 use table::ColumnInlineSize;
 use wrapper::ThreadSafeLayoutNode;
 
@@ -741,8 +740,11 @@ impl BlockFlow {
     /// This is where we use the preferred inline-sizes and minimum inline-sizes
     /// calculated in the bubble-inline-sizes traversal.
     pub fn get_shrink_to_fit_inline_size(&self, available_inline_size: Au) -> Au {
-        min(self.base.intrinsic_inline_sizes.preferred_inline_size,
-            max(self.base.intrinsic_inline_sizes.minimum_inline_size, available_inline_size))
+        let border_padding = self.fragment.border_padding.inline_start_end() +
+            self.fragment.margin.inline_start_end();
+        min(self.base.intrinsic_inline_sizes.preferred_inline_size - border_padding,
+            max(self.base.intrinsic_inline_sizes.minimum_inline_size - border_padding,
+                available_inline_size))
     }
 
     /// If this is the root flow, shifts all kids down and adjusts our size to account for
@@ -1515,7 +1517,7 @@ impl Flow for BlockFlow {
         };
 
         // Find the maximum inline-size from children.
-        let mut intrinsic_inline_sizes = IntrinsicISizes::new();
+        let mut computation = self.fragment.compute_intrinsic_inline_sizes();
         let mut left_float_width = Au(0);
         let mut right_float_width = Au(0);
         for kid in self.base.child_iter() {
@@ -1523,23 +1525,23 @@ impl Flow for BlockFlow {
             let float_kind = kid.float_kind();
             let child_base = flow::mut_base(kid);
             if !is_absolutely_positioned && !fixed_width {
-                intrinsic_inline_sizes.minimum_inline_size =
-                    max(intrinsic_inline_sizes.minimum_inline_size,
-                        child_base.intrinsic_inline_sizes.total_minimum_inline_size());
+                computation.content_intrinsic_sizes.minimum_inline_size =
+                    max(computation.content_intrinsic_sizes.minimum_inline_size,
+                        child_base.intrinsic_inline_sizes.minimum_inline_size);
 
                 match float_kind {
                     float::none => {
-                        intrinsic_inline_sizes.preferred_inline_size =
-                            max(intrinsic_inline_sizes.preferred_inline_size,
-                                child_base.intrinsic_inline_sizes.total_preferred_inline_size());
+                        computation.content_intrinsic_sizes.preferred_inline_size =
+                            max(computation.content_intrinsic_sizes.preferred_inline_size,
+                                child_base.intrinsic_inline_sizes.preferred_inline_size);
                     }
                     float::left => {
                         left_float_width = left_float_width +
-                            child_base.intrinsic_inline_sizes.total_preferred_inline_size();
+                            child_base.intrinsic_inline_sizes.preferred_inline_size;
                     }
                     float::right => {
                         right_float_width = right_float_width +
-                            child_base.intrinsic_inline_sizes.total_preferred_inline_size();
+                            child_base.intrinsic_inline_sizes.preferred_inline_size;
                     }
                 }
             }
@@ -1547,21 +1549,12 @@ impl Flow for BlockFlow {
             flags.union_floated_descendants_flags(child_base.flags);
         }
 
-        intrinsic_inline_sizes.preferred_inline_size =
-            max(intrinsic_inline_sizes.preferred_inline_size,
-                          left_float_width + right_float_width);
+        // FIXME(pcwalton): Where is this spec'd?
+        computation.content_intrinsic_sizes.preferred_inline_size =
+            max(computation.content_intrinsic_sizes.preferred_inline_size,
+                left_float_width + right_float_width);
 
-        let fragment_intrinsic_inline_sizes = self.fragment.intrinsic_inline_sizes();
-        intrinsic_inline_sizes.minimum_inline_size =
-            max(intrinsic_inline_sizes.minimum_inline_size,
-                fragment_intrinsic_inline_sizes.minimum_inline_size);
-        intrinsic_inline_sizes.preferred_inline_size =
-            max(intrinsic_inline_sizes.preferred_inline_size,
-                fragment_intrinsic_inline_sizes.preferred_inline_size);
-        intrinsic_inline_sizes.surround_inline_size =
-            intrinsic_inline_sizes.surround_inline_size +
-            fragment_intrinsic_inline_sizes.surround_inline_size;
-        self.base.intrinsic_inline_sizes = intrinsic_inline_sizes;
+        self.base.intrinsic_inline_sizes = computation.finish();
 
         match self.fragment.style().get_box().float {
             float::none => {}
@@ -2539,6 +2532,7 @@ fn propagate_column_inline_sizes_to_child(kid: &mut Flow,
     }
 
     if kid.is_table_cell() {
+        let kid_base = flow::mut_base(kid);
         *inline_start_margin_edge = *inline_start_margin_edge + inline_size
     }
 }

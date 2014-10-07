@@ -14,6 +14,7 @@ use floats::FloatKind;
 use flow::{TableFlowClass, FlowClass, Flow, ImmutableFlowUtils};
 use fragment::Fragment;
 use layout_debug;
+use model::{IntrinsicISizes, IntrinsicISizesComputation};
 use table_wrapper::{TableLayout, FixedLayout, AutoLayout};
 use wrapper::ThreadSafeLayoutNode;
 
@@ -93,11 +94,11 @@ impl TableFlow {
 
     /// Update the corresponding value of `self_inline_sizes` if a value of `kid_inline_sizes` has
     /// a larger value than one of `self_inline_sizes`. Returns the minimum and preferred inline
-    /// sizes, respectively.
+    /// sizes.
     pub fn update_column_inline_sizes(parent_inline_sizes: &mut Vec<ColumnInlineSize>,
                                       child_inline_sizes: &Vec<ColumnInlineSize>)
-                                      -> (Au, Au) {
-        let (mut total_minimum_inline_size, mut total_preferred_inline_size) = (Au(0), Au(0));
+                                      -> IntrinsicISizes {
+        let mut total_inline_sizes = IntrinsicISizes::new();
         for (parent_sizes, child_sizes) in
                 parent_inline_sizes.mut_iter().zip(child_inline_sizes.iter()) {
             *parent_sizes = ColumnInlineSize {
@@ -107,10 +108,12 @@ impl TableFlow {
                 constrained: parent_sizes.constrained || child_sizes.constrained
             };
 
-            total_minimum_inline_size = total_minimum_inline_size + parent_sizes.minimum_length;
-            total_preferred_inline_size = total_preferred_inline_size + parent_sizes.preferred;
+            total_inline_sizes.minimum_inline_size = total_inline_sizes.minimum_inline_size +
+                parent_sizes.minimum_length;
+            total_inline_sizes.preferred_inline_size = total_inline_sizes.preferred_inline_size +
+                parent_sizes.preferred;
         }
-        (total_minimum_inline_size, total_preferred_inline_size)
+        total_inline_sizes
     }
 
     /// Assign block-size for table flow.
@@ -159,7 +162,7 @@ impl Flow for TableFlow {
         let _scope = layout_debug_scope!("table::bubble_inline_sizes {:s}",
                                          self.block_flow.base.debug_id());
 
-        let (mut min_inline_size, mut pref_inline_size) = (Au(0), Au(0));
+        let mut computation = IntrinsicISizesComputation::new();
         let mut did_first_row = false;
         for kid in self.block_flow.base.child_iter() {
             debug_assert!(kid.is_proper_table_child());
@@ -211,11 +214,10 @@ impl Flow for TableFlow {
                     }
                     AutoLayout => {
                         let child_column_inline_sizes = kid.column_inline_sizes();
-                        let (minimum, preferred) =
+                        println!("child column inline sizes={}", child_column_inline_sizes);
+                        let mut child_intrinsic_sizes =
                             TableFlow::update_column_inline_sizes(&mut self.column_inline_sizes,
                                                                   child_column_inline_sizes);
-                        min_inline_size = minimum;
-                        pref_inline_size = preferred;
 
                         // Add new columns if processing this row caused us to discover them.
                         let child_column_count = child_column_inline_sizes.len();
@@ -227,29 +229,29 @@ impl Flow for TableFlow {
                         self.column_inline_sizes.reserve(child_column_count);
                         for i in range(parent_column_count, child_column_count) {
                             let inline_size_for_new_column = *child_column_inline_sizes.get(i);
-                            min_inline_size = min_inline_size +
+                            child_intrinsic_sizes.minimum_inline_size =
+                                child_intrinsic_sizes.minimum_inline_size +
                                 inline_size_for_new_column.minimum_length;
-                            pref_inline_size = pref_inline_size +
+                            child_intrinsic_sizes.preferred_inline_size =
+                                child_intrinsic_sizes.preferred_inline_size +
                                 inline_size_for_new_column.preferred;
+                            println!("adding inline size for new column: {}",
+                                     inline_size_for_new_column);
                             self.column_inline_sizes.push(inline_size_for_new_column);
                         }
 
+                        computation.union_block(&child_intrinsic_sizes)
                     }
                 }
             }
         }
 
-        let fragment_intrinsic_inline_sizes = self.block_flow.fragment.intrinsic_inline_sizes();
-        self.block_flow.base.intrinsic_inline_sizes.minimum_inline_size = min_inline_size;
-        self.block_flow.base.intrinsic_inline_sizes.preferred_inline_size =
-            max(min_inline_size, pref_inline_size);
-        self.block_flow.base.intrinsic_inline_sizes.surround_inline_size =
-            fragment_intrinsic_inline_sizes.surround_inline_size;
+        self.block_flow.base.intrinsic_inline_sizes = computation.finish()
     }
 
     /// Recursively (top-down) determines the actual inline-size of child contexts and fragments.
     /// When called on this context, the context has had its inline-size set by the parent context.
-    fn assign_inline_sizes(&mut self, ctx: &LayoutContext) {
+    fn assign_inline_sizes(&mut self, layout_context: &LayoutContext) {
         let _scope = layout_debug_scope!("table::assign_inline_sizes {:s}",
                                             self.block_flow.base.debug_id());
         debug!("assign_inline_sizes({}): assigning inline_size for flow", "table");
@@ -270,13 +272,17 @@ impl Flow for TableFlow {
 
         let inline_size_computer = InternalTable;
         inline_size_computer.compute_used_inline_size(&mut self.block_flow,
-                                                      ctx,
+                                                      layout_context,
                                                       containing_block_inline_size);
 
         let inline_start_content_edge = self.block_flow.fragment.border_padding.inline_start;
         let padding_and_borders = self.block_flow.fragment.border_padding.inline_start_end();
         let content_inline_size =
             self.block_flow.fragment.border_box.size.inline - padding_and_borders;
+        println!("ISCE={} PAB={} CIS={}",
+                 inline_start_content_edge,
+                 padding_and_borders,
+                 content_inline_size);
         match self.table_layout {
             FixedLayout => {
                 // In fixed table layout, we distribute extra space among the unspecified columns
