@@ -25,13 +25,12 @@ use geom::{Point2D, Rect, Size2D, SideOffsets2D};
 use geom::approxeq::ApproxEq;
 use gfx::color::rgb;
 use gfx::display_list::{BackgroundAndBorderLevel, BaseDisplayItem, BorderDisplayItem};
-use gfx::display_list::{BorderDisplayItemClass, ClipDisplayItem, ClipDisplayItemClass};
-use gfx::display_list::{ContentStackingLevel, DisplayItem, DisplayList, ImageDisplayItem};
-use gfx::display_list::{ImageDisplayItemClass, LineDisplayItem};
+use gfx::display_list::{BorderDisplayItemClass, ContentStackingLevel, DisplayItem, DisplayList};
+use gfx::display_list::{ImageDisplayItem, ImageDisplayItemClass, LineDisplayItem};
 use gfx::display_list::{LineDisplayItemClass, OpaqueNode, PseudoDisplayItemClass};
-use gfx::display_list::{SolidColorDisplayItem, SolidColorDisplayItemClass, StackingLevel};
-use gfx::display_list::{TextDisplayItem, TextDisplayItemClass};
-use gfx::display_list::{Upright, SidewaysLeft, SidewaysRight};
+use gfx::display_list::{SidewaysLeft, SidewaysRight, SolidColorDisplayItem};
+use gfx::display_list::{SolidColorDisplayItemClass, StackingLevel, TextDisplayItem};
+use gfx::display_list::{TextDisplayItemClass, Upright};
 use gfx::font::FontStyle;
 use gfx::text::glyph::CharIndex;
 use gfx::text::text_run::TextRun;
@@ -40,7 +39,7 @@ use serialize::{Encodable, Encoder};
 use servo_msg::constellation_msg::{ConstellationChan, FrameRectMsg, PipelineId, SubpageId};
 use servo_net::image::holder::ImageHolder;
 use servo_net::local_image_cache::LocalImageCache;
-use servo_util::geometry::Au;
+use servo_util::geometry::{Au, ZERO_RECT};
 use servo_util::geometry;
 use servo_util::logical_geometry::{LogicalRect, LogicalSize, LogicalMargin, WritingMode};
 use servo_util::range::*;
@@ -60,24 +59,26 @@ use style::computed_values::{text_decoration, vertical_align, visibility, white_
 use sync::{Arc, Mutex};
 use url::Url;
 
-/// Fragments (`struct Fragment`) are the leaves of the layout tree. They cannot position themselves. In
-/// general, fragments do not have a simple correspondence with CSS fragments in the specification:
+/// Fragments (`struct Fragment`) are the leaves of the layout tree. They cannot position
+/// themselves. In general, fragments do not have a simple correspondence with CSS fragments in the
+/// specification:
 ///
 /// * Several fragments may correspond to the same CSS box or DOM node. For example, a CSS text box
 /// broken across two lines is represented by two fragments.
 ///
-/// * Some CSS fragments are not created at all, such as some anonymous block fragments induced by inline
-///   fragments with block-level sibling fragments. In that case, Servo uses an `InlineFlow` with
-///   `BlockFlow` siblings; the `InlineFlow` is block-level, but not a block container. It is
-///   positioned as if it were a block fragment, but its children are positioned according to inline
-///   flow.
+/// * Some CSS fragments are not created at all, such as some anonymous block fragments induced by
+///   inline fragments with block-level sibling fragments. In that case, Servo uses an `InlineFlow`
+///   with `BlockFlow` siblings; the `InlineFlow` is block-level, but not a block container. It is
+///   positioned as if it were a block fragment, but its children are positioned according to
+///   inline flow.
 ///
 /// A `GenericFragment` is an empty fragment that contributes only borders, margins, padding, and
 /// backgrounds. It is analogous to a CSS nonreplaced content box.
 ///
-/// A fragment's type influences how its styles are interpreted during layout. For example, replaced
-/// content such as images are resized differently from tables, text, or other content. Different
-/// types of fragments may also contain custom data; for example, text fragments contain text.
+/// A fragment's type influences how its styles are interpreted during layout. For example,
+/// replaced content such as images are resized differently from tables, text, or other content.
+/// Different types of fragments may also contain custom data; for example, text fragments contain
+/// text.
 ///
 /// FIXME(#2260, pcwalton): This can be slimmed down some.
 #[deriving(Clone)]
@@ -215,8 +216,8 @@ pub struct ImageFragmentInfo {
 impl ImageFragmentInfo {
     /// Creates a new image fragment from the given URL and local image cache.
     ///
-    /// FIXME(pcwalton): The fact that image fragments store the cache in the fragment makes little sense to
-    /// me.
+    /// FIXME(pcwalton): The fact that image fragments store the cache in the fragment makes little
+    /// sense to me.
     pub fn new(node: &ThreadSafeLayoutNode,
                image_url: Url,
                local_image_cache: Arc<Mutex<LocalImageCache<UntrustedNodeAddress>>>)
@@ -787,7 +788,8 @@ impl Fragment {
                                                            list: &mut DisplayList,
                                                            layout_context: &LayoutContext,
                                                            level: StackingLevel,
-                                                           absolute_bounds: &Rect<Au>) {
+                                                           absolute_bounds: &Rect<Au>,
+                                                           clip_rect: &Rect<Au>) {
         // FIXME: This causes a lot of background colors to be displayed when they are clearly not
         // needed. We could use display list optimization to clean this up, but it still seems
         // inefficient. What we really want is something like "nearest ancestor element that
@@ -795,7 +797,7 @@ impl Fragment {
         let background_color = style.resolve_color(style.get_background().background_color);
         if !background_color.alpha.approx_eq(&0.0) {
             let display_item = box SolidColorDisplayItem {
-                base: BaseDisplayItem::new(*absolute_bounds, self.node, level),
+                base: BaseDisplayItem::new(*absolute_bounds, self.node, level, *clip_rect),
                 color: background_color.to_gfx_color(),
             };
 
@@ -828,12 +830,10 @@ impl Fragment {
         let image_height = Au::from_px(image.height as int);
         let mut bounds = *absolute_bounds;
 
-        // Add clip item.
+        // Clip.
+        //
         // TODO: Check the bounds to see if a clip item is actually required.
-        let mut clip_display_item = box ClipDisplayItem {
-            base: BaseDisplayItem::new(bounds, self.node, level),
-            children: DisplayList::new(),
-        };
+        let clip_rect = clip_rect.intersection(&bounds).unwrap_or(ZERO_RECT);
 
         // Use background-attachment to get the initial virtual origin
         let (virtual_origin_x, virtual_origin_y) = match background.background_attachment {
@@ -884,14 +884,12 @@ impl Fragment {
 
         // Create the image display item.
         let image_display_item = ImageDisplayItemClass(box ImageDisplayItem {
-            base: BaseDisplayItem::new(bounds, self.node, level),
+            base: BaseDisplayItem::new(bounds, self.node, level, clip_rect),
             image: image.clone(),
             stretch_size: Size2D(Au::from_px(image.width as int),
                                  Au::from_px(image.height as int)),
         });
-
-        clip_display_item.children.push(image_display_item);
-        list.push(ClipDisplayItemClass(clip_display_item))
+        list.push(image_display_item)
     }
 
     /// Adds the display items necessary to paint the borders of this fragment to a display list if
@@ -900,7 +898,8 @@ impl Fragment {
                                                         style: &ComputedValues,
                                                         list: &mut DisplayList,
                                                         abs_bounds: &Rect<Au>,
-                                                        level: StackingLevel) {
+                                                        level: StackingLevel,
+                                                        clip_rect: &Rect<Au>) {
         let border = style.logical_border_width();
         if border.is_zero() {
             return
@@ -913,7 +912,7 @@ impl Fragment {
 
         // Append the border to the display list.
         let border_display_item = box BorderDisplayItem {
-            base: BaseDisplayItem::new(*abs_bounds, self.node, level),
+            base: BaseDisplayItem::new(*abs_bounds, self.node, level, *clip_rect),
             border: border.to_physical(style.writing_mode),
             color: SideOffsets2D::new(top_color.to_gfx_color(),
                                       right_color.to_gfx_color(),
@@ -929,9 +928,10 @@ impl Fragment {
     }
 
     fn build_debug_borders_around_text_fragments(&self,
-                                             display_list: &mut DisplayList,
-                                             flow_origin: Point2D<Au>,
-                                             text_fragment: &ScannedTextFragmentInfo) {
+                                                 display_list: &mut DisplayList,
+                                                 flow_origin: Point2D<Au>,
+                                                 text_fragment: &ScannedTextFragmentInfo,
+                                                 clip_rect: &Rect<Au>) {
         // FIXME(#2795): Get the real container size
         let container_size = Size2D::zero();
         // Fragment position wrt to the owning flow.
@@ -942,7 +942,10 @@ impl Fragment {
 
         // Compute the text fragment bounds and draw a border surrounding them.
         let border_display_item = box BorderDisplayItem {
-            base: BaseDisplayItem::new(absolute_fragment_bounds, self.node, ContentStackingLevel),
+            base: BaseDisplayItem::new(absolute_fragment_bounds,
+                                       self.node,
+                                       ContentStackingLevel,
+                                       *clip_rect),
             border: SideOffsets2D::new_all_same(Au::from_px(1)),
             color: SideOffsets2D::new_all_same(rgb(0, 0, 200)),
             style: SideOffsets2D::new_all_same(border_style::solid)
@@ -958,7 +961,7 @@ impl Fragment {
         baseline.origin = baseline.origin + flow_origin;
 
         let line_display_item = box LineDisplayItem {
-            base: BaseDisplayItem::new(baseline, self.node, ContentStackingLevel),
+            base: BaseDisplayItem::new(baseline, self.node, ContentStackingLevel, *clip_rect),
             color: rgb(0, 200, 0),
             style: border_style::dashed,
         };
@@ -966,8 +969,9 @@ impl Fragment {
     }
 
     fn build_debug_borders_around_fragment(&self,
-                                      display_list: &mut DisplayList,
-                                      flow_origin: Point2D<Au>) {
+                                           display_list: &mut DisplayList,
+                                           flow_origin: Point2D<Au>,
+                                           clip_rect: &Rect<Au>) {
         // FIXME(#2795): Get the real container size
         let container_size = Size2D::zero();
         // Fragment position wrt to the owning flow.
@@ -978,7 +982,10 @@ impl Fragment {
 
         // This prints a debug border around the border of this fragment.
         let border_display_item = box BorderDisplayItem {
-            base: BaseDisplayItem::new(absolute_fragment_bounds, self.node, ContentStackingLevel),
+            base: BaseDisplayItem::new(absolute_fragment_bounds,
+                                       self.node,
+                                       ContentStackingLevel,
+                                       *clip_rect),
             border: SideOffsets2D::new_all_same(Au::from_px(1)),
             color: SideOffsets2D::new_all_same(rgb(0, 0, 200)),
             style: SideOffsets2D::new_all_same(border_style::solid)
@@ -994,11 +1001,13 @@ impl Fragment {
     /// * `layout_context`: The layout context.
     /// * `dirty`: The dirty rectangle in the coordinate system of the owning flow.
     /// * `flow_origin`: Position of the origin of the owning flow wrt the display list root flow.
+    /// * `clip_rect`: The rectangle to clip the display items to.
     pub fn build_display_list(&mut self,
                               display_list: &mut DisplayList,
                               layout_context: &LayoutContext,
                               flow_origin: Point2D<Au>,
-                              background_and_border_level: BackgroundAndBorderLevel)
+                              background_and_border_level: BackgroundAndBorderLevel,
+                              clip_rect: &Rect<Au>)
                               -> ChildDisplayListAccumulator {
         // FIXME(#2795): Get the real container size
         let container_size = Size2D::zero();
@@ -1016,15 +1025,7 @@ impl Fragment {
                layout_context.shared.dirty,
                flow_origin);
 
-        let may_need_clip = match self.specific {
-            ScannedTextFragment(_) => false,
-            _ => true,
-        };
-        let mut accumulator = ChildDisplayListAccumulator::new(self.style(),
-                                                               absolute_fragment_bounds,
-                                                               self.node,
-                                                               ContentStackingLevel,
-                                                               may_need_clip);
+        let mut accumulator = ChildDisplayListAccumulator;
         if self.style().get_inheritedbox().visibility != visibility::visible {
             return accumulator
         }
@@ -1041,7 +1042,10 @@ impl Fragment {
                 StackingLevel::from_background_and_border_level(background_and_border_level);
 
             // Add a pseudo-display item for content box queries. This is a very bogus thing to do.
-            let base_display_item = box BaseDisplayItem::new(absolute_fragment_bounds, self.node, level);
+            let base_display_item = box BaseDisplayItem::new(absolute_fragment_bounds,
+                                                             self.node,
+                                                             level,
+                                                             *clip_rect);
             display_list.push(PseudoDisplayItemClass(base_display_item));
 
             // Add the background to the list, if applicable.
@@ -1053,7 +1057,8 @@ impl Fragment {
                             display_list,
                             layout_context,
                             level,
-                            &absolute_fragment_bounds);
+                            &absolute_fragment_bounds,
+                            clip_rect);
                     }
                 }
                 None => {}
@@ -1061,11 +1066,13 @@ impl Fragment {
             match self.specific {
                 ScannedTextFragment(_) => {},
                 _ => {
-                        self.build_display_list_for_background_if_applicable(&*self.style,
-                                                                             display_list,
-                                                                             layout_context,
-                                                                             level,
-                                                                             &absolute_fragment_bounds);
+                    self.build_display_list_for_background_if_applicable(
+                        &*self.style,
+                        display_list,
+                        layout_context,
+                        level,
+                        &absolute_fragment_bounds,
+                        clip_rect);
                 }
             }
 
@@ -1075,10 +1082,12 @@ impl Fragment {
             match self.inline_context {
                 Some(ref inline_context) => {
                     for style in inline_context.styles.iter().rev() {
-                        self.build_display_list_for_borders_if_applicable(&**style,
-                                                                          display_list,
-                                                                          &absolute_fragment_bounds,
-                                                                          level);
+                        self.build_display_list_for_borders_if_applicable(
+                            &**style,
+                            display_list,
+                            &absolute_fragment_bounds,
+                            level,
+                            clip_rect);
                     }
                 }
                 None => {}
@@ -1086,10 +1095,12 @@ impl Fragment {
             match self.specific {
                 ScannedTextFragment(_) => {},
                 _ => {
-                    self.build_display_list_for_borders_if_applicable(&*self.style,
-                                                                      display_list,
-                                                                      &absolute_fragment_bounds,
-                                                                      level);
+                    self.build_display_list_for_borders_if_applicable(
+                        &*self.style,
+                        display_list,
+                        &absolute_fragment_bounds,
+                        level,
+                        clip_rect);
                 }
             }
         }
@@ -1121,8 +1132,10 @@ impl Fragment {
                 };
 
                 let text_display_item = box TextDisplayItem {
-                    base: BaseDisplayItem::new(
-                        absolute_content_box, self.node, ContentStackingLevel),
+                    base: BaseDisplayItem::new(absolute_content_box,
+                                               self.node,
+                                               ContentStackingLevel,
+                                               *clip_rect),
                     text_run: text_fragment.run.clone(),
                     range: text_fragment.range,
                     text_color: self.style().get_color().color.to_gfx_color(),
@@ -1137,14 +1150,18 @@ impl Fragment {
                         match maybe_color {
                             None => {},
                             Some(color) => {
-                                accumulator.push(display_list, SolidColorDisplayItemClass(
-                                    box SolidColorDisplayItem {
-                                        base: BaseDisplayItem::new(
-                                            rect_to_absolute(self.style.writing_mode, rect()),
-                                            self.node, ContentStackingLevel),
-                                        color: color.to_gfx_color(),
-                                    }
-                                ));
+                                accumulator.push(display_list,
+                                                 SolidColorDisplayItemClass(
+                                                     box SolidColorDisplayItem {
+                                                        base: BaseDisplayItem::new(
+                                                                  rect_to_absolute(
+                                                                      self.style.writing_mode,
+                                                                      rect()),
+                                                               self.node,
+                                                               ContentStackingLevel,
+                                                               *clip_rect),
+                                                        color: color.to_gfx_color(),
+                                                     }));
                             }
                         }
                     };
@@ -1177,15 +1194,19 @@ impl Fragment {
                 // FIXME(#2263, pcwalton): This is a bit of an abuse of the logging infrastructure.
                 // We should have a real `SERVO_DEBUG` system.
                 debug!("{:?}", self.build_debug_borders_around_text_fragments(display_list,
-                                                                           flow_origin,
-                                                                           text_fragment))
+                                                                              flow_origin,
+                                                                              text_fragment,
+                                                                              clip_rect))
             }
             GenericFragment | IframeFragment(..) | TableFragment | TableCellFragment |
             TableRowFragment | TableWrapperFragment | InlineBlockFragment(_) | InputFragment(_) |
             InlineAbsoluteHypotheticalFragment(_) => {
                 // FIXME(pcwalton): This is a bit of an abuse of the logging infrastructure. We
                 // should have a real `SERVO_DEBUG` system.
-                debug!("{:?}", self.build_debug_borders_around_fragment(display_list, flow_origin))
+                debug!("{:?}",
+                       self.build_debug_borders_around_fragment(display_list,
+                                                                flow_origin,
+                                                                clip_rect))
             }
             ImageFragment(_) => {
                 match self.specific {
@@ -1199,7 +1220,8 @@ impl Fragment {
                                 let image_display_item = box ImageDisplayItem {
                                     base: BaseDisplayItem::new(absolute_content_box,
                                                                self.node,
-                                                               ContentStackingLevel),
+                                                               ContentStackingLevel,
+                                                               *clip_rect),
                                     image: image.clone(),
                                     stretch_size: absolute_content_box.size,
                                 };
@@ -1219,7 +1241,10 @@ impl Fragment {
 
                 // FIXME(pcwalton): This is a bit of an abuse of the logging
                 // infrastructure. We should have a real `SERVO_DEBUG` system.
-                debug!("{:?}", self.build_debug_borders_around_fragment(display_list, flow_origin))
+                debug!("{:?}",
+                       self.build_debug_borders_around_fragment(display_list,
+                                                                flow_origin,
+                                                                clip_rect))
             }
         }
 
@@ -1798,6 +1823,28 @@ impl Fragment {
             _ => {}
         }
     }
+
+    pub fn clip_rect_for_children(&self, current_clip_rect: Rect<Au>, flow_origin: Point2D<Au>)
+                                  -> Rect<Au> {
+        // Don't clip if we're text.
+        match self.specific {
+            ScannedTextFragment(_) => return current_clip_rect,
+            _ => {}
+        }
+
+        // Only clip if `overflow` tells us to.
+        match self.style.get_box().overflow {
+            overflow::hidden | overflow::auto | overflow::scroll => {}
+            _ => return current_clip_rect,
+        }
+
+        // Create a new clip rect.
+        //
+        // FIXME(#2795): Get the real container size.
+        let physical_rect = self.border_box.to_physical(self.style.writing_mode, Size2D::zero());
+        current_clip_rect.intersection(&Rect(physical_rect.origin + flow_origin,
+                                             physical_rect.size)).unwrap_or(ZERO_RECT)
+    }
 }
 
 impl fmt::Show for Fragment {
@@ -1826,59 +1873,26 @@ impl fmt::Show for Fragment {
     }
 }
 
-/// An object that accumulates display lists of child flows, applying a clipping rect if necessary.
-pub struct ChildDisplayListAccumulator {
-    clip_display_item: Option<Box<ClipDisplayItem>>,
-}
+/// An object that accumulates display lists of child flows.
+pub struct ChildDisplayListAccumulator;
 
 impl ChildDisplayListAccumulator {
-    /// Creates a `ChildDisplayListAccumulator` from the `overflow` property in the given style.
-    fn new(style: &ComputedValues, bounds: Rect<Au>, node: OpaqueNode,
-            level: StackingLevel, may_need_clip: bool)
-           -> ChildDisplayListAccumulator {
-        ChildDisplayListAccumulator {
-            clip_display_item: match (may_need_clip, style.get_box().overflow) {
-                (true, overflow::hidden) | (true, overflow::auto) | (true, overflow::scroll) => {
-                    Some(box ClipDisplayItem {
-                        base: BaseDisplayItem::new(bounds, node, level),
-                        children: DisplayList::new(),
-                    })
-                },
-                (false, _) | (_, overflow::visible) => None,
-            }
-        }
-    }
-
     /// Pushes the given display item onto this display list.
     pub fn push(&mut self, parent_display_list: &mut DisplayList, item: DisplayItem) {
-        match self.clip_display_item {
-            None => parent_display_list.push(item),
-            Some(ref mut clip_display_item) => clip_display_item.children.push(item),
-        }
+        parent_display_list.push(item)
     }
 
     /// Pushes the display items from the given child onto this display list.
     pub fn push_child(&mut self, parent_display_list: &mut DisplayList, child: &mut Flow) {
         let kid_display_list = mem::replace(&mut flow::mut_base(child).display_list,
                                             DisplayList::new());
-        match self.clip_display_item {
-            None => parent_display_list.push_all_move(kid_display_list),
-            Some(ref mut clip_display_item) => {
-                clip_display_item.children.push_all_move(kid_display_list)
-            }
-        }
+        parent_display_list.push_all_move(kid_display_list)
     }
 
     /// Consumes this accumulator and pushes the clipping item, if any, onto the display list
     /// associated with the given flow, along with the items in the given display list.
     pub fn finish(self, parent: &mut Flow, mut display_list: DisplayList) {
-        let ChildDisplayListAccumulator {
-            clip_display_item
-        } = self;
-        match clip_display_item {
-            None => {}
-            Some(clip_display_item) => display_list.push(ClipDisplayItemClass(clip_display_item)),
-        }
         flow::mut_base(parent).display_list = display_list
     }
 }
+
