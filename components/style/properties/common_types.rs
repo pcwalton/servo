@@ -79,6 +79,7 @@ pub mod specified {
         LP_Length(Length),
         LP_Percentage(CSSFloat),  // [0 .. 100%] maps to [0.0 .. 1.0]
     }
+
     impl LengthOrPercentage {
         fn parse_internal(input: &ComponentValue, negative_ok: bool)
                               -> Result<LengthOrPercentage, ()> {
@@ -253,6 +254,7 @@ pub mod computed {
         LP_Length(Au),
         LP_Percentage(CSSFloat),
     }
+
     #[allow(non_snake_case)]
     pub fn compute_LengthOrPercentage(value: specified::LengthOrPercentage, context: &Context)
                                    -> LengthOrPercentage {

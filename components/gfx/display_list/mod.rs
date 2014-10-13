@@ -465,16 +465,33 @@ pub struct ImageDisplayItem {
 /// Renders a border.
 #[deriving(Clone)]
 pub struct BorderDisplayItem {
+    /// Fields common to all display items.
     pub base: BaseDisplayItem,
 
-    /// The border widths
-    pub border: SideOffsets2D<Au>,
+    /// Border widths.
+    pub width: SideOffsets2D<Au>,
 
-    /// The border colors.
+    /// Border colors.
     pub color: SideOffsets2D<Color>,
 
-    /// The border styles.
-    pub style: SideOffsets2D<border_style::T>
+    /// Border styles.
+    pub style: SideOffsets2D<border_style::T>,
+
+    /// Border radii.
+    ///
+    /// TODO(pcwalton): Elliptical radii.
+    pub radius: BorderRadii,
+}
+
+/// Information about the border radii.
+///
+/// TODO(pcwalton): Elliptical radii.
+#[deriving(Clone)]
+pub struct BorderRadii {
+    top_left: Au,
+    top_right: Au,
+    bottom_right: Au,
+    bottom_left: Au,
 }
 
 /// Renders a line segment.
