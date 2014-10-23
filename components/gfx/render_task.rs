@@ -322,6 +322,7 @@ impl<C> RenderTask<C> where C: RenderListener + Send {
               mut tiles: Vec<BufferRequest>,
               scale: f32,
               layer_id: LayerId) {
+        println!("painting!");
         time::profile(time::PaintingCategory, None, self.time_profiler_chan.clone(), || {
             // Bail out if there is no appropriate render layer.
             let render_layer = match self.render_layers.iter().find(|layer| layer.id == layer_id) {

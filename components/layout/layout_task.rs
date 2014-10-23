@@ -553,7 +553,9 @@ impl LayoutTask {
     }
 
     /// The high-level routine that performs layout tasks.
-    fn handle_reflow<'a>(&'a self, data: &Reflow, possibly_locked_rw_data: &mut Option<MutexGuard<'a, LayoutTaskData>>) {
+    fn handle_reflow<'a>(&'a self,
+                         data: &Reflow,
+                         possibly_locked_rw_data: &mut Option<MutexGuard<'a, LayoutTaskData>>) {
         // FIXME: Isolate this transmutation into a "bridge" module.
         // FIXME(rust#16366): The following line had to be moved because of a
         // rustc bug. It should be in the next unsafe block.
@@ -565,6 +567,8 @@ impl LayoutTask {
         debug!("layout: received layout request for: {:s}", data.url.serialize());
         debug!("layout: parsed Node tree");
         debug!("{:?}", node.dump());
+
+        println!("starting reflow");
 
         let mut rw_data = self.lock_rw_data(possibly_locked_rw_data);
 
@@ -583,11 +587,9 @@ impl LayoutTask {
         rw_data.screen_size = current_screen_size;
 
         // Create a layout context for use throughout the following passes.
-        let mut shared_layout_ctx =
-            self.build_shared_layout_context(
-                rw_data.deref(),
-                node,
-                &data.url);
+        let mut shared_layout_ctx = self.build_shared_layout_context(rw_data.deref(),
+                                                                     node,
+                                                                     &data.url);
 
         // Handle conditions where the entire flow tree is invalid.
         let mut needs_dirtying = false;
@@ -657,7 +659,10 @@ impl LayoutTask {
         // Build the display list if necessary, and send it to the renderer.
         if data.goal == ReflowForDisplay {
             let writing_mode = flow::base(layout_root.deref()).writing_mode;
-            profile(time::LayoutDispListBuildCategory, Some((&data.url, data.iframe, self.first_reflow.get())), self.time_profiler_chan.clone(), || {
+            profile(time::LayoutDispListBuildCategory,
+                    Some((&data.url, data.iframe, self.first_reflow.get())),
+                         self.time_profiler_chan.clone(),
+                         || {
                 shared_layout_ctx.dirty = flow::base(layout_root.deref()).position.to_physical(
                     writing_mode, rw_data.screen_size);
                 flow::mut_base(layout_root.deref_mut()).abs_position =
