@@ -43,6 +43,7 @@ pub mod logical_geometry;
 pub mod memory;
 pub mod namespace;
 pub mod opts;
+pub mod persistent_list;
 pub mod range;
 pub mod resource_files;
 pub mod smallvec;
