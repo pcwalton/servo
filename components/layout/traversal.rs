@@ -170,13 +170,11 @@ impl<'a> PreorderDomTraversal for RecalcStyleForNode<'a> {
                     }
 
                     // Perform the CSS cascade.
-                    ThreadSafeLayoutNode::new(&node).set_restyle_damage(RestyleDamage::all());
                     unsafe {
                         node.cascade_node(parent_opt,
                                           &applicable_declarations,
                                           self.layout_context.applicable_declarations_cache());
                     }
-                    ThreadSafeLayoutNode::new(&node).set_restyle_damage(RestyleDamage::all());
 
                     // Add ourselves to the LRU cache.
                     if shareable {
@@ -216,7 +214,7 @@ impl<'a> PostorderDomTraversal for ConstructFlows<'a> {
         {
             let tnode = ThreadSafeLayoutNode::new(&node);
 
-            // Always re-construct if incremental layout is turned off.
+            // Always reconstruct if incremental layout is turned off.
             //let nonincremental_layout = opts::get().nonincremental_layout;
             let nonincremental_layout = true;
             if nonincremental_layout || node.has_dirty_descendants() {
@@ -298,8 +296,7 @@ impl<'a> PostorderFlowTraversal for BubbleISizes<'a> {
 
     #[inline]
     fn should_process(&self, flow: &mut Flow) -> bool {
-        //flow::base(flow).restyle_damage.contains(BubbleISizes)
-        true
+        flow::base(flow).restyle_damage.contains(BubbleISizes)
     }
 }
 
@@ -316,8 +313,7 @@ impl<'a> PreorderFlowTraversal for AssignISizes<'a> {
 
     #[inline]
     fn should_process(&self, flow: &mut Flow) -> bool {
-        //flow::base(flow).restyle_damage.contains(Reflow)
-        true
+        flow::base(flow).restyle_damage.contains(Reflow)
     }
 }
 
@@ -348,8 +344,7 @@ impl<'a> PostorderFlowTraversal for AssignBSizesAndStoreOverflow<'a> {
 
     #[inline]
     fn should_process(&self, flow: &mut Flow) -> bool {
-        //flow::base(flow).restyle_damage.contains(Reflow)
-        true
+        flow::base(flow).restyle_damage.contains(Reflow)
     }
 }
 

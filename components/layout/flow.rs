@@ -32,7 +32,7 @@ use floats::Floats;
 use flow_list::{FlowList, FlowListIterator, MutFlowListIterator};
 use flow_ref::FlowRef;
 use fragment::{Fragment, TableRowFragment, TableCellFragment};
-use incremental::RestyleDamage;
+use incremental::{ReconstructFlow, RestyleDamage};
 use inline::InlineFlow;
 use model::{CollapsibleMargins, IntrinsicISizes, MarginCollapseInfo};
 use parallel::FlowParallelInfo;
@@ -829,10 +829,14 @@ impl BaseFlow {
             _ => {}
         };
 
+        // New flows start out as fully damaged.
+        let mut damage = RestyleDamage::all();
+        damage.remove(ReconstructFlow);
+
         BaseFlow {
             ref_count: AtomicUint::new(1),
 
-            restyle_damage: node.restyle_damage(),
+            restyle_damage: damage,
 
             children: FlowList::new(),
 
