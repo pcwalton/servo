@@ -2,8 +2,11 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+use flow::{mod, Flow};
+
 use std::fmt;
 use std::sync::Arc;
+use style::computed_values::{position};
 use style::ComputedValues;
 
 bitflags! {
@@ -26,14 +29,28 @@ bitflags! {
 }
 
 impl RestyleDamage {
-    /// Elements of self which should also get set on any ancestor flow.
-    pub fn propagate_up(self) -> RestyleDamage {
-        self & Reflow
+    /// Supposing a flow has the given `position` property and this damage, returns the damage that
+    /// the *parent* of this flow should have.
+    pub fn damage_for_parent(self, child_positioning: position::T) -> RestyleDamage {
+        match child_positioning {
+            position::absolute => {
+                // FIXME(pcwalton): Also overflow computation...
+                self & Repaint
+            }
+            _ => self & Reflow,
+        }
     }
 
-    /// Elements of self which should also get set on any child flows.
-    pub fn propagate_down(self) -> RestyleDamage {
-        self & BubbleISizes
+    /// Supposing the *parent* of a flow with the given `position` property has this damage,
+    /// returns the damage that this flow should have.
+    pub fn damage_for_child(self, child_positioning: position::T) -> RestyleDamage {
+        match child_positioning {
+            position::absolute => RestyleDamage::empty(),
+            _ => {
+                // TODO(pcwalton): Take floatedness into account.
+                self & Reflow
+            }
+        }
     }
 }
 
@@ -110,3 +127,38 @@ pub fn compute_damage(old: &Option<Arc<ComputedValues>>, new: &ComputedValues) -
 
     damage
 }
+
+pub trait LayoutDamageComputation {
+    fn find_non_abspos_damaged_things(self);
+    fn compute_layout_damage(self);
+}
+
+impl<'a> LayoutDamageComputation for &'a mut Flow+'a {
+    fn find_non_abspos_damaged_things(self) {
+        let positioning = self.positioning();
+        let self_base = flow::mut_base(self);
+        for kid in self_base.children.iter_mut() {
+            kid.find_non_abspos_damaged_things();
+        }
+    }
+    fn compute_layout_damage(self) {
+        let positioning = self.positioning();
+        let self_base = flow::mut_base(self);
+        for kid in self_base.children.iter_mut() {
+            let child_positioning = kid.positioning();
+            /*println!("abspos={} before damage={}",
+                     positioning == position::absolute,
+                     self_base.restyle_damage);*/
+            flow::mut_base(kid).restyle_damage
+                               .insert(self_base.restyle_damage
+                                                .damage_for_child(child_positioning));
+            kid.compute_layout_damage();
+            self_base.restyle_damage.insert(flow::base(kid).restyle_damage
+                                                           .damage_for_parent(child_positioning));
+            /*println!("abspos={} after damage={}",
+                     positioning == position::absolute,
+                     self_base.restyle_damage);*/
+        }
+    }
+}
+

@@ -79,10 +79,7 @@ impl<'ln> NodeUtil for ThreadSafeLayoutNode<'ln> {
     /// This is a simple bitfield and fine to copy by value.
     fn get_restyle_damage(self) -> RestyleDamage {
         let layout_data_ref = self.borrow_layout_data();
-        layout_data_ref
-            .as_ref().unwrap()
-            .data
-            .restyle_damage
+        layout_data_ref.as_ref().unwrap().data.restyle_damage
     }
 
     /// Set the restyle damage field.

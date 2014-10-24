@@ -134,7 +134,7 @@ impl<'a> PreorderDomTraversal for RecalcStyleForNode<'a> {
         // Just needs to be wrapped in an option for `match_node`.
         let some_bf = Some(bf);
 
-        if node.is_dirty() || node.has_dirty_siblings() {
+        if node.is_dirty() {
             // Remove existing CSS styles from changed nodes, to force
             // non-incremental reflow.
             if node.has_changed() {
@@ -214,8 +214,10 @@ impl<'a> PostorderDomTraversal for ConstructFlows<'a> {
                 }
             }
 
-            if node.has_dirty_descendants() {
+            if node.is_dirty() {
                 tnode.set_restyle_damage(RestyleDamage::all());
+            }
+            if node.has_dirty_descendants() {
                 let mut flow_constructor = FlowConstructor::new(self.layout_context);
                 flow_constructor.process(&tnode);
                 debug!("Constructed flow for {:x}: {:x}", tnode.debug_id(), tnode.flow_debug_id());

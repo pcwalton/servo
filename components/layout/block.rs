@@ -611,7 +611,7 @@ impl BlockFlow {
     /// This determines the algorithm used to calculate inline-size, block-size, and the
     /// relevant margins for this Block.
     pub fn block_type(&self) -> BlockType {
-        if self.is_absolutely_positioned() {
+        if self.base.flags.is_absolutely_positioned() {
             if self.is_replaced_content() {
                 AbsoluteReplacedType
             } else {
@@ -687,7 +687,7 @@ impl BlockFlow {
     /// reference the CB.
     #[inline]
     pub fn containing_block_size(&mut self, viewport_size: Size2D<Au>) -> LogicalSize<Au> {
-        assert!(self.is_absolutely_positioned());
+        debug_assert!(self.base.flags.is_absolutely_positioned());
         if self.is_fixed() {
             // Initial containing block is the CB for the root
             LogicalSize::from_physical(self.base.writing_mode, viewport_size)
@@ -814,7 +814,8 @@ impl BlockFlow {
 
         // Absolute positioning establishes a block formatting context. Don't propagate floats
         // in or out. (But do propagate them between kids.)
-        if self.is_absolutely_positioned() || margins_may_collapse != MarginsMayCollapse {
+        if self.base.flags.is_absolutely_positioned() ||
+                margins_may_collapse != MarginsMayCollapse {
             self.base.floats = Floats::new(self.fragment.style.writing_mode);
         }
 
@@ -828,7 +829,7 @@ impl BlockFlow {
 
         let can_collapse_block_start_margin_with_kids =
             margins_may_collapse == MarginsMayCollapse &&
-            !self.is_absolutely_positioned() &&
+            !self.base.flags.is_absolutely_positioned() &&
             self.fragment.border_padding.block_start == Au(0);
         margin_collapse_info.initialize_block_start_margin(
             &self.fragment,
@@ -838,7 +839,7 @@ impl BlockFlow {
         let mut floats = self.base.floats.clone();
         let mut layers_needed_for_descendants = false;
         for kid in self.base.child_iter() {
-            if kid.is_absolutely_positioned() {
+            if flow::base(kid).flags.is_absolutely_positioned() {
                 // Assume that the *hypothetical box* for an absolute flow starts immediately after
                 // the block-end border edge of the previous flow.
                 flow::mut_base(kid).position.start.b = cur_b;
@@ -934,7 +935,7 @@ impl BlockFlow {
         // Add in our block-end margin and compute our collapsible margins.
         let can_collapse_block_end_margin_with_kids =
             margins_may_collapse == MarginsMayCollapse &&
-            !self.is_absolutely_positioned() &&
+            !self.base.flags.is_absolutely_positioned() &&
             self.fragment.border_padding.block_end == Au(0);
         let (collapsible_margins, delta) =
             margin_collapse_info.finish_and_compute_collapsible_margins(
@@ -956,13 +957,13 @@ impl BlockFlow {
         }
 
         if is_root || self.formatting_context_type() != NonformattingContext ||
-                self.is_absolutely_positioned() {
+                self.base.flags.is_absolutely_positioned() {
             // The content block-size includes all the floats per CSS 2.1 § 10.6.7. The easiest way
             // to handle this is to just treat this as clearance.
             block_size = block_size + floats.clearance(ClearBoth);
         }
 
-        if self.is_absolutely_positioned() {
+        if self.base.flags.is_absolutely_positioned() {
             // Fixed position layers get layers.
             if self.is_fixed() {
                 self.base.flags.set_needs_layer(true)
@@ -1441,7 +1442,7 @@ impl Flow for BlockFlow {
         let mut left_float_width = Au(0);
         let mut right_float_width = Au(0);
         for kid in self.base.child_iter() {
-            let is_absolutely_positioned = kid.is_absolutely_positioned();
+            let is_absolutely_positioned = flow::base(kid).flags.is_absolutely_positioned();
             let float_kind = kid.float_kind();
             let child_base = flow::mut_base(kid);
             if !is_absolutely_positioned && !fixed_width {
@@ -1615,7 +1616,7 @@ impl Flow for BlockFlow {
             self.base.clip_rect = MAX_RECT;
         }
 
-        if self.is_absolutely_positioned() {
+        if self.base.flags.is_absolutely_positioned() {
             let position_start = self.base.position.start.to_physical(
                 self.base.writing_mode, container_size);
             self.base.absolute_position_info.absolute_containing_block_position =
@@ -1662,7 +1663,7 @@ impl Flow for BlockFlow {
         // Process children.
         let writing_mode = self.base.writing_mode;
         for kid in self.base.child_iter() {
-            if !kid.is_absolutely_positioned() {
+            if !flow::base(kid).flags.is_absolutely_positioned() {
                 let kid_base = flow::mut_base(kid);
                 kid_base.abs_position =
                     this_position +
@@ -1688,7 +1689,7 @@ impl Flow for BlockFlow {
     ///
     /// Currently happens only for absolutely positioned flows.
     fn is_store_overflow_delayed(&mut self) -> bool {
-        self.is_absolutely_positioned()
+        self.base.flags.is_absolutely_positioned()
     }
 
     fn is_root(&self) -> bool {
@@ -1729,7 +1730,7 @@ impl Flow for BlockFlow {
     }
 
     fn update_late_computed_inline_position_if_necessary(&mut self, inline_position: Au) {
-        if self.is_absolutely_positioned() &&
+        if self.base.flags.is_absolutely_positioned() &&
                 self.fragment.style().logical_position().inline_start == LPA_Auto &&
                 self.fragment.style().logical_position().inline_end == LPA_Auto {
             self.base.position.start.i = inline_position
@@ -1737,7 +1738,7 @@ impl Flow for BlockFlow {
     }
 
     fn update_late_computed_block_position_if_necessary(&mut self, block_position: Au) {
-        if self.is_absolutely_positioned() &&
+        if self.base.flags.is_absolutely_positioned() &&
                 self.fragment.style().logical_position().block_start == LPA_Auto &&
                 self.fragment.style().logical_position().block_end == LPA_Auto {
             self.base.position.start.b = block_position
@@ -1749,7 +1750,7 @@ impl Flow for BlockFlow {
             // TODO(#2009, pcwalton): This is a pseudo-stacking context. We need to merge `z-index:
             // auto` kids into the parent stacking context, when that is supported.
             self.build_display_list_for_floating_block(layout_context)
-        } else if self.is_absolutely_positioned() {
+        } else if self.base.flags.is_absolutely_positioned() {
             self.build_display_list_for_absolutely_positioned_block(layout_context)
         } else {
             self.build_display_list_for_block(layout_context, BlockLevel)

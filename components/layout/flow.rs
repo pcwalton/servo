@@ -260,15 +260,11 @@ pub trait Flow: fmt::Show + ToString + Sync {
     }
 
     fn is_positioned(&self) -> bool {
-        self.is_relatively_positioned() || self.is_absolutely_positioned()
+        self.is_relatively_positioned() || base(self).flags.is_absolutely_positioned()
     }
 
     fn is_relatively_positioned(&self) -> bool {
         self.positioning() == position::relative
-    }
-
-    fn is_absolutely_positioned(&self) -> bool {
-        self.positioning() == position::absolute || self.is_fixed()
     }
 
     /// Return true if this is the root of an absolute flow tree.
@@ -433,8 +429,6 @@ pub trait MutableFlowUtils {
     /// So, kids have their flow origin already set. In the case of absolute flow kids, they have
     /// their hypothetical box position already set.
     fn collect_static_block_offsets_from_children(self);
-
-    fn propagate_restyle_damage(self);
 }
 
 pub trait MutableOwnedFlowUtils {
@@ -485,48 +479,61 @@ pub trait PostorderFlowTraversal {
 
 /// Flags used in flows, tightly packed to save space.
 #[deriving(Clone, Encodable)]
-pub struct FlowFlags(pub u8);
+pub struct FlowFlags(pub u16);
 
 /// The bitmask of flags that represent the `has_left_floated_descendants` and
 /// `has_right_floated_descendants` fields.
 ///
 /// NB: If you update this field, you must update the bitfields below.
-static HAS_FLOATED_DESCENDANTS_BITMASK: u8 = 0b0000_0011;
+static HAS_FLOATED_DESCENDANTS_BITMASK: u16 = 0b0000_0000_0011;
 
 // Whether this flow has descendants that float left in the same block formatting context.
-bitfield!(FlowFlags, has_left_floated_descendants, set_has_left_floated_descendants, 0b0000_0001)
+bitfield!(FlowFlags,
+          has_left_floated_descendants,
+          set_has_left_floated_descendants,
+          0b0000_0000_0001)
 
 // Whether this flow has descendants that float right in the same block formatting context.
-bitfield!(FlowFlags, has_right_floated_descendants, set_has_right_floated_descendants, 0b0000_0010)
+bitfield!(FlowFlags,
+          has_right_floated_descendants,
+          set_has_right_floated_descendants,
+          0b0000_0000_0010)
 
 // Whether this flow is impacted by floats to the left in the same block formatting context (i.e.
 // its block-size depends on some prior flows with `float: left`).
-bitfield!(FlowFlags, impacted_by_left_floats, set_impacted_by_left_floats, 0b0000_0100)
+bitfield!(FlowFlags,
+          impacted_by_left_floats,
+          set_impacted_by_left_floats,
+          0b0000_0000_0100)
 
 // Whether this flow is impacted by floats to the right in the same block formatting context (i.e.
 // its block-size depends on some prior flows with `float: right`).
-bitfield!(FlowFlags, impacted_by_right_floats, set_impacted_by_right_floats, 0b0000_1000)
+bitfield!(FlowFlags, impacted_by_right_floats, set_impacted_by_right_floats, 0b0000_0000_1000)
 
 /// The bitmask of flags that represent the text alignment field.
 ///
 /// NB: If you update this field, you must update the bitfields below.
-static TEXT_ALIGN_BITMASK: u8 = 0b0011_0000;
+static TEXT_ALIGN_BITMASK: u16 = 0b0000_0011_0000;
 
 /// The number of bits we must shift off to handle the text alignment field.
 ///
 /// NB: If you update this field, you must update the bitfields below.
-static TEXT_ALIGN_SHIFT: u8 = 4;
+static TEXT_ALIGN_SHIFT: u16 = 4;
 
 // Whether this flow contains a flow that has its own layer within the same absolute containing
 // block.
 bitfield!(FlowFlags,
           layers_needed_for_descendants,
           set_layers_needed_for_descendants,
-          0b0100_0000)
+          0b0000_0100_0000)
 
 // Whether this flow must have its own layer. Even if this flag is not set, it might get its own
 // layer if it's deemed to be likely to overlap flows with their own layer.
-bitfield!(FlowFlags, needs_layer, set_needs_layer, 0b1000_0000)
+bitfield!(FlowFlags, needs_layer, set_needs_layer, 0b0000_1000_0000)
+
+// Whether this flow is absolutely positioned. This is checked all over layout, so a virtual call
+// is too expensive.
+bitfield!(FlowFlags, is_absolutely_positioned, set_is_absolutely_positioned, 0b0001_0000_0000)
 
 impl FlowFlags {
     /// Creates a new set of flow flags.
@@ -545,13 +552,13 @@ impl FlowFlags {
     #[inline]
     pub fn text_align(self) -> text_align::T {
         let FlowFlags(ff) = self;
-        FromPrimitive::from_u8((ff & TEXT_ALIGN_BITMASK) >> TEXT_ALIGN_SHIFT as uint).unwrap()
+        FromPrimitive::from_u16((ff & TEXT_ALIGN_BITMASK) >> TEXT_ALIGN_SHIFT as uint).unwrap()
     }
 
     #[inline]
     pub fn set_text_align(&mut self, value: text_align::T) {
         let FlowFlags(ff) = *self;
-        *self = FlowFlags((ff & !TEXT_ALIGN_BITMASK) | ((value as u8) << TEXT_ALIGN_SHIFT as uint))
+        *self = FlowFlags((ff & !TEXT_ALIGN_BITMASK) | ((value as u16) << TEXT_ALIGN_SHIFT as uint))
     }
 
     #[inline]
@@ -765,10 +772,11 @@ pub struct BaseFlow {
     /// Any layers that we're bubbling up, in a linked list.
     pub layers: DList<RenderLayer>,
 
+    /// The writing mode for this flow.
+    pub writing_mode: WritingMode,
+
     /// Various flags for flows, tightly packed to save space.
     pub flags: FlowFlags,
-
-    pub writing_mode: WritingMode,
 }
 
 impl fmt::Show for BaseFlow {
@@ -814,6 +822,13 @@ impl BaseFlow {
     #[inline]
     pub fn new(node: ThreadSafeLayoutNode) -> BaseFlow {
         let writing_mode = node.style().writing_mode;
+
+        let mut flags = FlowFlags::new();
+        match node.style().get_box().position {
+            position::absolute | position::fixed => flags.set_is_absolutely_positioned(true),
+            _ => {}
+        };
+
         BaseFlow {
             ref_count: AtomicUint::new(1),
 
@@ -841,7 +856,7 @@ impl BaseFlow {
             absolute_position_info: AbsolutePositionInfo::new(writing_mode),
             clip_rect: Rect(Zero::zero(), Size2D(Au(0), Au(0))),
 
-            flags: FlowFlags::new(),
+            flags: flags,
             writing_mode: writing_mode,
         }
     }
@@ -1125,7 +1140,7 @@ impl<'a> MutableFlowUtils for &'a mut Flow + 'a {
             let mut gives_absolute_offsets = true;
             if kid.is_block_like() {
                 let kid_block = kid.as_block();
-                if kid_block.is_fixed() || kid_block.is_absolutely_positioned() {
+                if kid_block.is_fixed() || kid_block.base.flags.is_absolutely_positioned() {
                     // It won't contribute any offsets for descendants because it would be the
                     // containing block for them.
                     gives_absolute_offsets = false;
@@ -1154,58 +1169,6 @@ impl<'a> MutableFlowUtils for &'a mut Flow + 'a {
             }
         }
         mut_base(self).abs_descendants.static_block_offsets = absolute_descendant_block_offsets
-    }
-
-    fn propagate_restyle_damage(self) {
-        struct DirtyFloats {
-            left:  bool,
-            right: bool,
-        }
-
-        fn doit(flow: &mut Flow, down: RestyleDamage, dirty_floats: &mut DirtyFloats) -> RestyleDamage {
-            match flow.float_clearance() {
-                clear::none  => {}
-                clear::left  => {
-                    (*dirty_floats).left  = false;
-                }
-                clear::right => {
-                    (*dirty_floats).right = false;
-                }
-                clear::both  => {
-                    (*dirty_floats).left  = false;
-                    (*dirty_floats).right = false;
-                }
-            }
-
-            match flow.float_kind() {
-                float::none  => {}
-                float::left  => {
-                    (*dirty_floats).left  = true;
-                }
-                float::right => {
-                    (*dirty_floats).right = true;
-                }
-            }
-
-            let mut my_damage = mut_base(flow).restyle_damage;
-            my_damage.insert(down);
-
-            if (*dirty_floats).left || (*dirty_floats).right {
-                my_damage = RestyleDamage::all();
-            }
-
-            let down_damage = my_damage.propagate_down();
-
-            for kid in child_iter(flow) {
-                my_damage.insert(doit(kid, down_damage, dirty_floats));
-            }
-
-            mut_base(flow).restyle_damage = my_damage;
-
-            my_damage.propagate_up()
-        }
-
-        doit(self, RestyleDamage::empty(), &mut DirtyFloats { left: false, right: false });
     }
 }
 

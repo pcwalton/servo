@@ -898,7 +898,7 @@ impl InlineFlow {
             damage.insert(frag.restyle_damage());
         }
 
-        self.base.restyle_damage = damage;
+        //self.base.restyle_damage = damage;
     }
 }
 

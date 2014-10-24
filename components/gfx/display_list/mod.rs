@@ -19,11 +19,12 @@ use render_context::RenderContext;
 use text::glyph::CharIndex;
 use text::TextRun;
 
-use collections::dlist::DList;
-use collections::dlist;
+use collections::Deque;
+use collections::dlist::{mod, DList};
 use geom::{Point2D, Rect, SideOffsets2D, Size2D, Matrix2D};
 use libc::uintptr_t;
 use servo_net::image::base::Image;
+use servo_util::dlist as servo_dlist;
 use servo_util::geometry::Au;
 use servo_util::opts;
 use servo_util::range::Range;
@@ -185,7 +186,7 @@ impl StackingContext {
     /// Creates a stacking context from a display list.
     fn new(list: DisplayList) -> StackingContext {
         let DisplayList {
-            list: list
+            list: mut list
         } = list;
 
         let mut stacking_context = StackingContext {
@@ -196,30 +197,29 @@ impl StackingContext {
             positioned_descendants: Vec::new(),
         };
 
-        for item in list.into_iter() {
-            match item.base().level {
+        while !list.is_empty() {
+            let head = DisplayList::from_list(servo_dlist::split(&mut list));
+            match head.front().unwrap().base().level {
                 BackgroundAndBordersStackingLevel => {
-                    stacking_context.background_and_borders.push(item)
+                    stacking_context.background_and_borders.push_all_move(head)
                 }
                 BlockBackgroundsAndBordersStackingLevel => {
-                    stacking_context.block_backgrounds_and_borders.push(item)
+                    stacking_context.block_backgrounds_and_borders.push_all_move(head)
                 }
-                FloatStackingLevel => stacking_context.floats.push(item),
-                ContentStackingLevel => stacking_context.content.push(item),
+                FloatStackingLevel => stacking_context.floats.push_all_move(head),
+                ContentStackingLevel => stacking_context.content.push_all_move(head),
                 PositionedDescendantStackingLevel(z_index) => {
                     match stacking_context.positioned_descendants
                                           .iter_mut()
                                           .find(|& &(z, _)| z_index == z) {
                         Some(&(_, ref mut my_list)) => {
-                            my_list.push(item);
+                            my_list.push_all_move(head);
                             continue
                         }
                         None => {}
                     }
 
-                    let mut new_list = DisplayList::new();
-                    new_list.list.push(item);
-                    stacking_context.positioned_descendants.push((z_index, new_list))
+                    stacking_context.positioned_descendants.push((z_index, head))
                 }
             }
         }
@@ -258,21 +258,43 @@ impl<'a> Iterator<&'a DisplayList> for DisplayListIterator<'a> {
 
 impl DisplayList {
     /// Creates a new display list.
+    #[inline]
     pub fn new() -> DisplayList {
         DisplayList {
             list: DList::new(),
         }
     }
 
+    /// Creates a new display list from the given list of display items.
+    fn from_list(list: DList<DisplayItem>) -> DisplayList {
+        DisplayList {
+            list: list,
+        }
+    }
+
     /// Appends the given item to the display list.
+    #[inline]
     pub fn push(&mut self, item: DisplayItem) {
         self.list.push(item)
     }
 
+    /// Appends the given list of display items to this display list.
+    #[inline]
+    fn append(&mut self, other: DList<DisplayItem>) {
+        self.list.append(other)
+    }
+
     /// Appends the given display list to this display list, consuming the other display list in
     /// the process.
+    #[inline]
     pub fn push_all_move(&mut self, other: DisplayList) {
-        self.list.append(other.list)
+        self.append(other.list)
+    }
+
+    /// Returns the first display item in this list.
+    #[inline]
+    fn front(&self) -> Option<&DisplayItem> {
+        self.list.front()
     }
 
     pub fn debug(&self) {
@@ -297,6 +319,7 @@ impl DisplayList {
     }
 
     /// Returns a preorder iterator over the given display list.
+    #[inline]
     pub fn iter<'a>(&'a self) -> DisplayItemIterator<'a> {
         ParentDisplayItemIterator(self.list.iter())
     }

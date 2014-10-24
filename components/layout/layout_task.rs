@@ -8,9 +8,9 @@
 use css::node_style::StyledNode;
 use construct::FlowConstructionResult;
 use context::SharedLayoutContext;
-use flow::{Flow, ImmutableFlowUtils, MutableFlowUtils, MutableOwnedFlowUtils};
-use flow;
+use flow::{mod, Flow, ImmutableFlowUtils, MutableFlowUtils, MutableOwnedFlowUtils};
 use flow_ref::FlowRef;
+use incremental::LayoutDamageComputation;
 use layout_debug;
 use parallel::UnsafeFlow;
 use parallel;
@@ -200,7 +200,7 @@ impl LayoutTaskFactory for LayoutTask {
                 layout.start();
             }
             shutdown_chan.send(());
-        }, FailureMsg(failure_msg), con_chan, false);
+        }, FailureMsg(failure_msg), con_chan, true);
     }
 }
 
@@ -568,8 +568,6 @@ impl LayoutTask {
         debug!("layout: parsed Node tree");
         debug!("{:?}", node.dump());
 
-        println!("starting reflow");
-
         let mut rw_data = self.lock_rw_data(possibly_locked_rw_data);
 
         {
@@ -627,7 +625,8 @@ impl LayoutTask {
                 Some((&data.url, data.iframe, self.first_reflow.get())),
                 self.time_profiler_chan.clone(),
                 || {
-            layout_root.propagate_restyle_damage();
+            //layout_root.find_non_abspos_damaged_things();
+            layout_root.compute_layout_damage();
         });
 
         // Verification of the flow tree, which ensures that all nodes were either marked as leaves
@@ -637,6 +636,17 @@ impl LayoutTask {
 
         if opts::get().trace_layout {
             layout_debug::begin_trace(layout_root.clone());
+        }
+
+        if data.goal == ReflowForDisplay {
+            // Tell script that we're done.
+            //
+            // FIXME(pcwalton): This should probably be *one* channel, but we can't fix this
+            // without either select or a filtered recv() that only looks for messages of a given
+            // type.
+            data.script_join_chan.send(());
+            let ScriptControlChan(ref chan) = data.script_chan;
+            chan.send(ReflowCompleteMsg(self.id, data.id));
         }
 
         // Perform the primary layout passes over the flow tree to compute the locations of all
@@ -770,9 +780,11 @@ impl LayoutTask {
         //
         // FIXME(pcwalton): This should probably be *one* channel, but we can't fix this without
         // either select or a filtered recv() that only looks for messages of a given type.
-        data.script_join_chan.send(());
-        let ScriptControlChan(ref chan) = data.script_chan;
-        chan.send(ReflowCompleteMsg(self.id, data.id));
+        if data.goal != ReflowForDisplay {
+            data.script_join_chan.send(());
+            let ScriptControlChan(ref chan) = data.script_chan;
+            chan.send(ReflowCompleteMsg(self.id, data.id));
+        }
     }
 
     unsafe fn dirty_all_nodes(node: &mut LayoutNode) {
