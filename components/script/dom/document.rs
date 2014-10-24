@@ -47,7 +47,7 @@ use dom::htmltitleelement::HTMLTitleElement;
 use dom::location::Location;
 use dom::mouseevent::MouseEvent;
 use dom::node::{Node, ElementNodeTypeId, DocumentNodeTypeId, NodeHelpers};
-use dom::node::{CloneChildren, DoNotCloneChildren, NodeDamage};
+use dom::node::{CloneChildren, DoNotCloneChildren, NodeDamage, OtherNodeDamage};
 use dom::nodelist::NodeList;
 use dom::text::Text;
 use dom::processinginstruction::ProcessingInstruction;
@@ -171,13 +171,13 @@ pub trait DocumentHelpers<'a> {
     fn set_last_modified(self, value: DOMString);
     fn set_encoding_name(self, name: DOMString);
     fn content_changed(self, node: JSRef<Node>, damage: NodeDamage);
-    fn reflow(self);
     fn wait_until_safe_to_modify_dom(self);
     fn unregister_named_element(self, to_unregister: JSRef<Element>, id: Atom);
     fn register_named_element(self, element: JSRef<Element>, id: Atom);
     fn load_anchor_href(self, href: DOMString);
     fn find_fragment_node(self, fragid: DOMString) -> Option<Temporary<Element>>;
     fn set_ready_state(self, state: DocumentReadyState);
+    fn dirty_all_nodes(self);
 }
 
 impl<'a> DocumentHelpers<'a> for JSRef<'a, Document> {
@@ -218,11 +218,6 @@ impl<'a> DocumentHelpers<'a> for JSRef<'a, Document> {
 
     fn content_changed(self, node: JSRef<Node>, damage: NodeDamage) {
         node.dirty(damage);
-        self.reflow();
-    }
-
-    fn reflow(self) {
-        self.window.root().reflow();
     }
 
     fn wait_until_safe_to_modify_dom(self) {
@@ -320,6 +315,13 @@ impl<'a> DocumentHelpers<'a> for JSRef<'a, Document> {
                                DoesNotBubble, NotCancelable).root();
         let target: JSRef<EventTarget> = EventTargetCast::from_ref(self);
         let _ = target.DispatchEvent(*event);
+    }
+
+    fn dirty_all_nodes(self) {
+        let root: JSRef<Node> = NodeCast::from_ref(self);
+        for node in root.traverse_preorder() {
+            node.dirty(OtherNodeDamage)
+        }
     }
 }
 

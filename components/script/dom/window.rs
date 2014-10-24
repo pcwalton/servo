@@ -311,7 +311,6 @@ impl Reflectable for Window {
 }
 
 pub trait WindowHelpers {
-    fn reflow(self);
     fn flush_layout(self, goal: ReflowGoal);
     fn wait_until_safe_to_modify_dom(self);
     fn init_browser_context(self, doc: JSRef<Document>);
@@ -319,7 +318,6 @@ pub trait WindowHelpers {
     fn handle_fire_timer(self, timer_id: TimerId, cx: *mut JSContext);
     fn evaluate_js_with_result(self, code: &str) -> JSVal;
 }
-
 
 impl<'a> WindowHelpers for JSRef<'a, Window> {
     fn evaluate_js_with_result(self, code: &str) -> JSVal {
@@ -341,18 +339,12 @@ impl<'a> WindowHelpers for JSRef<'a, Window> {
         })
     }
 
-    fn reflow(self) {
-        self.page().damage();
-    }
-
     fn flush_layout(self, goal: ReflowGoal) {
         self.page().flush_layout(goal);
     }
 
     fn wait_until_safe_to_modify_dom(self) {
-        // FIXME: This disables concurrent layout while we are modifying the DOM, since
-        //        our current architecture is entirely unsafe in the presence of races.
-        self.page().join_layout();
+        // FIXME(pcwalton): Remove. It is always safe to modify the DOM as long as script is awake.
     }
 
     fn init_browser_context(self, doc: JSRef<Document>) {

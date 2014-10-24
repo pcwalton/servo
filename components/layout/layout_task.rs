@@ -564,6 +564,7 @@ impl LayoutTask {
             mem::transmute(&mut node)
         };
 
+        println!("reflow!");
         debug!("layout: received layout request for: {:s}", data.url.serialize());
         debug!("layout: parsed Node tree");
         debug!("{:?}", node.dump());
@@ -636,17 +637,6 @@ impl LayoutTask {
 
         if opts::get().trace_layout {
             layout_debug::begin_trace(layout_root.clone());
-        }
-
-        if data.goal == ReflowForDisplay {
-            // Tell script that we're done.
-            //
-            // FIXME(pcwalton): This should probably be *one* channel, but we can't fix this
-            // without either select or a filtered recv() that only looks for messages of a given
-            // type.
-            data.script_join_chan.send(());
-            let ScriptControlChan(ref chan) = data.script_chan;
-            chan.send(ReflowCompleteMsg(self.id, data.id));
         }
 
         // Perform the primary layout passes over the flow tree to compute the locations of all
@@ -744,6 +734,7 @@ impl LayoutTask {
                     scroll_policy: Scrollable,
                 };
 
+                println!("display list constructed, {} entries", display_list.list.len());
                 rw_data.display_list = Some(display_list.clone());
 
                 // TODO(pcwalton): Eventually, when we have incremental reflow, this will have to
@@ -780,11 +771,9 @@ impl LayoutTask {
         //
         // FIXME(pcwalton): This should probably be *one* channel, but we can't fix this without
         // either select or a filtered recv() that only looks for messages of a given type.
-        if data.goal != ReflowForDisplay {
-            data.script_join_chan.send(());
-            let ScriptControlChan(ref chan) = data.script_chan;
-            chan.send(ReflowCompleteMsg(self.id, data.id));
-        }
+        data.script_join_chan.send(());
+        let ScriptControlChan(ref chan) = data.script_chan;
+        chan.send(ReflowCompleteMsg(self.id, data.id));
     }
 
     unsafe fn dirty_all_nodes(node: &mut LayoutNode) {

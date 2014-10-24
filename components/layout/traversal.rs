@@ -134,13 +134,15 @@ impl<'a> PreorderDomTraversal for RecalcStyleForNode<'a> {
         // Just needs to be wrapped in an option for `match_node`.
         let some_bf = Some(bf);
 
-        if node.is_dirty() {
+        let nonincremental_layout = true;
+        if nonincremental_layout || node.is_dirty() {
             // Remove existing CSS styles from nodes whose content has changed (e.g. attribute
             // removed or text changed), to force non-incremental reflow.
             if node.has_changed() {
                 let node = ThreadSafeLayoutNode::new(&node);
                 node.unstyle();
             }
+            ThreadSafeLayoutNode::new(&node).set_restyle_damage(RestyleDamage::all());
 
             debug!("Styling {}", node.debug_id());
 
@@ -168,11 +170,13 @@ impl<'a> PreorderDomTraversal for RecalcStyleForNode<'a> {
                     }
 
                     // Perform the CSS cascade.
+                    ThreadSafeLayoutNode::new(&node).set_restyle_damage(RestyleDamage::all());
                     unsafe {
                         node.cascade_node(parent_opt,
                                           &applicable_declarations,
                                           self.layout_context.applicable_declarations_cache());
                     }
+                    ThreadSafeLayoutNode::new(&node).set_restyle_damage(RestyleDamage::all());
 
                     // Add ourselves to the LRU cache.
                     if shareable {
@@ -294,7 +298,8 @@ impl<'a> PostorderFlowTraversal for BubbleISizes<'a> {
 
     #[inline]
     fn should_process(&self, flow: &mut Flow) -> bool {
-        flow::base(flow).restyle_damage.contains(BubbleISizes)
+        //flow::base(flow).restyle_damage.contains(BubbleISizes)
+        true
     }
 }
 
@@ -311,7 +316,8 @@ impl<'a> PreorderFlowTraversal for AssignISizes<'a> {
 
     #[inline]
     fn should_process(&self, flow: &mut Flow) -> bool {
-        flow::base(flow).restyle_damage.contains(Reflow)
+        //flow::base(flow).restyle_damage.contains(Reflow)
+        true
     }
 }
 
@@ -342,7 +348,8 @@ impl<'a> PostorderFlowTraversal for AssignBSizesAndStoreOverflow<'a> {
 
     #[inline]
     fn should_process(&self, flow: &mut Flow) -> bool {
-        flow::base(flow).restyle_damage.contains(Reflow)
+        //flow::base(flow).restyle_damage.contains(Reflow)
+        true
     }
 }
 

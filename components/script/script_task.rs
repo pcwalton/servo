@@ -441,7 +441,9 @@ impl ScriptTask {
                     port3.add();
                 }
             }
+            println!("script task going to sleep");
             let ret = sel.wait();
+            println!("script task wakes up");
             if ret == port1.id() {
                 FromScript(self.port.recv())
             } else if ret == port2.id() {
@@ -469,11 +471,8 @@ impl ScriptTask {
                     let page = page.find(id).expect("resize sent to nonexistent pipeline");
                     page.resize_event.set(Some(size));
                 }
-                FromConstellation(SendEventMsg(id, ReflowEvent(node_addresses))) => {
-                    let mut page = self.page.borrow_mut();
-                    let inner_page = page.find(id).expect("Reflow sent to nonexistent pipeline");
-                    let mut pending = inner_page.pending_dirty_nodes.borrow_mut();
-                    pending.push_all_move(node_addresses);
+                FromConstellation(SendEventMsg(id, ReflowEvent(_node_addresses))) => {
+                    // FIXME(pcwalton): Dirty all nodes?
                     needs_reflow.insert(id);
                 }
                 _ => {
@@ -652,11 +651,6 @@ impl ScriptTask {
         }
 
         self.compositor.set_ready_state(pipeline_id, FinishedLoading);
-
-        if page.pending_reflows.get() > 0 {
-            page.pending_reflows.set(0);
-            self.force_reflow(&*page);
-        }
     }
 
     /// Handles a navigate forward or backward message.
@@ -888,17 +882,7 @@ impl ScriptTask {
     }
 
     fn force_reflow(&self, page: &Page) {
-        {
-            let mut pending = page.pending_dirty_nodes.borrow_mut();
-            let js_runtime = self.js_runtime.deref().ptr;
-
-            for untrusted_node in pending.into_iter() {
-                let node = node::from_untrusted_node_address(js_runtime, untrusted_node).root();
-                node.dirty(OtherNodeDamage);
-            }
-        }
-
-        page.damage();
+        page.dirty_all_nodes();
         page.reflow(ReflowForDisplay, self.control_chan.clone(), &*self.compositor);
     }
 
@@ -957,17 +941,13 @@ impl ScriptTask {
                 let page = get_page(&*self.page.borrow(), pipeline_id);
                 let frame = page.frame();
                 if frame.is_some() {
-                    let in_layout = page.layout_join_port.borrow().is_some();
-                    if in_layout {
-                        page.pending_reflows.set(page.pending_reflows.get() + 1);
-                    } else {
-                        self.force_reflow(&*page);
-                    }
+                    self.force_reflow(&*page);
                 }
             }
 
             ClickEvent(_button, point) => {
                 debug!("ClickEvent: clicked at {:?}", point);
+                println!("click event");
                 let page = get_page(&*self.page.borrow(), pipeline_id);
                 match page.hit_test(&point) {
                     Some(node_address) => {
@@ -985,7 +965,7 @@ impl ScriptTask {
 
                         match maybe_node {
                             Some(node) => {
-                                debug!("clicked on {:s}", node.debug_str());
+                                println!("clicked on {:s}", node.debug_str());
                                 // Prevent click event if form control element is disabled.
                                 if node.click_event_filter_by_disabled_state() { return; }
                                 match *page.frame() {
@@ -1003,11 +983,15 @@ impl ScriptTask {
                                     None => {}
                                 }
                             }
-                            None => {}
+                            None => {
+                                println!("didn't click on anything");
+                            }
                         }
                     }
 
-                    None => {}
+                    None => {
+                        println!("no hit test!");
+                    }
                 }
             }
             MouseDownEvent(..) => {}
@@ -1101,8 +1085,6 @@ impl ScriptTask {
 /// Shuts down layout for the given page tree.
 fn shut_down_layout(page_tree: &Rc<Page>, rt: *mut JSRuntime) {
     for page in page_tree.iter() {
-        page.join_layout();
-
         // Tell the layout task to begin shutting down, and wait until it
         // processed this message.
         let (response_chan, response_port) = channel();
