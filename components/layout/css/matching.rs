@@ -2,9 +2,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-// High-level interface to CSS selector matching.
+//! High-level interface to CSS selector matching.
 
 use css::node_style::StyledNode;
+use incremental::{mod, RestyleDamage};
 use util::{LayoutDataAccess, LayoutDataWrapper};
 use wrapper::{LayoutElement, LayoutNode};
 use wrapper::{TLayoutNode};
@@ -266,8 +267,8 @@ pub enum StyleSharingResult<'ln> {
     /// is shareable at all.
     CannotShare(bool),
     /// The node's style can be shared. The integer specifies the index in the LRU cache that was
-    /// hit.
-    StyleWasShared(uint),
+    /// hit and the damage that was done.
+    StyleWasShared(uint, RestyleDamage),
 }
 
 pub trait MatchMethods {
@@ -312,7 +313,8 @@ trait PrivateMatchMethods {
                                    style: &mut Option<Arc<ComputedValues>>,
                                    applicable_declarations_cache: &mut
                                    ApplicableDeclarationsCache,
-                                   shareable: bool);
+                                   shareable: bool)
+                                   -> RestyleDamage;
 
     fn share_style_with_candidate_if_possible(&self,
                                               parent_node: Option<LayoutNode>,
@@ -327,7 +329,8 @@ impl<'ln> PrivateMatchMethods for LayoutNode<'ln> {
                                    style: &mut Option<Arc<ComputedValues>>,
                                    applicable_declarations_cache: &mut
                                    ApplicableDeclarationsCache,
-                                   shareable: bool) {
+                                   shareable: bool)
+                                   -> RestyleDamage {
         let this_style;
         let cacheable;
         match parent_style {
@@ -359,7 +362,10 @@ impl<'ln> PrivateMatchMethods for LayoutNode<'ln> {
             applicable_declarations_cache.insert(applicable_declarations, this_style.clone());
         }
 
+        // Calculate style difference and write.
+        let damage = incremental::compute_damage(style, &*this_style);
         *style = Some(this_style);
+        damage
     }
 
 
@@ -453,8 +459,9 @@ impl<'ln> MatchMethods for LayoutNode<'ln> {
                     let mut layout_data_ref = self.mutate_layout_data();
                     let shared_data = &mut layout_data_ref.as_mut().unwrap().shared_data;
                     let style = &mut shared_data.style;
+                    let damage = incremental::compute_damage(style, &*shared_style);
                     *style = Some(shared_style);
-                    return StyleWasShared(i)
+                    return StyleWasShared(i, damage)
                 }
                 None => {}
             }
@@ -543,19 +550,20 @@ impl<'ln> MatchMethods for LayoutNode<'ln> {
                         layout_data.shared_data.style = Some(cloned_parent_style);
                     }
                     _ => {
-                        self.cascade_node_pseudo_element(
+                        let mut damage = self.cascade_node_pseudo_element(
                             parent_style,
                             applicable_declarations.normal.as_slice(),
                             &mut layout_data.shared_data.style,
                             applicable_declarations_cache,
                             applicable_declarations.normal_shareable);
                         if applicable_declarations.before.len() > 0 {
-                               self.cascade_node_pseudo_element(
-                                   Some(layout_data.shared_data.style.as_ref().unwrap()),
-                                   applicable_declarations.before.as_slice(),
-                                   &mut layout_data.data.before_style,
-                                   applicable_declarations_cache,
-                                   false);
+                           self.cascade_node_pseudo_element(
+                               Some(layout_data.shared_data.style.as_ref().unwrap()),
+                               applicable_declarations.before.as_slice(),
+                               &mut layout_data.data.before_style,
+                               applicable_declarations_cache,
+                               false);
+                           damage = RestyleDamage::all();
                         }
                         if applicable_declarations.after.len() > 0 {
                                self.cascade_node_pseudo_element(
@@ -564,7 +572,9 @@ impl<'ln> MatchMethods for LayoutNode<'ln> {
                                    &mut layout_data.data.after_style,
                                    applicable_declarations_cache,
                                    false);
+                           damage = RestyleDamage::all();
                         }
+                        layout_data.data.restyle_damage = damage;
                     }
                 }
             }

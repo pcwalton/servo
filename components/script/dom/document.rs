@@ -47,7 +47,7 @@ use dom::htmltitleelement::HTMLTitleElement;
 use dom::location::Location;
 use dom::mouseevent::MouseEvent;
 use dom::node::{Node, ElementNodeTypeId, DocumentNodeTypeId, NodeHelpers};
-use dom::node::{CloneChildren, DoNotCloneChildren};
+use dom::node::{CloneChildren, DoNotCloneChildren, NodeDamage};
 use dom::nodelist::NodeList;
 use dom::text::Text;
 use dom::processinginstruction::ProcessingInstruction;
@@ -170,7 +170,7 @@ pub trait DocumentHelpers<'a> {
     fn set_quirks_mode(self, mode: QuirksMode);
     fn set_last_modified(self, value: DOMString);
     fn set_encoding_name(self, name: DOMString);
-    fn content_changed(self, node: JSRef<Node>);
+    fn content_changed(self, node: JSRef<Node>, damage: NodeDamage);
     fn reflow(self);
     fn wait_until_safe_to_modify_dom(self);
     fn unregister_named_element(self, to_unregister: JSRef<Element>, id: Atom);
@@ -216,8 +216,8 @@ impl<'a> DocumentHelpers<'a> for JSRef<'a, Document> {
         *self.encoding_name.borrow_mut() = name;
     }
 
-    fn content_changed(self, node: JSRef<Node>) {
-        node.dirty();
+    fn content_changed(self, node: JSRef<Node>, damage: NodeDamage) {
+        node.dirty(damage);
         self.reflow();
     }
 

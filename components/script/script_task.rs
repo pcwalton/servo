@@ -25,7 +25,7 @@ use dom::event::{Event, Bubbles, DoesNotBubble, Cancelable, NotCancelable};
 use dom::uievent::UIEvent;
 use dom::eventtarget::{EventTarget, EventTargetHelpers};
 use dom::node;
-use dom::node::{ElementNodeTypeId, Node, NodeHelpers};
+use dom::node::{ElementNodeTypeId, Node, NodeHelpers, OtherNodeDamage};
 use dom::window::{Window, WindowHelpers};
 use dom::worker::{Worker, TrustedWorkerAddress};
 use dom::xmlhttprequest::{TrustedXHRAddress, XMLHttpRequest, XHRProgress};
@@ -817,7 +817,7 @@ impl ScriptTask {
         {
             let document_js_ref = (&*document).clone();
             let document_as_node = NodeCast::from_ref(document_js_ref);
-            document.content_changed(document_as_node);
+            document.content_changed(document_as_node, OtherNodeDamage);
         }
         window.flush_layout(ReflowForDisplay);
 
@@ -894,7 +894,7 @@ impl ScriptTask {
 
             for untrusted_node in pending.into_iter() {
                 let node = node::from_untrusted_node_address(js_runtime, untrusted_node).root();
-                node.dirty();
+                node.dirty(OtherNodeDamage);
             }
         }
 

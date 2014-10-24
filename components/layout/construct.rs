@@ -27,7 +27,7 @@ use fragment::{InlineAbsoluteHypotheticalFragmentInfo, InlineBlockFragment};
 use fragment::{InlineBlockFragmentInfo, InputFragment, SpecificFragmentInfo, TableCellFragment};
 use fragment::{TableColumnFragment, TableColumnFragmentInfo, TableFragment, TableRowFragment};
 use fragment::{TableWrapperFragment, UnscannedTextFragment, UnscannedTextFragmentInfo};
-use incremental::RestyleDamage;
+use incremental::{ReconstructFlow, RestyleDamage};
 use inline::InlineFlow;
 use parallel;
 use table_wrapper::TableWrapperFlow;
@@ -80,11 +80,11 @@ pub enum ConstructionResult {
 
 impl ConstructionResult {
     pub fn swap_out(&mut self) -> ConstructionResult {
-        if opts::get().nonincremental_layout {
+        //if opts::get().nonincremental_layout {
             return mem::replace(self, NoConstructionResult)
-        }
+        //}
 
-        (*self).clone()
+        //(*self).clone()
     }
 
     pub fn debug_id(&self) -> uint {
@@ -943,6 +943,28 @@ impl<'a> FlowConstructor<'a> {
 
         FlowConstructionResult(flow, Descendants::new())
     }
+
+    /// Attempts to perform incremental repair to account for recent changes to this node. This
+    /// can fail and return false, indicating that flows will need to be reconstructed.
+    ///
+    /// FIXME(pcwalton): This will not work right when nodes are deleted. Fix that by adding a
+    /// flag on nodes saying that a kid was deleted since the last layout.
+    /// TODO(pcwalton): Add some more fast paths, like toggling `display: none`, adding block kids
+    /// to block kids with no {ib} splits, adding out-of-flow kids, etc.
+    pub fn repair_if_possible(&mut self, node: &ThreadSafeLayoutNode) -> bool {
+        // We can skip reconstructing the flow if we don't have to reconstruct and none of our kids
+        // did either.
+        /*if node.restyle_damage().contains(ReconstructFlow) {
+            return false
+        }
+        for kid in node.children() {
+            if kid.restyle_damage().contains(ReconstructFlow) {
+                return false
+            }
+        }
+        true*/
+        false
+    }
 }
 
 impl<'a> PostorderNodeMutTraversal for FlowConstructor<'a> {
@@ -1091,6 +1113,7 @@ impl<'a> PostorderNodeMutTraversal for FlowConstructor<'a> {
 
         true
     }
+
 }
 
 /// A utility trait with some useful methods for node queries.

@@ -135,8 +135,8 @@ impl<'a> PreorderDomTraversal for RecalcStyleForNode<'a> {
         let some_bf = Some(bf);
 
         if node.is_dirty() {
-            // Remove existing CSS styles from changed nodes, to force
-            // non-incremental reflow.
+            // Remove existing CSS styles from nodes whose content has changed (e.g. attribute
+            // removed or text changed), to force non-incremental reflow.
             if node.has_changed() {
                 let node = ThreadSafeLayoutNode::new(&node);
                 node.unstyle();
@@ -163,7 +163,9 @@ impl<'a> PreorderDomTraversal for RecalcStyleForNode<'a> {
                                         &some_bf,
                                         &mut applicable_declarations,
                                         &mut shareable);
-                   }
+                    } else {
+                        ThreadSafeLayoutNode::new(&node).set_restyle_damage(RestyleDamage::all())
+                    }
 
                     // Perform the CSS cascade.
                     unsafe {
@@ -177,7 +179,10 @@ impl<'a> PreorderDomTraversal for RecalcStyleForNode<'a> {
                         style_sharing_candidate_cache.insert_if_possible(&node);
                     }
                 }
-                StyleWasShared(index) => style_sharing_candidate_cache.touch(index),
+                StyleWasShared(index, damage) => {
+                    style_sharing_candidate_cache.touch(index);
+                    ThreadSafeLayoutNode::new(&node).set_restyle_damage(damage);
+                }
             }
         }
 
@@ -208,19 +213,16 @@ impl<'a> PostorderDomTraversal for ConstructFlows<'a> {
             let tnode = ThreadSafeLayoutNode::new(&node);
 
             // Always re-construct if incremental layout is turned off.
-            if opts::get().nonincremental_layout {
-                unsafe {
-                    node.set_dirty_descendants(true);
-                }
-            }
-
-            if node.is_dirty() {
-                tnode.set_restyle_damage(RestyleDamage::all());
-            }
-            if node.has_dirty_descendants() {
+            //let nonincremental_layout = opts::get().nonincremental_layout;
+            let nonincremental_layout = true;
+            if nonincremental_layout || node.has_dirty_descendants() {
                 let mut flow_constructor = FlowConstructor::new(self.layout_context);
-                flow_constructor.process(&tnode);
-                debug!("Constructed flow for {:x}: {:x}", tnode.debug_id(), tnode.flow_debug_id());
+                if nonincremental_layout || !flow_constructor.repair_if_possible(&tnode) {
+                    flow_constructor.process(&tnode);
+                    debug!("Constructed flow for {:x}: {:x}",
+                           tnode.debug_id(),
+                           tnode.flow_debug_id());
+                }
             }
 
             // Reset the layout damage in this node. It's been propagated to the

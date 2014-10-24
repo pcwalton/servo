@@ -32,6 +32,7 @@
 
 use context::SharedLayoutContext;
 use css::node_style::StyledNode;
+use incremental::RestyleDamage;
 use util::{LayoutDataAccess, LayoutDataWrapper, PrivateLayoutData, OpaqueNodeMethods};
 
 use gfx::display_list::OpaqueNode;
@@ -870,6 +871,22 @@ impl<'ln> ThreadSafeLayoutNode<'ln> {
             }
         }
     }
+
+    /// Get the description of how to account for recent style changes.
+    /// This is a simple bitfield and fine to copy by value.
+    pub fn restyle_damage(self) -> RestyleDamage {
+        let layout_data_ref = self.borrow_layout_data();
+        layout_data_ref.as_ref().unwrap().data.restyle_damage
+    }
+
+    /// Set the restyle damage field.
+    pub fn set_restyle_damage(self, damage: RestyleDamage) {
+        let mut layout_data_ref = self.mutate_layout_data();
+        match &mut *layout_data_ref {
+            &Some(ref mut layout_data) => layout_data.data.restyle_damage = damage,
+            _ => fail!("no layout data for this node"),
+        }
+    }
 }
 
 pub struct ThreadSafeLayoutNodeChildrenIterator<'a> {
@@ -982,3 +999,6 @@ pub trait PostorderDomTraversal {
     /// The operation to perform. Return true to continue or false to stop.
     fn process(&self, node: LayoutNode);
 }
+
+
+

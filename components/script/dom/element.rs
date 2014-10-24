@@ -29,7 +29,7 @@ use dom::htmlinputelement::{HTMLInputElement, LayoutHTMLInputElementHelpers};
 use dom::htmlserializer::serialize;
 use dom::htmltablecellelement::{HTMLTableCellElement, HTMLTableCellElementHelpers};
 use dom::node::{ElementNodeTypeId, Node, NodeHelpers, NodeIterator, document_from_node};
-use dom::node::{window_from_node, LayoutNodeHelpers};
+use dom::node::{window_from_node, LayoutNodeHelpers, NodeStyleDamaged};
 use dom::nodelist::NodeList;
 use dom::virtualmethods::{VirtualMethods, vtable_for};
 use devtools_traits::AttrInfo;
@@ -535,7 +535,7 @@ impl<'a> AttributeHandlers for JSRef<'a, Element> {
         let node: JSRef<Node> = NodeCast::from_ref(self);
         if node.is_in_doc() {
             let document = node.owner_doc().root();
-            document.content_changed(node);
+            document.content_changed(node, NodeStyleDamaged);
         }
     }
 
@@ -543,7 +543,7 @@ impl<'a> AttributeHandlers for JSRef<'a, Element> {
         let node: JSRef<Node> = NodeCast::from_ref(self);
         if node.is_in_doc() {
             let document = node.owner_doc().root();
-            document.content_changed(node);
+            document.content_changed(node, NodeStyleDamaged);
         }
     }
 

@@ -7,6 +7,7 @@
 use geom::{Size2D, Point2D, SideOffsets2D, Rect};
 use std::cmp::{min, max};
 use std::fmt::{Show, Formatter, FormatError};
+use std::mem;
 use std::num::Zero;
 
 bitflags!(
@@ -22,29 +23,39 @@ bitflags!(
 impl WritingMode {
     #[inline]
     pub fn is_vertical(&self) -> bool {
-        self.intersects(FlagVertical)
+        intersects(self, FlagVertical)
     }
 
     /// Asuming .is_vertical(), does the block direction go left to right?
     #[inline]
     pub fn is_vertical_lr(&self) -> bool {
-        self.intersects(FlagVerticalLR)
+        intersects(self, FlagVerticalLR)
     }
 
     /// Asuming .is_vertical(), does the inline direction go top to bottom?
     #[inline]
     pub fn is_inline_tb(&self) -> bool {
-        !(self.intersects(FlagSidewaysLeft) ^ self.intersects(FlagRTL))
+        !(intersects(self, FlagSidewaysLeft) ^ intersects(self, FlagRTL))
     }
 
     #[inline]
     pub fn is_bidi_ltr(&self) -> bool {
-        !self.intersects(FlagRTL)
+        !intersects(self, FlagRTL)
     }
 
     #[inline]
     pub fn is_sideways_left(&self) -> bool {
-        self.intersects(FlagSidewaysLeft)
+        intersects(self, FlagSidewaysLeft)
+    }
+}
+
+/// FIXME(pcwalton): Replace with the `intersects` method after a Rust upgrade.
+#[inline(always)]
+fn intersects(this: &WritingMode, flag: WritingMode) -> bool {
+    unsafe {
+        let this: u8 = mem::transmute(*this);
+        let flag: u8 = mem::transmute(flag);
+        (this & flag) != 0
     }
 }
 
@@ -57,7 +68,7 @@ impl Show for WritingMode {
             } else {
                 try!(write!(formatter, " RL"));
             }
-            if self.intersects(FlagSidewaysLeft) {
+            if intersects(self, FlagSidewaysLeft) {
                 try!(write!(formatter, " SidewaysL"));
             }
         } else {

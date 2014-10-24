@@ -284,7 +284,7 @@ impl<'a> PrivateNodeHelpers for JSRef<'a, Node> {
         let parent = self.parent_node().root();
         parent.map(|parent| vtable_for(&*parent).child_inserted(self));
 
-        document.content_changed(self);
+        document.content_changed(self, OtherNodeDamage);
     }
 
     // http://dom.spec.whatwg.org/#node-is-removed
@@ -296,7 +296,7 @@ impl<'a> PrivateNodeHelpers for JSRef<'a, Node> {
             vtable_for(&node).unbind_from_tree(parent_in_doc);
         }
 
-        document.content_changed(self);
+        document.content_changed(self, OtherNodeDamage);
     }
 
     //
@@ -436,7 +436,7 @@ pub trait NodeHelpers<'a> {
     /// Marks the given node as `IsDirty`, its siblings as `IsDirty` (to deal
     /// with sibling selectors), its ancestors as `HasDirtyDescendants`, and its
     /// descendants as `IsDirty`.
-    fn dirty(self);
+    fn dirty(self, damage: NodeDamage);
 
     fn dump(self);
     fn dump_indent(self, indent: uint);
@@ -618,9 +618,11 @@ impl<'a> NodeHelpers<'a> for JSRef<'a, Node> {
         self.set_flag(HasDirtyDescendants, state)
     }
 
-    fn dirty(self) {
+    fn dirty(self, damage: NodeDamage) {
         // 1. Dirty self.
-        self.set_has_changed(true);
+        if damage != NodeStyleDamaged {
+            self.set_has_changed(true);
+        }
 
         // 2. Dirty descendants.
         fn dirty_subtree(node: JSRef<Node>) {
@@ -1799,7 +1801,7 @@ impl<'a> NodeMethods for JSRef<'a, Node> {
 
                 // Notify the document that the content of this node is different
                 let document = self.owner_doc().root();
-                document.content_changed(self);
+                document.content_changed(self, OtherNodeDamage);
             }
             DoctypeNodeTypeId |
             DocumentNodeTypeId => {}
@@ -2337,3 +2339,13 @@ impl<'a> DisabledStateHelpers for JSRef<'a, Node> {
         self.set_enabled_state(!has_disabled_attrib);
     }
 }
+
+/// A summary of the changes that happened to a node.
+#[deriving(Clone, PartialEq)]
+pub enum NodeDamage {
+    /// The node's `style` attribute changed.
+    NodeStyleDamaged,
+    /// Other parts of a node changed; attributes, text content, etc.
+    OtherNodeDamage,
+}
+

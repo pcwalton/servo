@@ -6,7 +6,7 @@ use flow::{mod, Flow};
 
 use std::fmt;
 use std::sync::Arc;
-use style::computed_values::{position};
+use style::computed_values::position;
 use style::ComputedValues;
 
 bitflags! {
@@ -24,7 +24,10 @@ bitflags! {
         #[doc = "Recompute actual inline_sizes and block_sizes."]
         #[doc = "Propagates up the flow tree because the computation is"]
         #[doc = "top-down."]
-        static Reflow = 0x04
+        static Reflow = 0x04,
+
+        #[doc = "Reconstruct the flow."]
+        static ReconstructFlow = 0x08
     }
 }
 
@@ -59,9 +62,10 @@ impl fmt::Show for RestyleDamage {
         let mut first_elem = true;
 
         let to_iter =
-            [ (Repaint,      "Repaint")
-            , (BubbleISizes, "BubbleISizes")
-            , (Reflow,       "Reflow")
+            [ (Repaint,         "Repaint")
+            , (BubbleISizes,    "BubbleISizes")
+            , (Reflow,          "Reflow")
+            , (ReconstructFlow, "ReconstructFlow")
             ];
 
         for &(damage, damage_str) in to_iter.iter() {
@@ -95,7 +99,7 @@ macro_rules! add_if_not_equal(
 pub fn compute_damage(old: &Option<Arc<ComputedValues>>, new: &ComputedValues) -> RestyleDamage {
     let old: &ComputedValues =
         match old.as_ref() {
-            None => return Repaint | BubbleISizes | Reflow,
+            None => return RestyleDamage::all(),
             Some(cv) => &**cv,
         };
 
@@ -119,9 +123,14 @@ pub fn compute_damage(old: &Option<Arc<ComputedValues>>, new: &ComputedValues) -
           get_margin.margin_bottom, get_margin.margin_left,
           get_padding.padding_top, get_padding.padding_right,
           get_padding.padding_bottom, get_padding.padding_left,
-          get_box.position, get_box.width, get_box.height, get_box.float, get_box.display,
+          get_box.width, get_box.height,
+          get_positionoffsets.top, get_positionoffsets.left,
+          get_positionoffsets.right, get_positionoffsets.bottom,
           get_font.font_family, get_font.font_size, get_font.font_style, get_font.font_weight,
           get_inheritedtext.text_align, get_text.text_decoration, get_inheritedbox.line_height ]);
+
+    add_if_not_equal!(old, new, damage, [ Repaint, BubbleISizes, Reflow, ReconstructFlow ],
+                      [ get_box.float, get_box.display, get_box.position ]);
 
     // FIXME: test somehow that we checked every CSS property
 
