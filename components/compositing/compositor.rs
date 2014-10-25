@@ -22,7 +22,7 @@ use windowing::PinchZoomWindowEvent;
 use azure::azure_hl;
 use std::cmp;
 use std::num::Zero;
-use std::time::duration::Duration;
+//use std::time::duration::Duration;
 use geom::point::{Point2D, TypedPoint2D};
 use geom::rect::{Rect, TypedRect};
 use geom::size::TypedSize2D;
@@ -45,7 +45,7 @@ use servo_util::memory::MemoryProfilerChan;
 use servo_util::opts;
 use servo_util::time::{profile, TimeProfilerChan};
 use servo_util::{memory, time};
-use std::io::timer::sleep;
+//use std::io::timer::sleep;
 use std::collections::hashmap::HashMap;
 use std::path::Path;
 use std::rc::Rc;
@@ -219,7 +219,7 @@ impl<Window: WindowMethods> IOCompositor<Window> {
                 self.composite();
             }
 
-            sleep(Duration::milliseconds(10));
+            //sleep(Duration::milliseconds(10));
 
             // If a pinch-zoom happened recently, ask for tiles at the new resolution
             if self.zoom_action && precise_time_s() - self.zoom_time > 0.3 {
@@ -601,6 +601,7 @@ impl<Window: WindowMethods> IOCompositor<Window> {
             Some(ref layer) => {
                 assert!(CompositorData::add_buffers(layer.clone(), new_layer_buffer_set, epoch));
                 self.recomposite = true;
+                println!("*** compositor going to recomposite");
             }
             None => {
                 // FIXME: This may potentially be triggered by a race condition where a
@@ -910,6 +911,8 @@ impl<Window: WindowMethods> IOCompositor<Window> {
     }
 
     fn composite(&mut self) {
+        println!("*** compositor compositing!");
+        //sleep(Duration::milliseconds(50));
         let output_image = opts::get().output_file.is_some() &&
                             self.is_ready_to_render_image_output();
 

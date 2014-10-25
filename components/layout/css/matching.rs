@@ -575,6 +575,9 @@ impl<'ln> MatchMethods for LayoutNode<'ln> {
                            damage = RestyleDamage::all();
                         }
                         layout_data.data.restyle_damage = damage;
+                        if damage != RestyleDamage::empty() {
+                            //println!("matching resulted in damage {}", damage);
+                        }
                     }
                 }
             }

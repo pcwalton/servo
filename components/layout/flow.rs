@@ -62,6 +62,8 @@ use std::raw;
 use std::sync::atomics::{AtomicUint, SeqCst};
 use std::slice::MutItems;
 use style::computed_values::{clear, float, position, text_align};
+use style::ComputedValues;
+use sync::Arc;
 
 /// Virtual methods that make up a float context.
 ///
@@ -290,6 +292,9 @@ pub trait Flow: fmt::Show + ToString + Sync {
     fn generated_containing_block_rect(&self) -> LogicalRect<Au> {
         fail!("generated_containing_block_position not yet implemented for this flow")
     }
+
+    // FIXME(pcwalton): Shouldn't be a no-op by default
+    fn repair_style(&mut self, new_style: &Arc<ComputedValues>) {}
 
     /// Returns a layer ID for the given fragment.
     fn layer_id(&self, fragment_id: uint) -> LayerId {

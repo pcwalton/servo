@@ -26,7 +26,7 @@ use servo_msg::compositor_msg::{LayerMetadata, RenderListener, RenderingRenderSt
 use servo_msg::constellation_msg::{ConstellationChan, Failure, FailureMsg, PipelineId};
 use servo_msg::constellation_msg::{RendererReadyMsg};
 use servo_msg::platform::surface::NativeSurfaceAzureMethods;
-use servo_util::geometry;
+use servo_util::geometry::{mod, Au};
 use servo_util::opts;
 use servo_util::smallvec::{SmallVec, SmallVec1};
 use servo_util::task::spawn_named_with_send_on_failure;
@@ -35,6 +35,7 @@ use servo_util::time;
 use std::comm::{Receiver, Sender, channel};
 use std::fmt;
 use std::mem;
+use std::rand::Rng;
 use std::task::TaskBuilder;
 use sync::Arc;
 use font_cache_task::FontCacheTask;
@@ -108,20 +109,32 @@ pub struct RenderTask<C> {
     /// The native graphics context.
     native_graphics_context: Option<NativePaintingGraphicsContext>,
 
-    /// The layers to be rendered.
-    render_layers: SmallVec1<RenderLayer>,
+    /// The layers ready to be painted when the compositor asks for it.
+    front: SmallVec1<RenderLayer>,
 
-    /// Permission to send paint messages to the compositor
-    paint_permission: bool,
+    /// The layers that layout most recently sent to us.
+    back: SmallVec1<RenderLayer>,
 
-    /// A counter for epoch messages
-    epoch: Epoch,
+    /// The epoch associated with the front buffer.
+    front_epoch: Epoch,
 
     /// A data structure to store unused LayerBuffers
     buffer_map: BufferMap,
 
     /// Communication handles to each of the worker threads.
     worker_threads: Vec<WorkerThreadProxy>,
+
+    /// Various flags.
+    flags: PaintingTaskFlags,
+}
+
+bitflags! {
+    flags PaintingTaskFlags: u8 {
+        #[doc="Whether we have permission to send paint messages to the compositor."]
+        static PaintPermission = 0x01,
+        #[doc="Whether the front layers have been painted at least once."]
+        static FrontHasBeenPresented = 0x02,
+    }
 }
 
 // If we implement this as a function, we get borrowck errors from borrowing
@@ -173,15 +186,13 @@ impl<C> RenderTask<C> where C: RenderListener + Send {
                     compositor: compositor,
                     constellation_chan: constellation_chan,
                     time_profiler_chan: time_profiler_chan,
-
                     native_graphics_context: native_graphics_context,
-
-                    render_layers: SmallVec1::new(),
-
-                    paint_permission: false,
-                    epoch: Epoch(0),
+                    front: SmallVec1::new(),
+                    back: SmallVec1::new(),
+                    front_epoch: Epoch(0),
                     buffer_map: BufferMap::new(10000000),
                     worker_threads: worker_threads,
+                    flags: FrontHasBeenPresented,
                 };
 
                 render_task.start();
@@ -209,23 +220,22 @@ impl<C> RenderTask<C> where C: RenderListener + Send {
         loop {
             match self.port.recv() {
                 RenderInitMsg(render_layers) => {
-                    self.epoch.next();
-                    self.render_layers = render_layers;
+                    println!("received new back layers");
+                    self.back = render_layers;
 
-                    if !self.paint_permission {
+                    if !self.flags.contains(PaintPermission) {
                         debug!("render_task: render ready msg");
                         let ConstellationChan(ref mut c) = self.constellation_chan;
                         c.send(RendererReadyMsg(self.id));
                         continue;
                     }
 
-                    initialize_layers(&mut self.compositor,
-                                      self.id,
-                                      self.epoch,
-                                      self.render_layers.as_slice());
+                    self.present_back_if_necessary();
                 }
                 RenderMsg(requests) => {
-                    if !self.paint_permission {
+                    println!("got render msg");
+                    if !self.flags.contains(PaintPermission) {
+                        println!("no paint permission");
                         debug!("render_task: render ready msg");
                         let ConstellationChan(ref mut c) = self.constellation_chan;
                         c.send(RendererReadyMsg(self.id));
@@ -237,17 +247,22 @@ impl<C> RenderTask<C> where C: RenderListener + Send {
                     self.compositor.set_render_state(self.id, RenderingRenderState);
                     for RenderRequest { buffer_requests, scale, layer_id, epoch }
                           in requests.into_iter() {
-                        if self.epoch == epoch {
+                        if self.front_epoch == epoch {
                             self.render(&mut replies, buffer_requests, scale, layer_id);
                         } else {
-                            debug!("renderer epoch mismatch: {:?} != {:?}", self.epoch, epoch);
+                            println!("wrong epoch: mine={} theirs={}", self.front_epoch, epoch);
+                            debug!("renderer epoch mismatch: {} != {}", self.front_epoch, epoch);
                         }
                     }
 
                     self.compositor.set_render_state(self.id, IdleRenderState);
 
                     debug!("render_task: returning surfaces");
-                    self.compositor.paint(self.id, self.epoch, replies);
+                    println!("painting OK, sending back {} replies", replies.len());
+                    self.compositor.paint(self.id, self.front_epoch, replies);
+                    self.flags.insert(FrontHasBeenPresented);
+
+                    self.present_back_if_necessary();
                 }
                 UnusedBufferMsg(unused_buffers) => {
                     for buffer in unused_buffers.into_iter().rev() {
@@ -255,22 +270,20 @@ impl<C> RenderTask<C> where C: RenderListener + Send {
                     }
                 }
                 PaintPermissionGranted => {
-                    self.paint_permission = true;
+                    self.flags.insert(PaintPermission);
 
                     // Here we assume that the main layer—the layer responsible for the page size—
                     // is the first layer. This is a pretty fragile assumption. It will be fixed
                     // once we use the layers-based scrolling infrastructure for all scrolling.
-                    if self.render_layers.len() > 1 {
-                        self.epoch.next();
+                    if self.front.len() > 1 {
+                        self.front_epoch = self.front_epoch.next();
                         initialize_layers(&mut self.compositor,
                                           self.id,
-                                          self.epoch,
-                                          self.render_layers.as_slice());
+                                          self.front_epoch,
+                                          self.front.as_slice());
                     }
                 }
-                PaintPermissionRevoked => {
-                    self.paint_permission = false;
-                }
+                PaintPermissionRevoked => self.flags.remove(PaintPermission),
                 ExitMsg(response_ch) => {
                     debug!("render_task: exitmsg response send");
                     response_ch.map(|ch| ch.send(()));
@@ -278,6 +291,33 @@ impl<C> RenderTask<C> where C: RenderListener + Send {
                 }
             }
         }
+    }
+
+    fn present_back_if_necessary(&mut self) {
+        println!("trying to present back");
+        if self.back.len() == 0 {
+            println!("no back buffer");
+            return
+        }
+
+        if !self.flags.contains(FrontHasBeenPresented) {
+            // TODO(pcwalton): If the front layers haven't been presented yet, then there is the
+            // distinct possibility of layout sending us so many frames that we'll drop some. We
+            // may want to add some sort of backpressure to stop layout from doing that. As an
+            // extreme we could just make layout wait for all frames to be presented, but that may
+            // be suboptimal for performance. Figure out what the right policy is.
+            println!("front not presented yet");
+            return
+        }
+
+        // Move the back layers to the front.
+        self.front_epoch = self.front_epoch.next();
+        self.front = mem::replace(&mut self.back, SmallVec1::new());
+        self.flags.remove(FrontHasBeenPresented);
+
+        // Ask to present our new front layers.
+        println!("presenting back to front, new epoch={}", self.front_epoch);
+        initialize_layers(&mut self.compositor, self.id, self.front_epoch, self.front.as_slice());
     }
 
     /// Retrieves an appropriately-sized layer buffer from the cache to match the requirements of
@@ -323,7 +363,7 @@ impl<C> RenderTask<C> where C: RenderListener + Send {
         })
     }
 
-    /// Renders one layer and sends the tiles back to the layer.
+    /// Renders one layer and sends the tiles back to the compositor.
     fn render(&mut self,
               replies: &mut Vec<(LayerId, Box<LayerBufferSet>)>,
               mut tiles: Vec<BufferRequest>,
@@ -331,7 +371,7 @@ impl<C> RenderTask<C> where C: RenderListener + Send {
               layer_id: LayerId) {
         time::profile(time::PaintingCategory, None, self.time_profiler_chan.clone(), || {
             // Bail out if there is no appropriate render layer.
-            let render_layer = match self.render_layers.iter().find(|layer| layer.id == layer_id) {
+            let render_layer = match self.front.iter().find(|layer| layer.id == layer_id) {
                 Some(render_layer) => (*render_layer).clone(),
                 None => return,
             };
@@ -513,6 +553,14 @@ impl WorkerThread {
             profile(time::PaintingPerTileCategory, None, self.time_profiler_sender.clone(), || {
                 let mut clip_stack = Vec::new();
                 display_list.draw_into_context(&mut render_context, &matrix, &mut clip_stack);
+
+                let r: AzFloat = ::std::rand::task_rng().gen();
+                let g: AzFloat = ::std::rand::task_rng().gen();
+                let b: AzFloat = ::std::rand::task_rng().gen();
+                render_context.draw_solid_color(&Rect(Point2D(Au(0), Au(0)),
+                                                      Size2D(Au(99999999), Au(99999999))),
+                                                ::color::rgba(r % 1.0, g % 1.0, b % 1.0, 0.4));
+
                 render_context.draw_target.flush();
             });
         }

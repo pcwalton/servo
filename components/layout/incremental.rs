@@ -21,13 +21,24 @@ bitflags! {
         #[doc = "bottom-up."]
         static BubbleISizes = 0x02,
 
+        #[doc = "Recompute actual inline-sizes and block-sizes, only taking out-of-flow children \
+                 into account. \
+                 Propagates up the flow tree because the computation is top-down."]
+        static Reposition = 0x04,
+
         #[doc = "Recompute actual inline_sizes and block_sizes."]
         #[doc = "Propagates up the flow tree because the computation is"]
         #[doc = "top-down."]
-        static Reflow = 0x04,
+        static Reflow = 0x08,
 
         #[doc = "Reconstruct the flow."]
-        static ReconstructFlow = 0x08
+        static ReconstructFlow = 0x10
+    }
+}
+
+bitflags! {
+    flags SpecialRestyleDamage: u8 {
+        static ReflowEntireDocument = 0x01,
     }
 }
 
@@ -36,11 +47,8 @@ impl RestyleDamage {
     /// the *parent* of this flow should have.
     pub fn damage_for_parent(self, child_positioning: position::T) -> RestyleDamage {
         match child_positioning {
-            position::absolute => {
-                // FIXME(pcwalton): Also overflow computation...
-                self & Repaint
-            }
-            _ => self & Reflow,
+            position::absolute => self & (Repaint | Reflow | Reposition),
+            _ => self & (Repaint | Reflow | Reposition),
         }
     }
 
@@ -48,10 +56,10 @@ impl RestyleDamage {
     /// returns the damage that this flow should have.
     pub fn damage_for_child(self, child_positioning: position::T) -> RestyleDamage {
         match child_positioning {
-            position::absolute => RestyleDamage::empty(),
+            position::absolute => self & Repaint,
             _ => {
                 // TODO(pcwalton): Take floatedness into account.
-                self & Reflow
+                self & (Repaint | Reflow | Reposition)
             }
         }
     }
@@ -64,6 +72,7 @@ impl fmt::Show for RestyleDamage {
         let to_iter =
             [ (Repaint,         "Repaint")
             , (BubbleISizes,    "BubbleISizes")
+            , (Reposition,      "Reposition")
             , (Reflow,          "Reflow")
             , (ReconstructFlow, "ReconstructFlow")
             ];
@@ -111,25 +120,34 @@ pub fn compute_damage(old: &Option<Arc<ComputedValues>>, new: &ComputedValues) -
 
     // FIXME: We can short-circuit more of this.
 
-    add_if_not_equal!(old, new, damage, [ Repaint ],
-        [ get_color.color, get_background.background_color,
-          get_border.border_top_color, get_border.border_right_color,
-          get_border.border_bottom_color, get_border.border_left_color ]);
+    add_if_not_equal!(old, new, damage,
+                      [ Repaint ], [
+        get_color.color, get_background.background_color,
+        get_border.border_top_color, get_border.border_right_color,
+        get_border.border_bottom_color, get_border.border_left_color
+    ]);
 
-    add_if_not_equal!(old, new, damage, [ Repaint, BubbleISizes, Reflow ],
-        [ get_border.border_top_width, get_border.border_right_width,
-          get_border.border_bottom_width, get_border.border_left_width,
-          get_margin.margin_top, get_margin.margin_right,
-          get_margin.margin_bottom, get_margin.margin_left,
-          get_padding.padding_top, get_padding.padding_right,
-          get_padding.padding_bottom, get_padding.padding_left,
-          get_box.width, get_box.height,
-          get_positionoffsets.top, get_positionoffsets.left,
-          get_positionoffsets.right, get_positionoffsets.bottom,
-          get_font.font_family, get_font.font_size, get_font.font_style, get_font.font_weight,
-          get_inheritedtext.text_align, get_text.text_decoration, get_inheritedbox.line_height ]);
+    add_if_not_equal!(old, new, damage,
+                      [ Repaint, Reposition ], [
+        get_positionoffsets.top, get_positionoffsets.left,
+        get_positionoffsets.right, get_positionoffsets.bottom
+    ]);
 
-    add_if_not_equal!(old, new, damage, [ Repaint, BubbleISizes, Reflow, ReconstructFlow ],
+    add_if_not_equal!(old, new, damage,
+                      [ Repaint, BubbleISizes, Reposition, Reflow ], [
+        get_border.border_top_width, get_border.border_right_width,
+        get_border.border_bottom_width, get_border.border_left_width,
+        get_margin.margin_top, get_margin.margin_right,
+        get_margin.margin_bottom, get_margin.margin_left,
+        get_padding.padding_top, get_padding.padding_right,
+        get_padding.padding_bottom, get_padding.padding_left,
+        get_box.width, get_box.height,
+        get_font.font_family, get_font.font_size, get_font.font_style, get_font.font_weight,
+        get_inheritedtext.text_align, get_text.text_decoration, get_inheritedbox.line_height
+    ]);
+
+    add_if_not_equal!(old, new, damage,
+                      [ Repaint, BubbleISizes, Reposition, Reflow, ReconstructFlow ],
                       [ get_box.float, get_box.display, get_box.position ]);
 
     // FIXME: test somehow that we checked every CSS property
@@ -139,7 +157,8 @@ pub fn compute_damage(old: &Option<Arc<ComputedValues>>, new: &ComputedValues) -
 
 pub trait LayoutDamageComputation {
     fn find_non_abspos_damaged_things(self);
-    fn compute_layout_damage(self);
+    fn compute_layout_damage(self) -> SpecialRestyleDamage;
+    fn reflow_entire_document(self);
 }
 
 impl<'a> LayoutDamageComputation for &'a mut Flow+'a {
@@ -150,23 +169,50 @@ impl<'a> LayoutDamageComputation for &'a mut Flow+'a {
             kid.find_non_abspos_damaged_things();
         }
     }
-    fn compute_layout_damage(self) {
-        let positioning = self.positioning();
+
+    fn compute_layout_damage(self) -> SpecialRestyleDamage {
+        let mut special_damage = SpecialRestyleDamage::empty();
+
+        {
+            let positioning = self.positioning();
+            let self_base = flow::mut_base(self);
+            for kid in self_base.children.iter_mut() {
+                let child_positioning = kid.positioning();
+                /*println!("abspos={} before damage={}",
+                         positioning == position::absolute,
+                         self_base.restyle_damage);*/
+                flow::mut_base(kid).restyle_damage
+                                   .insert(self_base.restyle_damage
+                                                    .damage_for_child(child_positioning));
+                special_damage.insert(kid.compute_layout_damage());
+                self_base.restyle_damage
+                         .insert(flow::base(kid).restyle_damage
+                                                .damage_for_parent(child_positioning));
+                /*println!("abspos={} after damage={}",
+                         positioning == position::absolute,
+                         self_base.restyle_damage);*/
+            }
+
+            if self_base.restyle_damage != RestyleDamage::empty() &&
+                    self_base.restyle_damage != Repaint &&
+                    self_base.restyle_damage != (Repaint | BubbleISizes | Reposition | Reflow) {
+                println!("flow was damaged: {}", self_base.restyle_damage);
+            }
+        }
+
+        let self_base = flow::base(self);
+        //if self.is_float() && self_base.restyle_damage.intersects(Reposition | Reflow) {
+            special_damage.insert(ReflowEntireDocument);
+        //}
+
+        special_damage
+    }
+
+    fn reflow_entire_document(self) {
         let self_base = flow::mut_base(self);
+        self_base.restyle_damage.insert(Repaint | BubbleISizes | Reflow | Reposition);
         for kid in self_base.children.iter_mut() {
-            let child_positioning = kid.positioning();
-            /*println!("abspos={} before damage={}",
-                     positioning == position::absolute,
-                     self_base.restyle_damage);*/
-            flow::mut_base(kid).restyle_damage
-                               .insert(self_base.restyle_damage
-                                                .damage_for_child(child_positioning));
-            kid.compute_layout_damage();
-            self_base.restyle_damage.insert(flow::base(kid).restyle_damage
-                                                           .damage_for_parent(child_positioning));
-            /*println!("abspos={} after damage={}",
-                     positioning == position::absolute,
-                     self_base.restyle_damage);*/
+            kid.reflow_entire_document();
         }
     }
 }

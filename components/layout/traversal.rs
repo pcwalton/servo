@@ -11,7 +11,7 @@ use context::LayoutContext;
 use flow::{Flow, MutableFlowUtils};
 use flow::{PreorderFlowTraversal, PostorderFlowTraversal};
 use flow;
-use incremental::{RestyleDamage, BubbleISizes, Reflow};
+use incremental::{RestyleDamage, BubbleISizes, Reflow, Reposition};
 use wrapper::{layout_node_to_unsafe_layout_node, LayoutNode};
 use wrapper::{PostorderNodeMutTraversal, ThreadSafeLayoutNode, UnsafeLayoutNode};
 use wrapper::{PreorderDomTraversal, PostorderDomTraversal};
@@ -312,7 +312,7 @@ impl<'a> PreorderFlowTraversal for AssignISizes<'a> {
 
     #[inline]
     fn should_process(&self, flow: &mut Flow) -> bool {
-        flow::base(flow).restyle_damage.contains(Reflow)
+        flow::base(flow).restyle_damage.intersects(Reposition | Reflow)
     }
 }
 
@@ -327,23 +327,31 @@ pub struct AssignBSizesAndStoreOverflow<'a> {
 impl<'a> PostorderFlowTraversal for AssignBSizesAndStoreOverflow<'a> {
     #[inline]
     fn process(&self, flow: &mut Flow) {
-        if !flow::base(flow).flags.impacted_by_floats() {
-            flow.assign_block_size(self.layout_context);
-
-            // Skip store-overflow for absolutely positioned flows. That will be
-            // done in a separate traversal.
-
-            if !flow.is_store_overflow_delayed() {
-                flow.store_overflow(self.layout_context);
-            }
+        // Can't do anything with flows impacted by floats until we reach their inorder parent.
+        // NB: We must return without resetting the restyle bits for these, as we haven't actually
+        // reflowed anything!
+        if flow::base(flow).flags.impacted_by_floats() {
+            return
         }
 
-        flow::mut_base(flow).restyle_damage.remove(Reflow);
+        flow.assign_block_size(self.layout_context);
+
+        // Skip store-overflow for absolutely positioned flows. That will be
+        // done in a separate traversal.
+        if !flow.is_store_overflow_delayed() {
+            flow.store_overflow(self.layout_context);
+        }
+
+        flow::mut_base(flow).restyle_damage.remove(Reposition | Reflow);
     }
 
     #[inline]
     fn should_process(&self, flow: &mut Flow) -> bool {
-        flow::base(flow).restyle_damage.contains(Reflow)
+        let result = flow::base(flow).restyle_damage.intersects(Reposition | Reflow);
+        if result {
+            //println!("should assign block size!");
+        }
+        result
     }
 }
 

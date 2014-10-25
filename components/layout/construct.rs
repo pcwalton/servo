@@ -962,7 +962,18 @@ impl<'a> FlowConstructor<'a> {
                 return false
             }
         }
-        true
+
+        match node.swap_out_construction_result() {
+            NoConstructionResult => true,
+            FlowConstructionResult(mut flow, _) => {
+                // The node's flow is of the same type and has the same set of children and can
+                // therefore be repaired by simply propagating damage and style to the flow.
+                flow::mut_base(&mut *flow).restyle_damage.insert(node.restyle_damage());
+                flow.repair_style(node.style());
+                true
+            }
+            ConstructionItemConstructionResult(_) => false,
+        }
     }
 }
 

@@ -126,6 +126,7 @@ impl CompositorData {
                        epoch: Epoch)
                        -> bool {
         if layer.extra_data.borrow().epoch != epoch {
+            println!("*** epoch mismatch! ***");
             debug!("add_buffers: compositor epoch mismatch: {:?} != {:?}, id: {:?}",
                    layer.extra_data.borrow().epoch,
                    epoch,
