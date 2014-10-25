@@ -32,7 +32,7 @@ use floats::Floats;
 use flow_list::{FlowList, FlowListIterator, MutFlowListIterator};
 use flow_ref::FlowRef;
 use fragment::{Fragment, TableRowFragment, TableCellFragment};
-use incremental::{ReconstructFlow, RestyleDamage};
+use incremental::{ReconstructFlow, Reflow, Reposition, RestyleDamage};
 use inline::InlineFlow;
 use model::{CollapsibleMargins, IntrinsicISizes, MarginCollapseInfo};
 use parallel::FlowParallelInfo;
@@ -201,6 +201,7 @@ pub trait Flow: fmt::Show + ToString + Sync {
         let impacted = base(&*self).flags.impacted_by_floats();
         if impacted {
             self.assign_block_size(layout_context);
+            mut_base(&mut *self).restyle_damage.remove(Reposition | Reflow);
         }
         impacted
     }

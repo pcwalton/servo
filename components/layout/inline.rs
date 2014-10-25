@@ -1112,6 +1112,14 @@ impl Flow for InlineFlow {
                 line.bounds.size.block;
         } // End of `lines.each` loop.
 
+        // Assign block sizes for any inline-block float descendants.
+        for kid in self.base.child_iter() {
+            if flow::base(kid).flags.is_absolutely_positioned() || kid.is_float() {
+                continue
+            }
+            kid.assign_block_size_for_inorder_child_if_necessary(layout_context);
+        }
+
         self.base.position.size.block = match self.lines.as_slice().last() {
             Some(ref last_line) => last_line.bounds.start.b + last_line.bounds.size.block,
             None => Au(0),

@@ -1255,9 +1255,9 @@ impl BlockFlow {
         };
 
         for (i, kid) in self.base.child_iter().enumerate() {
-            if !flow::base(kid).restyle_damage.intersects(Reposition | Reflow) {
+            /*if !flow::base(kid).restyle_damage.intersects(Reposition | Reflow) {
                 continue
-            }
+            }*/
 
             {
                 let kid_base = flow::mut_base(kid);
@@ -1515,9 +1515,9 @@ impl Flow for BlockFlow {
     fn assign_inline_sizes(&mut self, layout_context: &LayoutContext) {
         let _scope = layout_debug_scope!("block::assign_inline_sizes {:x}", self.base.debug_id());
 
-        if !self.base.restyle_damage.contains(Reflow) {
+        /*if !self.base.restyle_damage.contains(Reflow) {
             return
-        }
+        }*/
         //println!("assigning inline sizes!");
 
         debug!("assign_inline_sizes({}): assigning inline_size for flow",
@@ -1588,6 +1588,7 @@ impl Flow for BlockFlow {
                                                             -> bool {
         if self.is_float() {
             self.place_float();
+            self.base.restyle_damage.remove(Reposition | Reflow);
             return true
         }
 
@@ -1599,8 +1600,8 @@ impl Flow for BlockFlow {
         if self.base.flags.impacted_by_floats() {
             if self.base.restyle_damage.intersects(Reposition | Reflow) {
                 self.assign_block_size(layout_context);
+                self.base.restyle_damage.remove(Reposition | Reflow);
             }
-            self.base.restyle_damage.remove(Reposition | Reflow);
             return true
         }
 

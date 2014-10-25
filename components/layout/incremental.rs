@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use flow::{mod, Flow};
+use flow::{mod, Flow, ImmutableFlowUtils};
 
 use std::fmt;
 use std::sync::Arc;
@@ -47,7 +47,7 @@ impl RestyleDamage {
     /// the *parent* of this flow should have.
     pub fn damage_for_parent(self, child_positioning: position::T) -> RestyleDamage {
         match child_positioning {
-            position::absolute => self & (Repaint | Reflow | Reposition),
+            position::absolute => self & (Repaint | Reposition),
             _ => self & (Repaint | Reflow | Reposition),
         }
     }
@@ -152,11 +152,16 @@ pub fn compute_damage(old: &Option<Arc<ComputedValues>>, new: &ComputedValues) -
 
     // FIXME: test somehow that we checked every CSS property
 
+    if damage.intersects(Repaint | Reflow) {
+        println!("found CSS damage!");
+    }
+
     damage
 }
 
 pub trait LayoutDamageComputation {
     fn find_non_abspos_damaged_things(self);
+    fn find_damaged_things(self);
     fn compute_layout_damage(self) -> SpecialRestyleDamage;
     fn reflow_entire_document(self);
 }
@@ -167,6 +172,19 @@ impl<'a> LayoutDamageComputation for &'a mut Flow+'a {
         let self_base = flow::mut_base(self);
         for kid in self_base.children.iter_mut() {
             kid.find_non_abspos_damaged_things();
+        }
+    }
+
+    fn find_damaged_things(self) {
+        let positioning = self.positioning();
+        if flow::mut_base(self).restyle_damage.intersects(Reflow | Reposition) {
+            println!("damage found -- impacted by floats? {}!",
+                     flow::base(self).flags.impacted_by_floats());
+            self.dump();
+        }
+        let self_base = flow::mut_base(self);
+        for kid in self_base.children.iter_mut() {
+            kid.find_damaged_things();
         }
     }
 
@@ -193,17 +211,17 @@ impl<'a> LayoutDamageComputation for &'a mut Flow+'a {
                          self_base.restyle_damage);*/
             }
 
-            if self_base.restyle_damage != RestyleDamage::empty() &&
+            /*if self_base.restyle_damage != RestyleDamage::empty() &&
                     self_base.restyle_damage != Repaint &&
                     self_base.restyle_damage != (Repaint | BubbleISizes | Reposition | Reflow) {
                 println!("flow was damaged: {}", self_base.restyle_damage);
-            }
+            }*/
         }
 
         let self_base = flow::base(self);
-        //if self.is_float() && self_base.restyle_damage.intersects(Reposition | Reflow) {
+        if self.is_float() && self_base.restyle_damage.intersects(Reposition | Reflow) {
             special_damage.insert(ReflowEntireDocument);
-        //}
+        }
 
         special_damage
     }
