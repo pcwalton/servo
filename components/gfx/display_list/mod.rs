@@ -29,7 +29,6 @@ use servo_util::geometry::Au;
 use servo_util::opts;
 use servo_util::range::Range;
 use std::fmt;
-use std::mem;
 use std::slice::Items;
 use style::computed_values::border_style;
 use sync::Arc;
@@ -194,22 +193,22 @@ impl StackingContext {
         };
 
         while !list.list.is_empty() {
-            let head = DisplayList::from_list(servo_dlist::split(&mut list.list));
+            let mut head = DisplayList::from_list(servo_dlist::split(&mut list.list));
             match head.front().unwrap().base().level {
                 BackgroundAndBordersStackingLevel => {
-                    stacking_context.background_and_borders.push_all_move(head)
+                    stacking_context.background_and_borders.append_from(&mut head)
                 }
                 BlockBackgroundsAndBordersStackingLevel => {
-                    stacking_context.block_backgrounds_and_borders.push_all_move(head)
+                    stacking_context.block_backgrounds_and_borders.append_from(&mut head)
                 }
-                FloatStackingLevel => stacking_context.floats.push_all_move(head),
-                ContentStackingLevel => stacking_context.content.push_all_move(head),
+                FloatStackingLevel => stacking_context.floats.append_from(&mut head),
+                ContentStackingLevel => stacking_context.content.append_from(&mut head),
                 PositionedDescendantStackingLevel(z_index) => {
                     match stacking_context.positioned_descendants
                                           .iter_mut()
                                           .find(|& &(z, _)| z_index == z) {
                         Some(&(_, ref mut my_list)) => {
-                            my_list.push_all_move(head);
+                            my_list.append_from(&mut head);
                             continue
                         }
                         None => {}
@@ -235,7 +234,6 @@ pub enum BackgroundAndBorderLevel {
 #[deriving(Clone, Show)]
 pub struct DisplayList {
     pub list: DList<DisplayItem>,
-    stacking_level: Option<StackingLevel>,
 }
 
 pub enum DisplayListIterator<'a> {
@@ -259,7 +257,6 @@ impl DisplayList {
     pub fn new() -> DisplayList {
         DisplayList {
             list: DList::new(),
-            stacking_level: None,
         }
     }
 
@@ -267,20 +264,12 @@ impl DisplayList {
     fn from_list(list: DList<DisplayItem>) -> DisplayList {
         DisplayList {
             list: list,
-            stacking_level: None,
         }
     }
 
     /// Appends the given item to the display list.
     #[inline]
     pub fn push(&mut self, item: DisplayItem) {
-        let item_stacking_level = item.base().level;
-        if self.list.len() == 0 {
-            self.stacking_level = Some(item_stacking_level)
-        } else if self.stacking_level != Some(item_stacking_level) {
-            self.stacking_level = None
-        }
-
         self.list.push(item);
     }
 
@@ -288,20 +277,6 @@ impl DisplayList {
     #[inline]
     pub fn append_from(&mut self, other: &mut DisplayList) {
         servo_dlist::append_from(&mut self.list, &mut other.list)
-    }
-
-    /// Appends the given display list to this display list, consuming the other display list in
-    /// the process.
-    #[inline]
-    pub fn push_all_move(&mut self, other: DisplayList) {
-        let DisplayList {
-            list: other_list,
-            stacking_level: other_stacking_level
-        } = other;
-        self.list.append(other_list);
-        if self.stacking_level != other_stacking_level {
-            self.stacking_level = None
-        }
     }
 
     /// Returns the first display item in this list.
@@ -341,25 +316,25 @@ impl DisplayList {
     /// This must be called before `draw_into_context()` is for correct results.
     pub fn flatten(&mut self, resulting_level: StackingLevel) {
         // Fast paths:
-        if self.list.len() == 0 || self.stacking_level == Some(resulting_level) {
+        if self.list.len() == 0 {
             return
         }
-        if self.stacking_level.is_some() {
+        if self.list.len() == 1 {
             self.set_stacking_level(resulting_level);
             return
         }
 
         let StackingContext {
-            background_and_borders,
-            block_backgrounds_and_borders,
-            floats,
-            content,
-            positioned_descendants: mut positioned_descendants
+            mut background_and_borders,
+            mut block_backgrounds_and_borders,
+            mut floats,
+            mut content,
+            mut positioned_descendants
         } = StackingContext::new(self);
         debug_assert!(self.list.is_empty());
 
         // Steps 1 and 2: Borders and background for the root.
-        self.push_all_move(background_and_borders);
+        self.append_from(&mut background_and_borders);
 
         // Sort positioned children according to z-index.
         positioned_descendants.sort_by(|&(z_index_a, _), &(z_index_b, _)| {
@@ -369,25 +344,25 @@ impl DisplayList {
         // Step 3: Positioned descendants with negative z-indices.
         for &(ref mut z_index, ref mut list) in positioned_descendants.iter_mut() {
             if *z_index < 0 {
-                self.push_all_move(mem::replace(list, DisplayList::new()))
+                self.append_from(list)
             }
         }
 
         // Step 4: Block backgrounds and borders.
-        self.push_all_move(block_backgrounds_and_borders);
+        self.append_from(&mut block_backgrounds_and_borders);
 
         // Step 5: Floats.
-        self.push_all_move(floats);
+        self.append_from(&mut floats);
 
         // TODO(pcwalton): Step 6: Inlines that generate stacking contexts.
 
         // Step 7: Content.
-        self.push_all_move(content);
+        self.append_from(&mut content);
 
         // Steps 8 and 9: Positioned descendants with nonnegative z-indices.
         for &(ref mut z_index, ref mut list) in positioned_descendants.iter_mut() {
             if *z_index >= 0 {
-                self.push_all_move(mem::replace(list, DisplayList::new()))
+                self.append_from(list)
             }
         }
 
@@ -401,7 +376,6 @@ impl DisplayList {
         for item in self.list.iter_mut() {
             item.mut_base().level = new_level
         }
-        self.stacking_level = Some(new_level)
     }
 }
 
