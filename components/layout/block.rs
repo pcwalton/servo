@@ -1609,6 +1609,10 @@ impl Flow for BlockFlow {
     }
 
     fn compute_absolute_position(&mut self) {
+        if self.fragment.is_invisible() {
+            return
+        }
+
         // FIXME(#2795): Get the real container size
         let container_size = Size2D::zero();
 

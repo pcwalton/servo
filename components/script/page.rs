@@ -153,7 +153,6 @@ impl Page {
     }
 
     pub fn flush_layout(&self, goal: ReflowGoal) {
-        println!("starting reflow");
         let frame = self.frame();
         let window = frame.as_ref().unwrap().window.root();
         self.reflow(goal, window.control_chan().clone(), window.compositor());
@@ -276,8 +275,6 @@ impl Page {
                             fail!("Layout task failed while script was waiting for a result.");
                         }
                     }
-
-                    println!("layout joined");
                     debug!("script: layout joined")
                 }
                 None => fail!("reader forked but no join port?"),
@@ -310,7 +307,8 @@ impl Page {
 
         let root: JSRef<Node> = NodeCast::from_ref(*root);
         if !root.get_has_dirty_descendants() {
-            println!("root has no dirty descendants; avoiding reflow");
+            debug!("root has no dirty descendants; avoiding reflow");
+            return
         }
 
         {

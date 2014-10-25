@@ -80,11 +80,11 @@ pub enum ConstructionResult {
 
 impl ConstructionResult {
     pub fn swap_out(&mut self) -> ConstructionResult {
-        //if opts::get().nonincremental_layout {
+        if opts::get().nonincremental_layout {
             return mem::replace(self, NoConstructionResult)
-        //}
+        }
 
-        //(*self).clone()
+        (*self).clone()
     }
 
     pub fn debug_id(&self) -> uint {
@@ -954,7 +954,7 @@ impl<'a> FlowConstructor<'a> {
     pub fn repair_if_possible(&mut self, node: &ThreadSafeLayoutNode) -> bool {
         // We can skip reconstructing the flow if we don't have to reconstruct and none of our kids
         // did either.
-        /*if node.restyle_damage().contains(ReconstructFlow) {
+        if node.restyle_damage().contains(ReconstructFlow) {
             return false
         }
         for kid in node.children() {
@@ -962,8 +962,7 @@ impl<'a> FlowConstructor<'a> {
                 return false
             }
         }
-        true*/
-        false
+        true
     }
 }
 
@@ -1121,7 +1120,8 @@ trait NodeUtils {
     /// Returns true if this node doesn't render its kids and false otherwise.
     fn is_replaced_content(&self) -> bool;
 
-    fn get_construction_result<'a>(self, layout_data: &'a mut LayoutDataWrapper) -> &'a mut ConstructionResult;
+    fn get_construction_result<'a>(self, layout_data: &'a mut LayoutDataWrapper)
+                               -> &'a mut ConstructionResult;
 
     /// Sets the construction result of a flow.
     fn set_flow_construction_result(self, result: ConstructionResult);
@@ -1147,7 +1147,8 @@ impl<'ln> NodeUtils for ThreadSafeLayoutNode<'ln> {
         }
     }
 
-    fn get_construction_result<'a>(self, layout_data: &'a mut LayoutDataWrapper) -> &'a mut ConstructionResult {
+    fn get_construction_result<'a>(self, layout_data: &'a mut LayoutDataWrapper)
+                               -> &'a mut ConstructionResult {
         match self.get_pseudo_element_type() {
             Before(_) => &mut layout_data.data.before_flow_construction_result,
             After (_) => &mut layout_data.data.after_flow_construction_result,
@@ -1213,11 +1214,11 @@ pub trait FlowConstructionUtils {
     fn add_new_child(&mut self, new_child: FlowRef);
 
     /// Finishes a flow. Once a flow is finished, no more child flows or boxes may be added to it.
-    /// This will normally run the bubble-inline-sizes (minimum and preferred -- i.e. intrinsic -- inline-size)
-    /// calculation, unless the global `bubble_inline-sizes_separately` flag is on.
+    /// This will normally run the bubble-inline-sizes (minimum and preferred -- i.e. intrinsic --
+    /// inline-size) calculation, unless the global `bubble_inline-sizes_separately` flag is on.
     ///
-    /// All flows must be finished at some point, or they will not have their intrinsic inline-sizes
-    /// properly computed. (This is not, however, a memory safety problem.)
+    /// All flows must be finished at some point, or they will not have their intrinsic inline-
+    /// sizes properly computed. (This is not, however, a memory safety problem.)
     fn finish(&mut self);
 }
 
@@ -1238,8 +1239,8 @@ impl FlowConstructionUtils for FlowRef {
     }
 
     /// Finishes a flow. Once a flow is finished, no more child flows or fragments may be added to
-    /// it. This will normally run the bubble-inline-sizes (minimum and preferred -- i.e. intrinsic --
-    /// inline-size) calculation, unless the global `bubble_inline-sizes_separately` flag is on.
+    /// it. This will normally run the bubble-inline-sizes (minimum and preferred -- i.e. intrinsic
+    /// -- inline-size) calculation, unless the global `bubble_inline-sizes_separately` flag is on.
     ///
     /// All flows must be finished at some point, or they will not have their intrinsic inline-sizes
     /// properly computed. (This is not, however, a memory safety problem.)

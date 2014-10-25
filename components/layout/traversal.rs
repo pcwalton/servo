@@ -134,15 +134,15 @@ impl<'a> PreorderDomTraversal for RecalcStyleForNode<'a> {
         // Just needs to be wrapped in an option for `match_node`.
         let some_bf = Some(bf);
 
-        let nonincremental_layout = true;
+        let nonincremental_layout = opts::get().nonincremental_layout;
         if nonincremental_layout || node.is_dirty() {
-            // Remove existing CSS styles from nodes whose content has changed (e.g. attribute
-            // removed or text changed), to force non-incremental reflow.
+            // Remove existing CSS styles from nodes whose content has changed (e.g. text changed),
+            // to force non-incremental reflow.
             if node.has_changed() {
                 let node = ThreadSafeLayoutNode::new(&node);
                 node.unstyle();
             }
-            ThreadSafeLayoutNode::new(&node).set_restyle_damage(RestyleDamage::all());
+            //ThreadSafeLayoutNode::new(&node).set_restyle_damage(RestyleDamage::all());
 
             debug!("Styling {}", node.debug_id());
 
@@ -215,8 +215,7 @@ impl<'a> PostorderDomTraversal for ConstructFlows<'a> {
             let tnode = ThreadSafeLayoutNode::new(&node);
 
             // Always reconstruct if incremental layout is turned off.
-            //let nonincremental_layout = opts::get().nonincremental_layout;
-            let nonincremental_layout = true;
+            let nonincremental_layout = opts::get().nonincremental_layout;
             if nonincremental_layout || node.has_dirty_descendants() {
                 let mut flow_constructor = FlowConstructor::new(self.layout_context);
                 if nonincremental_layout || !flow_constructor.repair_if_possible(&tnode) {

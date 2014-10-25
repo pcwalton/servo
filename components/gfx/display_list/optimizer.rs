@@ -38,6 +38,7 @@ impl DisplayListOptimizer {
         }
         DisplayList {
             list: result,
+            stacking_level: None,
         }
     }
 

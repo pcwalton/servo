@@ -45,7 +45,7 @@ use style::{ComputedValues, TElement, TNode, cascade_anonymous};
 use style::computed_values::{LengthOrPercentage, LengthOrPercentageOrAuto};
 use style::computed_values::{LengthOrPercentageOrNone};
 use style::computed_values::{LPA_Auto, clear, position, text_align, text_decoration};
-use style::computed_values::{vertical_align, white_space};
+use style::computed_values::{vertical_align, visibility, white_space};
 use sync::{Arc, Mutex};
 use url::Url;
 
@@ -1479,6 +1479,9 @@ impl Fragment {
         }
     }
 
+    pub fn is_invisible(&self) -> bool {
+        self.style().get_inheritedbox().visibility != visibility::visible
+    }
 }
 
 impl fmt::Show for Fragment {

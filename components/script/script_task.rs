@@ -441,9 +441,7 @@ impl ScriptTask {
                     port3.add();
                 }
             }
-            println!("script task going to sleep");
             let ret = sel.wait();
-            println!("script task wakes up");
             if ret == port1.id() {
                 FromScript(self.port.recv())
             } else if ret == port2.id() {
@@ -881,8 +879,14 @@ impl ScriptTask {
         self.compositor.scroll_fragment_point(pipeline_id, LayerId::null(), point);
     }
 
+    /// Reflows non-incrementally.
     fn force_reflow(&self, page: &Page) {
         page.dirty_all_nodes();
+        page.reflow(ReflowForDisplay, self.control_chan.clone(), &*self.compositor);
+    }
+
+    /// Reflows incrementally.
+    fn reflow(&self, page: &Page) {
         page.reflow(ReflowForDisplay, self.control_chan.clone(), &*self.compositor);
     }
 
@@ -1050,7 +1054,7 @@ impl ScriptTask {
 
                         if target_compare {
                             if mouse_over_targets.is_some() {
-                                self.force_reflow(&*page);
+                                self.reflow(&*page);
                             }
                             *mouse_over_targets = Some(target_list);
                         }
