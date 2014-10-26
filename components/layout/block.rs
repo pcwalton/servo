@@ -438,8 +438,12 @@ impl<'a> PreorderFlowTraversal for AbsoluteAssignBSizesTraversal<'a> {
             return;
         }
 
+        if !block_flow.base.restyle_damage.intersects(Reposition | Reflow) {
+            return
+        }
+
         let AbsoluteAssignBSizesTraversal(ref ctx) = *self;
-        block_flow.calculate_abs_block_size_and_margins(*ctx);
+        block_flow.calculate_absolute_block_size_and_margins(*ctx);
     }
 }
 
@@ -634,7 +638,7 @@ impl BlockFlow {
         }
     }
 
-    /// Compute the used value of inline-size for this Block.
+    /// Compute the actual inline size and position for this block.
     pub fn compute_used_inline_size(&mut self,
                                     ctx: &LayoutContext,
                                     containing_block_inline_size: Au) {
@@ -813,7 +817,7 @@ impl BlockFlow {
                                          self.base.debug_id());
 
         if !self.base.restyle_damage.contains(Reflow) {
-            println!("assigning block size for a flow without reflow");
+            //println!("assigning block size for a flow without reflow");
         }
 
         if self.base.restyle_damage.contains(Reflow) {
@@ -851,7 +855,9 @@ impl BlockFlow {
                     // Assume that the *hypothetical box* for an absolute flow starts immediately
                     // after the block-end border edge of the previous flow.
                     flow::mut_base(kid).position.start.b = cur_b;
-                    kid.assign_block_size_for_inorder_child_if_necessary(layout_context);
+                    if !kid.place_float_if_applicable(layout_context) {
+                        kid.assign_block_size_for_inorder_child_if_necessary(layout_context);
+                    }
                     propagate_layer_flag_from_child(&mut layers_needed_for_descendants, kid);
 
                     // Skip the collapsing and float processing for absolute flow kids and continue
@@ -870,10 +876,7 @@ impl BlockFlow {
                             margin_collapse_info.current_float_ceiling();
                     }
                     propagate_layer_flag_from_child(&mut layers_needed_for_descendants, kid);
-
-                    let need_to_process_child_floats =
-                        kid.assign_block_size_for_inorder_child_if_necessary(layout_context);
-                    assert!(need_to_process_child_floats);  // As it was a float itself...
+                    assert!(kid.place_float_if_applicable(layout_context));
 
                     let kid_base = flow::mut_base(kid);
                     floats = kid_base.floats.clone();
@@ -893,6 +896,7 @@ impl BlockFlow {
 
                 // Lay the child out if this was an in-order traversal.
                 let need_to_process_child_floats =
+                    kid.place_float_if_applicable(layout_context) ||
                     kid.assign_block_size_for_inorder_child_if_necessary(layout_context);
 
                 // Mark flows for layerization if necessary to handle painting order correctly.
@@ -960,15 +964,15 @@ impl BlockFlow {
             let mut block_size = cur_b - block_start_offset;
             let is_root = self.is_root();
             if is_root {
-                let screen_size = LogicalSize::from_physical(
-                    self.fragment.style.writing_mode, layout_context.shared.screen_size);
+                let screen_size = LogicalSize::from_physical(self.fragment.style.writing_mode,
+                                                             layout_context.shared.screen_size);
                 block_size = Au::max(screen_size.block, block_size)
             }
 
             if is_root || self.formatting_context_type() != NonformattingContext ||
                     self.base.flags.is_absolutely_positioned() {
-                // The content block-size includes all the floats per CSS 2.1 § 10.6.7. The easiest way
-                // to handle this is to just treat this as clearance.
+                // The content block-size includes all the floats per CSS 2.1 § 10.6.7. The easiest
+                // way to handle this is to just treat it as clearance.
                 block_size = block_size + floats.clearance(ClearBoth);
             }
 
@@ -1021,9 +1025,16 @@ impl BlockFlow {
             // document can access them.
             self.base.floats = floats.clone();
             self.adjust_fragments_for_collapsed_margins_if_root();
+        } else {
+            // We don't need to reflow, but we still need to perform in-order traversals if
+            // necessary.
+            for kid in self.base.child_iter() {
+                kid.assign_block_size_for_inorder_child_if_necessary(layout_context);
+            }
         }
 
         if self.is_root_of_absolute_flow_tree() {
+            println!("assigning absolute block sizes");
             // Assign block-sizes for all flows in this absolute flow tree.
             // This is preorder because the block-size of an absolute flow may depend on
             // the block-size of its containing block, which may also be an absolute flow.
@@ -1033,6 +1044,12 @@ impl BlockFlow {
             self.traverse_postorder_absolute_flows(&mut AbsoluteStoreOverflowTraversal {
                 layout_context: layout_context,
             });
+        }
+
+        // Don't remove the dirty bits yet if we're absolutely-positioned, since our final size
+        // has not been calculated yet. (See `calculate_absolute_block_size_and_margins` for that.)
+        if !self.base.flags.is_absolutely_positioned() {
+            self.base.restyle_damage.remove(Reposition | Reflow);
         }
     }
 
@@ -1085,9 +1102,9 @@ impl BlockFlow {
     /// The layout for its in-flow children has been done during normal layout.
     /// This is just the calculation of:
     /// + block-size for the flow
-    /// + y-coordinate of the flow wrt its Containing Block.
+    /// + position in the block direction of the flow with respect to its Containing Block.
     /// + block-size, vertical margins, and y-coordinate for the flow's box.
-    fn calculate_abs_block_size_and_margins(&mut self, ctx: &LayoutContext) {
+    fn calculate_absolute_block_size_and_margins(&mut self, ctx: &LayoutContext) {
         let containing_block_block_size = self.containing_block_size(ctx.shared.screen_size).block;
         let static_b_offset = self.static_b_offset;
 
@@ -1112,11 +1129,13 @@ impl BlockFlow {
             let block_end;
             {
                 let position = self.fragment.style().logical_position();
-                block_start = MaybeAuto::from_style(position.block_start, containing_block_block_size);
-                block_end = MaybeAuto::from_style(position.block_end, containing_block_block_size);
+                block_start = MaybeAuto::from_style(position.block_start,
+                                                    containing_block_block_size);
+                block_end = MaybeAuto::from_style(position.block_end,containing_block_block_size);
             }
 
-            let available_block_size = containing_block_block_size - self.fragment.border_padding.block_start_end();
+            let available_block_size = containing_block_block_size -
+                self.fragment.border_padding.block_start_end();
             if self.is_replaced_content() {
                 // Calculate used value of block-size just like we do for inline replaced elements.
                 // TODO: Pass in the containing block block-size when Fragment's
@@ -1175,6 +1194,8 @@ impl BlockFlow {
         let block_size = solution.block_size + self.fragment.border_padding.block_start_end();
         self.fragment.border_box.size.block = block_size;
         self.base.position.size.block = block_size;
+
+        self.base.restyle_damage.remove(Reposition | Reflow);
     }
 
     // Our inline-size was set to the inline-size of the containing block by the flow's parent.
@@ -1280,9 +1301,13 @@ impl BlockFlow {
 
             // The inline-start margin edge of the child flow is at our inline-start content edge,
             // and its inline-size is our content inline-size.
-
-            flow::mut_base(kid).position.start.i = inline_start_content_edge;
-            flow::mut_base(kid).block_container_inline_size = content_inline_size;
+            {
+                let kid_base = flow::mut_base(kid);
+                if kid_base.restyle_damage.intersects(Reposition | Reflow) {
+                    kid_base.position.start.i = inline_start_content_edge;
+                    kid_base.block_container_inline_size = content_inline_size;
+                }
+            }
 
             // Determine float impaction.
             match kid.float_clearance() {
@@ -1515,9 +1540,9 @@ impl Flow for BlockFlow {
     fn assign_inline_sizes(&mut self, layout_context: &LayoutContext) {
         let _scope = layout_debug_scope!("block::assign_inline_sizes {:x}", self.base.debug_id());
 
-        /*if !self.base.restyle_damage.contains(Reflow) {
+        if !self.base.restyle_damage.intersects(Reposition | Reflow) {
             return
-        }*/
+        }
         //println!("assigning inline sizes!");
 
         debug!("assign_inline_sizes({}): assigning inline_size for flow",
@@ -1576,6 +1601,16 @@ impl Flow for BlockFlow {
                                                         None);
     }
 
+    fn place_float_if_applicable<'a>(&mut self, _: &'a LayoutContext<'a>) -> bool {
+        if !self.is_float() {
+            return false
+        }
+
+        self.place_float();
+        //self.base.restyle_damage.remove(Reposition | Reflow);
+        true
+    }
+
     /// Assigns block-sizes in-order; or, if this is a float, places the float. The default
     /// implementation simply assigns block-sizes if this flow is impacted by floats. Returns true
     /// if this child affected the floats in the flow somehow or false otherwise; thus, if true,
@@ -1586,12 +1621,6 @@ impl Flow for BlockFlow {
     fn assign_block_size_for_inorder_child_if_necessary<'a>(&mut self,
                                                             layout_context: &'a LayoutContext<'a>)
                                                             -> bool {
-        if self.is_float() {
-            self.place_float();
-            self.base.restyle_damage.remove(Reposition | Reflow);
-            return true
-        }
-
         let is_formatting_context = self.formatting_context_type() != NonformattingContext;
         if is_formatting_context {
             self.assign_inline_position_for_formatting_context();
@@ -1999,16 +2028,14 @@ pub trait ISizeAndMarginsComputer {
     /// CSS Section 10.4: Minimum and Maximum inline-sizes
     fn compute_used_inline_size(&self,
                                 block: &mut BlockFlow,
-                                ctx: &LayoutContext,
+                                layout_context: &LayoutContext,
                                 parent_flow_inline_size: Au) {
         let mut input = self.compute_inline_size_constraint_inputs(block,
                                                                    parent_flow_inline_size,
-                                                                   ctx);
+                                                                   layout_context);
 
-        let containing_block_inline_size = self.containing_block_inline_size(
-            block,
-            parent_flow_inline_size,
-            ctx);
+        let containing_block_inline_size =
+            self.containing_block_inline_size(block, parent_flow_inline_size, layout_context);
 
         let mut solution = self.solve_inline_size_constraints(block, &input);
 
@@ -2047,9 +2074,9 @@ pub trait ISizeAndMarginsComputer {
     /// available_inline-size
     /// where available_inline-size = CB inline-size - (horizontal border + padding)
     fn solve_block_inline_size_constraints(&self,
-                                     _: &mut BlockFlow,
-                                     input: &ISizeConstraintInput)
-                                     -> ISizeConstraintSolution {
+                                           _: &mut BlockFlow,
+                                           input: &ISizeConstraintInput)
+                                           -> ISizeConstraintSolution {
         let (computed_inline_size, inline_start_margin, inline_end_margin, available_inline_size) =
             (input.computed_inline_size,
              input.inline_start_margin,

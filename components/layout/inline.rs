@@ -12,6 +12,7 @@ use flow::{BaseFlow, FlowClass, Flow, InlineFlowClass, MutableFlowUtils};
 use flow;
 use fragment::{Fragment, InlineAbsoluteHypotheticalFragment, InlineBlockFragment};
 use fragment::{ScannedTextFragment, ScannedTextFragmentInfo, SplitInfo};
+use incremental::{Reflow, Reposition};
 use layout_debug;
 use model::IntrinsicISizesContribution;
 use text;
@@ -1112,7 +1113,7 @@ impl Flow for InlineFlow {
                 line.bounds.size.block;
         } // End of `lines.each` loop.
 
-        // Assign block sizes for any inline-block float descendants.
+        // Assign block sizes for any inline-block descendants.
         for kid in self.base.child_iter() {
             if flow::base(kid).flags.is_absolutely_positioned() || kid.is_float() {
                 continue
@@ -1129,6 +1130,8 @@ impl Flow for InlineFlow {
         self.base.floats.translate(LogicalSize::new(self.base.writing_mode,
                                                     Au(0),
                                                     -self.base.position.size.block));
+
+        self.base.restyle_damage.remove(Reposition | Reflow);
     }
 
     fn compute_absolute_position(&mut self) {

@@ -4,9 +4,10 @@
 
 use flow::{mod, Flow, ImmutableFlowUtils};
 
+use servo_util::geometry::Au;
 use std::fmt;
 use std::sync::Arc;
-use style::computed_values::position;
+use style::computed_values::{LPA_Length, position};
 use style::ComputedValues;
 
 bitflags! {
@@ -177,10 +178,11 @@ impl<'a> LayoutDamageComputation for &'a mut Flow+'a {
 
     fn find_damaged_things(self) {
         let positioning = self.positioning();
-        if flow::mut_base(self).restyle_damage.intersects(Reflow | Reposition) {
-            println!("damage found -- impacted by floats? {}!",
-                     flow::base(self).flags.impacted_by_floats());
-            self.dump();
+        if flow::mut_base(self).restyle_damage.intersects(Reflow) {
+            /*println!("damage {} found -- impacted by floats? {}!",
+                     flow::base(self).restyle_damage,
+                     flow::base(self).flags.impacted_by_floats());*/
+            //self.dump();
         }
         let self_base = flow::mut_base(self);
         for kid in self_base.children.iter_mut() {
@@ -190,9 +192,9 @@ impl<'a> LayoutDamageComputation for &'a mut Flow+'a {
 
     fn compute_layout_damage(self) -> SpecialRestyleDamage {
         let mut special_damage = SpecialRestyleDamage::empty();
+        let positioning = self.positioning();
 
         {
-            let positioning = self.positioning();
             let self_base = flow::mut_base(self);
             for kid in self_base.children.iter_mut() {
                 let child_positioning = kid.positioning();
@@ -206,9 +208,11 @@ impl<'a> LayoutDamageComputation for &'a mut Flow+'a {
                 self_base.restyle_damage
                          .insert(flow::base(kid).restyle_damage
                                                 .damage_for_parent(child_positioning));
-                /*println!("abspos={} after damage={}",
-                         positioning == position::absolute,
-                         self_base.restyle_damage);*/
+                if flow::base(kid).restyle_damage.intersects(Reflow) {
+                    println!("abspos={} after damage={}",
+                             positioning == position::absolute,
+                             self_base.restyle_damage);
+                }
             }
 
             /*if self_base.restyle_damage != RestyleDamage::empty() &&
@@ -218,8 +222,19 @@ impl<'a> LayoutDamageComputation for &'a mut Flow+'a {
             }*/
         }
 
+        if self.is_block_flow() {
+            let self_block = self.as_block();
+            if self_block.fragment.style().get_box().width == LPA_Length(Au::from_px(6)) {
+                if self_block.base.restyle_damage.intersects(Reposition | Reflow) {
+                    println!("marker abspos={} after damage={}",
+                             positioning == position::absolute,
+                             self_block.base.restyle_damage);
+                }
+            }
+        }
+
         let self_base = flow::base(self);
-        if self.is_float() && self_base.restyle_damage.intersects(Reposition | Reflow) {
+        if self.is_float() && self_base.restyle_damage.intersects(Reflow) {
             special_damage.insert(ReflowEntireDocument);
         }
 

@@ -341,8 +341,6 @@ impl<'a> PostorderFlowTraversal for AssignBSizesAndStoreOverflow<'a> {
         if !flow.is_store_overflow_delayed() {
             flow.store_overflow(self.layout_context);
         }
-
-        flow::mut_base(flow).restyle_damage.remove(Reposition | Reflow);
     }
 
     #[inline]

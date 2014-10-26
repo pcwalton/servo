@@ -26,7 +26,7 @@ use servo_msg::compositor_msg::{LayerMetadata, RenderListener, RenderingRenderSt
 use servo_msg::constellation_msg::{ConstellationChan, Failure, FailureMsg, PipelineId};
 use servo_msg::constellation_msg::{RendererReadyMsg};
 use servo_msg::platform::surface::NativeSurfaceAzureMethods;
-use servo_util::geometry::{mod, Au};
+use servo_util::geometry;
 use servo_util::opts;
 use servo_util::smallvec::{SmallVec, SmallVec1};
 use servo_util::task::spawn_named_with_send_on_failure;
@@ -35,7 +35,6 @@ use servo_util::time;
 use std::comm::{Receiver, Sender, channel};
 use std::fmt;
 use std::mem;
-use std::rand::Rng;
 use std::task::TaskBuilder;
 use sync::Arc;
 use font_cache_task::FontCacheTask;
@@ -554,12 +553,12 @@ impl WorkerThread {
                 let mut clip_stack = Vec::new();
                 display_list.draw_into_context(&mut render_context, &matrix, &mut clip_stack);
 
-                let r: AzFloat = ::std::rand::task_rng().gen();
+                /*let r: AzFloat = ::std::rand::task_rng().gen();
                 let g: AzFloat = ::std::rand::task_rng().gen();
                 let b: AzFloat = ::std::rand::task_rng().gen();
                 render_context.draw_solid_color(&Rect(Point2D(Au(0), Au(0)),
                                                       Size2D(Au(99999999), Au(99999999))),
-                                                ::color::rgba(r % 1.0, g % 1.0, b % 1.0, 0.4));
+                                                ::color::rgba(r % 1.0, g % 1.0, b % 1.0, 0.4));*/
 
                 render_context.draw_target.flush();
             });

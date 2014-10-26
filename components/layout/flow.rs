@@ -192,9 +192,15 @@ pub trait Flow: fmt::Show + ToString + Sync {
         fail!("assign_block_size not yet implemented")
     }
 
-    /// Assigns block-sizes in-order; or, if this is a float, places the float. The default
-    /// implementation simply assigns block-sizes if this flow is impacted by floats. Returns true
-    /// if this child was impacted by floats or false otherwise.
+    /// If this is a float, places it. Returns true if and only if this was a float. The default
+    /// implementation simply returns false.
+    fn place_float_if_applicable<'a>(&mut self, _: &'a LayoutContext<'a>) -> bool {
+        false
+    }
+
+    /// Assigns block-sizes in-order. The default implementation simply assigns block-sizes if this
+    /// flow is impacted by floats. Returns true if this child was impacted by floats or false
+    /// otherwise.
     fn assign_block_size_for_inorder_child_if_necessary<'a>(&mut self,
                                                             layout_context: &'a LayoutContext<'a>)
                                                             -> bool {

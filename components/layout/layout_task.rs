@@ -667,6 +667,8 @@ impl LayoutTask {
             layout_debug::begin_trace(layout_root.clone());
         }
 
+        //layout_root.find_damaged_things();
+
         // Perform the primary layout passes over the flow tree to compute the locations of all
         // the boxes.
         profile(time::LayoutMainCategory,
@@ -688,8 +690,6 @@ impl LayoutTask {
                 }
             }
         });
-
-        layout_root.find_damaged_things();
 
         // Build the display list if necessary, and send it to the renderer.
         if data.goal == ReflowForDisplay {
