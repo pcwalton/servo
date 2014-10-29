@@ -26,8 +26,7 @@ use dom::event::{Event, Bubbles, DoesNotBubble, Cancelable, NotCancelable};
 use dom::uievent::UIEvent;
 use dom::eventtarget::{EventTarget, EventTargetHelpers};
 use dom::keyboardevent::KeyboardEvent;
-use dom::node;
-use dom::node::{ElementNodeTypeId, Node, NodeHelpers};
+use dom::node::{mod, ElementNodeTypeId, Node, NodeHelpers, OtherNodeDamage};
 use dom::window::{Window, WindowHelpers};
 use dom::worker::{Worker, TrustedWorkerAddress};
 use dom::xmlhttprequest::{TrustedXHRAddress, XMLHttpRequest, XHRProgress};
@@ -491,11 +490,7 @@ impl ScriptTask {
                     let page = page.find(id).expect("resize sent to nonexistent pipeline");
                     page.resize_event.set(Some(size));
                 }
-                FromConstellation(SendEventMsg(id, ReflowEvent(node_addresses))) => {
-                    let page = self.page.borrow_mut();
-                    let inner_page = page.find(id).expect("Reflow sent to nonexistent pipeline");
-                    let mut pending = inner_page.pending_dirty_nodes.borrow_mut();
-                    pending.push_all_move(node_addresses);
+                FromConstellation(SendEventMsg(id, ReflowEvent(_))) => {
                     needs_reflow.insert(id);
                 }
                 FromConstellation(ViewportMsg(id, rect)) => {
@@ -682,11 +677,6 @@ impl ScriptTask {
         }
 
         self.compositor.borrow_mut().set_ready_state(pipeline_id, FinishedLoading);
-
-        if page.pending_reflows.get() > 0 {
-            page.pending_reflows.set(0);
-            self.force_reflow(&*page);
-        }
     }
 
     /// Handles a navigate forward or backward message.
@@ -827,9 +817,9 @@ impl ScriptTask {
         {
             let document_js_ref = (&*document).clone();
             let document_as_node = NodeCast::from_ref(document_js_ref);
-            document.content_changed(document_as_node);
+            document.content_changed(document_as_node, OtherNodeDamage);
         }
-        window.flush_layout();
+        window.flush_layout(ReflowForDisplay, NoQuery);
 
         {
             // No more reflow required
@@ -872,18 +862,9 @@ impl ScriptTask {
         self.compositor.borrow_mut().scroll_fragment_point(pipeline_id, LayerId::null(), point);
     }
 
+    /// Reflows non-incrementally.
     fn force_reflow(&self, page: &Page) {
-        {
-            let mut pending = page.pending_dirty_nodes.borrow_mut();
-            let js_runtime = self.js_runtime.deref().ptr;
-
-            for untrusted_node in pending.into_iter() {
-                let node = node::from_untrusted_node_address(js_runtime, untrusted_node).root();
-                node.dirty();
-            }
-        }
-
-        page.damage();
+        page.dirty_all_nodes();
         page.reflow(ReflowForDisplay,
                     self.control_chan.clone(),
                     &mut **self.compositor.borrow_mut(),
@@ -973,7 +954,7 @@ impl ScriptTask {
             // TODO: if keypress event is canceled, prevent firing input events
         }
 
-        window.flush_layout();
+        window.flush_layout(ReflowForDisplay, NoQuery);
     }
 
     /// The entry point for content to notify that a new load has been requested
@@ -1043,12 +1024,7 @@ impl ScriptTask {
         let page = get_page(&*self.page.borrow(), pipeline_id);
         let frame = page.frame();
         if frame.is_some() {
-            let in_layout = page.layout_join_port.borrow().is_some();
-            if in_layout {
-                page.pending_reflows.set(page.pending_reflows.get() + 1);
-            } else {
-                self.force_reflow(&*page);
-            }
+            self.force_reflow(&*page);
         }
     }
 
@@ -1088,7 +1064,7 @@ impl ScriptTask {
                                 let _ = eventtarget.dispatch_event_with_target(None, *event);
 
                                 doc.commit_focus_transaction();
-                                window.flush_layout();
+                                window.flush_layout(ReflowForDisplay, NoQuery);
                             }
                             None => {}
                         }
@@ -1170,8 +1146,6 @@ impl ScriptTask {
 /// Shuts down layout for the given page tree.
 fn shut_down_layout(page_tree: &Rc<Page>, rt: *mut JSRuntime) {
     for page in page_tree.iter() {
-        page.join_layout();
-
         // Tell the layout task to begin shutting down, and wait until it
         // processed this message.
         let (response_chan, response_port) = channel();
