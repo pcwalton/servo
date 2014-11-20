@@ -85,14 +85,19 @@ class MachCommands(CommandBase):
     @CommandArgument('--jobs', '-j',
                      default=None,
                      help='Number of jobs to run in parallel')
+    @CommandArgument('--release', '-r',
+                     action='store_true',
+                     help='Build in release mode')
     @CommandArgument('--verbose', '-v',
                      action='store_true',
                      help='Print verbose output')
-    def build_cef(self, jobs=None, verbose=False):
+    def build_cef(self, jobs=None, release=False, verbose=False):
         self.ensure_bootstrapped()
 
         ret = None
         opts = []
+        if release:
+            opts += ["--release"]
         if jobs is not None:
             opts += ["-j", jobs]
         if verbose:
@@ -100,7 +105,8 @@ class MachCommands(CommandBase):
 
         build_start = time()
         with cd(path.join("ports", "cef")):
-            ret = subprocess.call(["cargo", "build"], env=self.build_env())
+            ret = subprocess.call(["cargo", "build"] + opts,
+                                  env=self.build_env())
         elapsed = time() - build_start
 
         print("CEF build completed in %0.2fs" % elapsed)

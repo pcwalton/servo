@@ -1,0 +1,330 @@
+Index: include/capi/cef_browser_capi.h
+===================================================================
+--- include/capi/cef_browser_capi.h	(revision 1902)
++++ include/capi/cef_browser_capi.h	(working copy)
+@@ -546,6 +546,20 @@
+   ///
+   void (CEF_CALLBACK *drag_source_system_drag_ended)(
+       struct _cef_browser_host_t* self);
++
++  ///
++  // Instructs the browser to perform an accelerated composite. The appropriate
++  // Direct3D or OpenGL state must have been set up before calling this
++  // function.
++  ///
++  void (CEF_CALLBACK *composite)(struct _cef_browser_host_t* self);
++
++  ///
++  // Instructs the browser to initialize accelerated compositing. The
++  // appropriate Direct3D or OpenGL state must have been set up before calling
++  // this function.
++  ///
++  void (CEF_CALLBACK *initialize_compositing)(struct _cef_browser_host_t* self);
+ } cef_browser_host_t;
+ 
+ 
+Index: include/capi/cef_render_handler_capi.h
+===================================================================
+--- include/capi/cef_render_handler_capi.h	(revision 1902)
++++ include/capi/cef_render_handler_capi.h	(working copy)
+@@ -153,6 +153,22 @@
+   ///
+   void (CEF_CALLBACK *on_scroll_offset_changed)(
+       struct _cef_render_handler_t* self, struct _cef_browser_t* browser);
++
++  ///
++  // Called to retrieve the backing size of the view rectangle which is relative
++  // to screen coordinates. On HiDPI displays, the backing size can differ from
++  // the view size as returned by |GetViewRect|. Return true (1) if the
++  // rectangle was provided.
++  ///
++  int (CEF_CALLBACK *get_backing_rect)(struct _cef_render_handler_t* self,
++      struct _cef_browser_t* browser, cef_rect_t* rect);
++
++  ///
++  // Called when an element should be presented (e.g. double buffers should page
++  // flip). This is called only during accelerated compositing.
++  ///
++  void (CEF_CALLBACK *on_present)(struct _cef_render_handler_t* self,
++      struct _cef_browser_t* browser);
+ } cef_render_handler_t;
+ 
+ 
+Index: include/cef_browser.h
+===================================================================
+--- include/cef_browser.h	(revision 1902)
++++ include/cef_browser.h	(working copy)
+@@ -599,6 +599,22 @@
+   ///
+   /*--cef()--*/
+   virtual void DragSourceSystemDragEnded() =0;
++
++  ///
++  // Instructs the browser to perform an accelerated composite. The
++  // appropriate Direct3D or OpenGL state must have been set up before calling
++  // this function.
++  ///
++  /*--cef()--*/
++  virtual void Composite() =0;
++
++  ///
++  // Instructs the browser to initialize accelerated compositing. The
++  // appropriate Direct3D or OpenGL state must have been set up before calling
++  // this function.
++  ///
++  /*--cef()--*/
++  virtual void InitializeCompositing() =0;
+ };
+ 
+ #endif  // CEF_INCLUDE_CEF_BROWSER_H_
+Index: include/cef_render_handler.h
+===================================================================
+--- include/cef_render_handler.h	(revision 1902)
++++ include/cef_render_handler.h	(working copy)
+@@ -165,6 +165,23 @@
+   ///
+   /*--cef()--*/
+   virtual void OnScrollOffsetChanged(CefRefPtr<CefBrowser> browser) {}
++
++  ///
++  // Called to retrieve the backing size of the view rectangle which is
++  // relative to screen coordinates. On HiDPI displays, the backing size
++  // can differ from the view size as returned by |GetViewRect|. Return
++  // true if the rectangle was provided.
++  ///
++  /*--cef()--*/
++  virtual bool GetBackingRect(CefRefPtr<CefBrowser> browser,
++                              CefRect& rect) =0;
++
++  ///
++  // Called when an element should be presented (e.g. double buffers should
++  // page flip). This is called only during accelerated compositing.
++  ///
++  /*--cef()--*/
++  virtual void OnPresent(CefRefPtr<CefBrowser> browser) =0;
+ };
+ 
+ #endif  // CEF_INCLUDE_CEF_RENDER_HANDLER_H_
+Index: libcef_dll/cpptoc/browser_host_cpptoc.cc
+===================================================================
+--- libcef_dll/cpptoc/browser_host_cpptoc.cc	(revision 1902)
++++ libcef_dll/cpptoc/browser_host_cpptoc.cc	(working copy)
+@@ -807,7 +807,30 @@
+   CefBrowserHostCppToC::Get(self)->DragSourceSystemDragEnded();
+ }
+ 
++void CEF_CALLBACK browser_host_composite(struct _cef_browser_host_t* self) {
++  // AUTO-GENERATED CONTENT - DELETE THIS COMMENT BEFORE MODIFYING
+ 
++  DCHECK(self);
++  if (!self)
++    return;
++
++  // Execute
++  CefBrowserHostCppToC::Get(self)->Composite();
++}
++
++void CEF_CALLBACK browser_host_initialize_compositing(
++    struct _cef_browser_host_t* self) {
++  // AUTO-GENERATED CONTENT - DELETE THIS COMMENT BEFORE MODIFYING
++
++  DCHECK(self);
++  if (!self)
++    return;
++
++  // Execute
++  CefBrowserHostCppToC::Get(self)->InitializeCompositing();
++}
++
++
+ // CONSTRUCTOR - Do not edit by hand.
+ 
+ CefBrowserHostCppToC::CefBrowserHostCppToC(CefBrowserHost* cls)
+@@ -865,6 +888,8 @@
+   struct_.struct_.drag_source_ended_at = browser_host_drag_source_ended_at;
+   struct_.struct_.drag_source_system_drag_ended =
+       browser_host_drag_source_system_drag_ended;
++  struct_.struct_.composite = browser_host_composite;
++  struct_.struct_.initialize_compositing = browser_host_initialize_compositing;
+ }
+ 
+ #ifndef NDEBUG
+Index: libcef_dll/cpptoc/render_handler_cpptoc.cc
+===================================================================
+--- libcef_dll/cpptoc/render_handler_cpptoc.cc	(revision 1902)
++++ libcef_dll/cpptoc/render_handler_cpptoc.cc	(working copy)
+@@ -332,7 +332,57 @@
+       CefBrowserCToCpp::Wrap(browser));
+ }
+ 
++int CEF_CALLBACK render_handler_get_backing_rect(
++    struct _cef_render_handler_t* self, cef_browser_t* browser,
++    cef_rect_t* rect) {
++  // AUTO-GENERATED CONTENT - DELETE THIS COMMENT BEFORE MODIFYING
+ 
++  DCHECK(self);
++  if (!self)
++    return 0;
++  // Verify param: browser; type: refptr_diff
++  DCHECK(browser);
++  if (!browser)
++    return 0;
++  // Verify param: rect; type: simple_byref
++  DCHECK(rect);
++  if (!rect)
++    return 0;
++
++  // Translate param: rect; type: simple_byref
++  CefRect rectVal = rect?*rect:CefRect();
++
++  // Execute
++  bool _retval = CefRenderHandlerCppToC::Get(self)->GetBackingRect(
++      CefBrowserCToCpp::Wrap(browser),
++      rectVal);
++
++  // Restore param: rect; type: simple_byref
++  if (rect)
++    *rect = rectVal;
++
++  // Return type: bool
++  return _retval;
++}
++
++void CEF_CALLBACK render_handler_on_present(struct _cef_render_handler_t* self,
++    cef_browser_t* browser) {
++  // AUTO-GENERATED CONTENT - DELETE THIS COMMENT BEFORE MODIFYING
++
++  DCHECK(self);
++  if (!self)
++    return;
++  // Verify param: browser; type: refptr_diff
++  DCHECK(browser);
++  if (!browser)
++    return;
++
++  // Execute
++  CefRenderHandlerCppToC::Get(self)->OnPresent(
++      CefBrowserCToCpp::Wrap(browser));
++}
++
++
+ // CONSTRUCTOR - Do not edit by hand.
+ 
+ CefRenderHandlerCppToC::CefRenderHandlerCppToC(CefRenderHandler* cls)
+@@ -350,6 +400,8 @@
+   struct_.struct_.update_drag_cursor = render_handler_update_drag_cursor;
+   struct_.struct_.on_scroll_offset_changed =
+       render_handler_on_scroll_offset_changed;
++  struct_.struct_.get_backing_rect = render_handler_get_backing_rect;
++  struct_.struct_.on_present = render_handler_on_present;
+ }
+ 
+ #ifndef NDEBUG
+Index: libcef_dll/ctocpp/browser_host_ctocpp.cc
+===================================================================
+--- libcef_dll/ctocpp/browser_host_ctocpp.cc	(revision 1902)
++++ libcef_dll/ctocpp/browser_host_ctocpp.cc	(working copy)
+@@ -619,7 +619,27 @@
+   struct_->drag_source_system_drag_ended(struct_);
+ }
+ 
++void CefBrowserHostCToCpp::Composite() {
++  if (CEF_MEMBER_MISSING(struct_, composite))
++    return;
+ 
++  // AUTO-GENERATED CONTENT - DELETE THIS COMMENT BEFORE MODIFYING
++
++  // Execute
++  struct_->composite(struct_);
++}
++
++void CefBrowserHostCToCpp::InitializeCompositing() {
++  if (CEF_MEMBER_MISSING(struct_, initialize_compositing))
++    return;
++
++  // AUTO-GENERATED CONTENT - DELETE THIS COMMENT BEFORE MODIFYING
++
++  // Execute
++  struct_->initialize_compositing(struct_);
++}
++
++
+ #ifndef NDEBUG
+ template<> base::AtomicRefCount CefCToCpp<CefBrowserHostCToCpp, CefBrowserHost,
+     cef_browser_host_t>::DebugObjCt = 0;
+Index: libcef_dll/ctocpp/browser_host_ctocpp.h
+===================================================================
+--- libcef_dll/ctocpp/browser_host_ctocpp.h	(revision 1902)
++++ libcef_dll/ctocpp/browser_host_ctocpp.h	(working copy)
+@@ -92,6 +92,8 @@
+   virtual void DragTargetDrop(const CefMouseEvent& event) OVERRIDE;
+   virtual void DragSourceEndedAt(int x, int y, DragOperationsMask op) OVERRIDE;
+   virtual void DragSourceSystemDragEnded() OVERRIDE;
++  virtual void Composite() OVERRIDE;
++  virtual void InitializeCompositing() OVERRIDE;
+ };
+ 
+ #endif  // USING_CEF_SHARED
+Index: libcef_dll/ctocpp/render_handler_ctocpp.cc
+===================================================================
+--- libcef_dll/ctocpp/render_handler_ctocpp.cc	(revision 1902)
++++ libcef_dll/ctocpp/render_handler_ctocpp.cc	(working copy)
+@@ -267,7 +267,44 @@
+       CefBrowserCppToC::Wrap(browser));
+ }
+ 
++bool CefRenderHandlerCToCpp::GetBackingRect(CefRefPtr<CefBrowser> browser,
++    CefRect& rect) {
++  if (CEF_MEMBER_MISSING(struct_, get_backing_rect))
++    return false;
+ 
++  // AUTO-GENERATED CONTENT - DELETE THIS COMMENT BEFORE MODIFYING
++
++  // Verify param: browser; type: refptr_diff
++  DCHECK(browser.get());
++  if (!browser.get())
++    return false;
++
++  // Execute
++  int _retval = struct_->get_backing_rect(struct_,
++      CefBrowserCppToC::Wrap(browser),
++      &rect);
++
++  // Return type: bool
++  return _retval?true:false;
++}
++
++void CefRenderHandlerCToCpp::OnPresent(CefRefPtr<CefBrowser> browser) {
++  if (CEF_MEMBER_MISSING(struct_, on_present))
++    return;
++
++  // AUTO-GENERATED CONTENT - DELETE THIS COMMENT BEFORE MODIFYING
++
++  // Verify param: browser; type: refptr_diff
++  DCHECK(browser.get());
++  if (!browser.get())
++    return;
++
++  // Execute
++  struct_->on_present(struct_,
++      CefBrowserCppToC::Wrap(browser));
++}
++
++
+ #ifndef NDEBUG
+ template<> base::AtomicRefCount CefCToCpp<CefRenderHandlerCToCpp,
+     CefRenderHandler, cef_render_handler_t>::DebugObjCt = 0;
+Index: libcef_dll/ctocpp/render_handler_ctocpp.h
+===================================================================
+--- libcef_dll/ctocpp/render_handler_ctocpp.h	(revision 1902)
++++ libcef_dll/ctocpp/render_handler_ctocpp.h	(working copy)
+@@ -56,6 +56,9 @@
+   virtual void UpdateDragCursor(CefRefPtr<CefBrowser> browser,
+       DragOperation operation) OVERRIDE;
+   virtual void OnScrollOffsetChanged(CefRefPtr<CefBrowser> browser) OVERRIDE;
++  virtual bool GetBackingRect(CefRefPtr<CefBrowser> browser,
++      CefRect& rect) OVERRIDE;
++  virtual void OnPresent(CefRefPtr<CefBrowser> browser) OVERRIDE;
+ };
+ 
+ #endif  // BUILDING_CEF_SHARED

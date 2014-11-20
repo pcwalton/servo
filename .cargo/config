@@ -1,3 +1,5 @@
+paths = [ "/Users/pcwalton/Source/servo-packages/rust-cocoa" ]
+
 [target.arm-linux-androideabi]
 ar = "arm-linux-androideabi-ar"
 linker = "arm-linux-androideabi-g++"

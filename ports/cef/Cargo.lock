@@ -3,6 +3,7 @@ name = "embedding"
 version = "0.0.1"
 dependencies = [
  "azure 0.1.0 (git+https://github.com/servo/rust-azure)",
+ "cocoa 0.1.1 (git+https://github.com/servo/rust-cocoa)",
  "core_graphics 0.1.0 (git+https://github.com/servo/rust-core-graphics)",
  "core_text 0.1.0 (git+https://github.com/servo/rust-core-text)",
  "devtools 0.0.1",
@@ -55,6 +56,11 @@ source = "git+https://github.com/servo/rust-cgl#7b7090729f65e2287c3d80651df02e54
 dependencies = [
  "gleam 0.0.1 (git+https://github.com/servo/gleam)",
 ]
+
+[[package]]
+name = "cocoa"
+version = "0.1.1"
+source = "git+https://github.com/servo/rust-cocoa#78b823bec1affcab20b6977e1057125088a6034c"
 
 [[package]]
 name = "compositing"

@@ -9,17 +9,17 @@ use compositor_task::{CompositorProxy, CompositorReceiver, CompositorTask};
 use compositor_task::{CreateOrUpdateDescendantLayer, CreateOrUpdateRootLayer, Exit};
 use compositor_task::{FrameTreeUpdateMsg, GetGraphicsMetadata, LayerProperties};
 use compositor_task::{LoadComplete, Msg, Paint, RenderMsgDiscarded, ScrollFragmentPoint};
-use compositor_task::{ScrollTimeout, SetIds, SetLayerOrigin, ShutdownComplete};
+use compositor_task::{ScrollTimeout, SetIds, SetLayerOrigin, ShutdownComplete, UrlChanged};
 use constellation::{SendableFrameTree, FrameTreeDiff};
 use pipeline::CompositionPipeline;
 use scrolling::ScrollingTimerProxy;
 use windowing;
-use windowing::{FinishedWindowEvent, IdleWindowEvent, LoadUrlWindowEvent, MouseWindowClickEvent};
-use windowing::{MouseWindowEvent, MouseWindowEventClass, MouseWindowMouseDownEvent};
-use windowing::{MouseWindowMouseUpEvent, MouseWindowMoveEventClass, NavigationWindowEvent};
+use windowing::{FinishedWindowEvent, IdleWindowEvent, InitializeCompositingWindowEvent};
+use windowing::{KeyEvent, LoadUrlWindowEvent, MouseWindowClickEvent, MouseWindowEvent};
+use windowing::{MouseWindowEventClass, MouseWindowMouseDownEvent, MouseWindowMouseUpEvent};
+use windowing::{MouseWindowMoveEventClass, NavigationWindowEvent, PinchZoomWindowEvent};
 use windowing::{QuitWindowEvent, RefreshWindowEvent, ResizeWindowEvent, ScrollWindowEvent};
 use windowing::{WindowEvent, WindowMethods, WindowNavigateMsg, ZoomWindowEvent};
-use windowing::{PinchZoomWindowEvent, KeyEvent};
 
 use azure::azure_hl;
 use std::cmp;
@@ -65,8 +65,9 @@ pub struct IOCompositor<Window: WindowMethods> {
     /// The port on which we receive messages.
     port: Box<CompositorReceiver>,
 
-    /// The render context.
-    context: RenderContext,
+    /// The render context. This will be `None` if the windowing system has not yet sent us a
+    /// `PrepareRenderingEvent`.
+    context: Option<RenderContext>,
 
     /// The root pipeline.
     root_pipeline: Option<CompositionPipeline>,
@@ -177,13 +178,10 @@ impl<Window: WindowMethods> IOCompositor<Window> {
         // display list. This is only here because we don't have that logic in the renderer yet.
         let window_size = window.framebuffer_size();
         let hidpi_factor = window.hidpi_factor();
-        let context = CompositorTask::create_graphics_context(&window.native_metadata());
-
-        let show_debug_borders = opts::get().show_debug_borders;
         IOCompositor {
             window: window,
             port: receiver,
-            context: rendergl::RenderContext::new(context, show_debug_borders),
+            context: None,
             root_pipeline: None,
             scene: Scene::new(Rect {
                 origin: Zero::zero(),
@@ -324,6 +322,10 @@ impl<Window: WindowMethods> IOCompositor<Window> {
                 }
             }
 
+            (UrlChanged(ref url), NotShuttingDown) => {
+                self.url_changed(url.as_slice());
+            }
+
             // When we are shutting_down, we need to avoid performing operations
             // such as Paint that may crash because we have begun tearing down
             // the rest of our resources.
@@ -369,6 +371,10 @@ impl<Window: WindowMethods> IOCompositor<Window> {
         }
 
         self.window.set_render_state(render_state);
+    }
+
+    fn url_changed(&mut self, url: &str) {
+        self.window.url_changed(url);
     }
 
     fn all_pipelines_in_idle_render_state(&self) -> bool {
@@ -629,7 +635,11 @@ impl<Window: WindowMethods> IOCompositor<Window> {
             IdleWindowEvent => {}
 
             RefreshWindowEvent => {
-                self.composite_if_necessary()
+                self.composite();
+            }
+
+            InitializeCompositingWindowEvent => {
+                self.initialize_compositing();
             }
 
             ResizeWindowEvent(size) => {
@@ -688,6 +698,8 @@ impl<Window: WindowMethods> IOCompositor<Window> {
     }
 
     fn on_resize_window_event(&mut self, new_size: TypedSize2D<DevicePixel, uint>) {
+        debug!("compositor resizing to {}", new_size.to_untyped());
+
         // A size change could also mean a resolution change.
         let new_hidpi_factor = self.window.hidpi_factor();
         if self.hidpi_factor != new_hidpi_factor {
@@ -970,6 +982,10 @@ impl<Window: WindowMethods> IOCompositor<Window> {
     }
 
     fn composite(&mut self) {
+        if !self.window.prepare_for_composite() {
+            return
+        }
+
         let output_image = opts::get().output_file.is_some() &&
                             self.is_ready_to_render_image_output();
 
@@ -1002,10 +1018,19 @@ impl<Window: WindowMethods> IOCompositor<Window> {
                 origin: Zero::zero(),
                 size: self.window_size.as_f32(),
             };
+            println!("set window size to {},{}",
+                     self.window_size.to_untyped().width, self.window_size.to_untyped().height);
             // Render the scene.
             match self.scene.root {
                 Some(ref layer) => {
-                    rendergl::render_scene(layer.clone(), self.context, &self.scene);
+                    match self.context {
+                        None => {
+                            debug!("compositor: not compositing because context not yet set up")
+                        }
+                        Some(context) => {
+                            rendergl::render_scene(layer.clone(), context, &self.scene);
+                        }
+                    }
                 }
                 None => {}
             }
@@ -1068,6 +1093,12 @@ impl<Window: WindowMethods> IOCompositor<Window> {
         if self.composition_request == NoCompositingNecessary {
             self.composition_request = CompositeNow
         }
+    }
+
+    fn initialize_compositing(&mut self) {
+        let context = CompositorTask::create_graphics_context(&self.window.native_metadata());
+        let show_debug_borders = opts::get().show_debug_borders;
+        self.context = Some(rendergl::RenderContext::new(context, show_debug_borders))
     }
 
     fn find_topmost_layer_at_point_for_layer(&self,

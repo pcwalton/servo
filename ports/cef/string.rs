@@ -2,11 +2,11 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-
 use eutil::slice_to_str;
-use libc::{size_t, c_int, c_ushort,c_void};
+
+use libc::{mod, size_t, c_int, c_ushort, c_void};
 use libc::types::os::arch::c95::wchar_t;
-use mem::{new0,newarray0,delete,deletearray};
+use std::fmt::{FormatError, Formatter, Show};
 use std::mem;
 use std::ptr;
 use std::slice;
@@ -17,36 +17,33 @@ use types::{cef_string_userfree_utf16_t, cef_string_userfree_utf8_t, cef_string_
 //cef_string
 
 #[no_mangle]
-extern "C" fn string_wide_dtor(str: *mut wchar_t) {
-  deletearray(str as *mut c_void)
+unsafe extern "C" fn string_wide_dtor(buffer: *mut wchar_t) {
+    libc::free(buffer as *mut c_void)
 }
 
 #[no_mangle]
-extern "C" fn string_utf8_dtor(str: *mut u8) {
-  deletearray(str as *mut c_void)
+unsafe extern "C" fn string_utf8_dtor(buffer: *mut u8) {
+    libc::free(buffer as *mut c_void)
 }
 
 #[no_mangle]
-extern "C" fn string_utf16_dtor(str: *mut c_ushort) {
-  deletearray(str as *mut c_void)
+unsafe extern "C" fn string_utf16_dtor(buffer: *mut c_ushort) {
+    libc::free(buffer as *mut c_void)
 }
 
 #[no_mangle]
-pub extern "C" fn cef_string_userfree_wide_free(cs: *mut cef_string_userfree_wide_t) {
-   cef_string_wide_clear(cs);
-   delete(cs as *mut c_void)
+pub unsafe extern "C" fn cef_string_userfree_wide_free(buffer: *mut cef_string_userfree_wide_t) {
+    libc::free(buffer as *mut c_void)
 }
 
 #[no_mangle]
-pub extern "C" fn cef_string_userfree_utf8_free(cs: *mut cef_string_userfree_utf8_t) {
-   cef_string_utf8_clear(cs);
-   delete(cs as *mut c_void)
+pub unsafe extern "C" fn cef_string_userfree_utf8_free(buffer: *mut cef_string_userfree_utf8_t) {
+    libc::free(buffer as *mut c_void)
 }
 
 #[no_mangle]
-pub extern "C" fn cef_string_userfree_utf16_free(cs: *mut cef_string_userfree_utf16_t) {
-   cef_string_utf16_clear(cs);
-   delete(cs as *mut c_void)
+pub unsafe extern "C" fn cef_string_userfree_utf16_free(buffer: *mut cef_string_userfree_utf16_t) {
+    libc::free(buffer as *mut c_void)
 }
 
 #[no_mangle]
@@ -59,10 +56,10 @@ pub extern "C" fn cef_string_utf8_clear(cs: *mut cef_string_utf8_t) {
     }
 }
 
+#[inline(never)]
 #[no_mangle]
-pub extern "C" fn cef_string_userfree_utf8_alloc() -> *mut cef_string_utf8_t {
-    #![inline(never)]
-    new0::<cef_string_utf8_t>(1)
+pub unsafe extern "C" fn cef_string_userfree_utf8_alloc() -> *mut cef_string_utf8_t {
+    libc::malloc(1) as *mut cef_string_utf8_t
 }
 
 #[no_mangle]
@@ -71,7 +68,7 @@ pub extern "C" fn cef_string_utf8_set(src: *const u8, src_len: size_t, output: *
     unsafe {
        if copy != 0 {
            if !src.is_null() && src_len > 0 {
-             (*output).str = newarray0::<u8>(src_len + 1);
+             (*output).str = libc::malloc(src_len + 1) as *mut u8;
              if (*output).str.is_null() {
                  return 0;
              }
@@ -138,19 +135,23 @@ pub extern "C" fn cef_string_utf16_clear(cs: *mut cef_string_utf16_t) {
     }
 }
 
+#[inline(never)]
 #[no_mangle]
-pub extern "C" fn cef_string_userfree_utf16_alloc() -> *mut cef_string_utf16_t {
-    #![inline(never)]
-    new0::<cef_string_utf16_t>(1)
+pub unsafe extern "C" fn cef_string_userfree_utf16_alloc() -> *mut cef_string_utf16_t {
+    libc::malloc(1) as *mut cef_string_utf16_t
 }
 
 #[no_mangle]
-pub extern "C" fn cef_string_utf16_set(src: *const c_ushort, src_len: size_t, output: *mut cef_string_utf16_t, copy: c_int) -> c_int {
+pub extern "C" fn cef_string_utf16_set(src: *const c_ushort,
+                                       src_len: size_t,
+                                       output: *mut cef_string_utf16_t,
+                                       copy: c_int)
+                                       -> c_int {
     cef_string_utf16_clear(output);
     unsafe {
        if copy != 0 {
            if !src.is_null() && src_len > 0 {
-             (*output).str = newarray0::<c_ushort>(src_len + 1);
+             (*output).str = libc::malloc((src_len + 1) * 2) as *mut u16;
              if (*output).str.is_null() {
                  return 0;
              }
@@ -193,19 +194,23 @@ pub extern "C" fn cef_string_wide_clear(cs: *mut cef_string_wide_t) {
     }
 }
 
+#[inline(never)]
 #[no_mangle]
-pub extern "C" fn cef_string_userfree_wide_alloc() -> *mut cef_string_wide_t {
-    #![inline(never)]
-    new0::<cef_string_wide_t>(1)
+pub unsafe extern "C" fn cef_string_userfree_wide_alloc() -> *mut cef_string_wide_t {
+    libc::malloc(2) as *mut cef_string_wide_t
 }
 
 #[no_mangle]
-pub extern "C" fn cef_string_wide_set(src: *const wchar_t, src_len: size_t, output: *mut cef_string_wide_t, copy: c_int) -> c_int {
+pub extern "C" fn cef_string_wide_set(src: *const wchar_t,
+                                      src_len: size_t,
+                                      output: *mut cef_string_wide_t,
+                                      copy: c_int)
+                                      -> c_int {
     cef_string_wide_clear(output);
     unsafe {
        if copy != 0 {
            if !src.is_null() && src_len > 0 {
-             (*output).str = newarray0::<wchar_t>(src_len + 1);
+             (*output).str = libc::malloc(src_len + 1) as *mut i32;
              if (*output).str.is_null() {
                  return 0;
              }
@@ -222,3 +227,33 @@ pub extern "C" fn cef_string_wide_set(src: *const wchar_t, src_len: size_t, outp
     }
     return 1;
 }
+
+/// Wraps a borrowed reference to a UTF-16 CEF string.
+pub struct CefStringRef<'a> {
+    pub c_object: &'a *mut cef_string_utf16_t,
+}
+
+impl<'a> CefStringRef<'a> {
+    pub unsafe fn from_c_object(c_object: &'a *mut cef_string_utf16_t) -> CefStringRef<'a> {
+        CefStringRef {
+            c_object: c_object,
+        }
+    }
+}
+
+impl<'a> Show for CefStringRef<'a> {
+    fn fmt(&self, formatter: &mut Formatter) -> Result<(),FormatError> {
+        // FIXME(pcwalton): Would be more efficient sans the temporary.
+        unsafe {
+            let slice =
+                slice::raw::mut_buf_as_slice((**self.c_object).str,
+                                             (**self.c_object).length as uint,
+                                             |slice| {
+                                                 mem::transmute::<&mut [u16],&mut [u16]>(slice)
+                                             });
+            let temporary_string = String::from_utf16(slice).unwrap();
+            write!(formatter, "{}", temporary_string)
+        }
+    }
+}
+

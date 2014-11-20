@@ -10,38 +10,52 @@ pub enum cef_string_multimap_t {}
 pub enum cef_string_list_t {}
 pub enum cef_text_input_context_t {}
 pub enum cef_event_handle_t {}
+pub enum cef_string_visitor_t {}
+pub enum cef_domvisitor_t {}
 
 //these all need to be done...
 pub enum cef_binary_value_val {}
 pub type cef_binary_value = *mut cef_binary_value_val;
 pub enum cef_dictionary_value_val {}
 pub type cef_dictionary_value = *mut cef_dictionary_value_val;
-pub enum cef_client_t {}
+pub enum cef_context_menu_handler_t {}
+pub enum cef_cursor_handle_t {}
+pub enum cef_dialog_handler_t {}
+pub enum cef_display_handler_t {}
+pub enum cef_download_handler_t {}
+pub enum cef_drag_data_t {}
+pub enum cef_drag_handler_t {}
+pub enum cef_drag_operations_mask_t {}
+pub enum cef_focus_handler_t {}
+pub enum cef_geolocation_handler_t {}
+pub enum cef_jsdialog_handler_t {}
+pub enum cef_keyboard_handler_t {}
+pub enum cef_life_span_handler_t {}
+pub enum cef_load_handler_t {}
 pub enum cef_request_t {}
 pub enum cef_response_t {}
 pub enum cef_urlrequest_client_t {}
-pub enum cef_frame_val {}
-pub type cef_frame = *mut cef_frame_val;
 pub enum cef_domnode_val {}
 pub type cef_domnode = *mut cef_domnode_val;
 pub enum cef_load_handler_val {}
 pub type cef_load_handler = *mut cef_load_handler_val;
+pub enum cef_request_handler_t {}
 pub enum cef_request_val {}
 pub type cef_request = *mut cef_request_val;
 pub enum cef_navigation_type_val {}
 pub type cef_navigation_type = *mut cef_navigation_type_val;
 pub enum cef_request_context_t {}
-pub enum cef_window_info_t {}
 pub enum cef_browser_settings_t {}
-pub enum cef_v8context_val {}
-pub type cef_v8context = *mut cef_v8context_val;
+pub enum cef_screen_info_t {}
+pub enum cef_v8context_t {}
+pub type cef_v8context = *mut cef_v8context_t;
 pub enum cef_v8exception_val {}
 pub type cef_v8exception = *mut cef_v8exception_val;
 pub enum cef_v8stack_trace_val {}
 pub type cef_v8stack_trace = *mut cef_v8stack_trace_val;
-pub enum cef_window_handle_t {} //FIXME: wtf is this
+pub type cef_window_handle_t = *mut c_void; // NSView* on Mac
 
-pub type cef_string_t = cef_string_utf8; //FIXME: this is #defined...
+pub type cef_string_t = cef_string_utf16; //FIXME: this is #defined...
 pub type cef_string_userfree_t = cef_string_t; //FIXME: this is #defined...
 
 pub type cef_string_utf8_t = cef_string_utf8;
@@ -49,7 +63,7 @@ pub type cef_string_userfree_utf8_t = cef_string_utf8;
 pub struct cef_string_utf8 {
     pub str: *mut u8,
     pub length: size_t,
-    pub dtor: Option<extern "C" fn(str: *mut u8)>,
+    pub dtor: Option<unsafe extern "C" fn(str: *mut u8)>,
 }
 
 pub type cef_string_utf16_t = cef_string_utf16;
@@ -57,7 +71,7 @@ pub type cef_string_userfree_utf16_t = cef_string_utf16;
 pub struct cef_string_utf16 {
     pub str: *mut c_ushort,
     pub length: size_t,
-    pub dtor: Option<extern "C" fn(str: *mut c_ushort)>,
+    pub dtor: Option<unsafe extern "C" fn(str: *mut c_ushort)>,
 }
 
 pub type cef_string_wide_t = cef_string_wide;
@@ -65,7 +79,7 @@ pub type cef_string_userfree_wide_t = cef_string_wide;
 pub struct cef_string_wide {
     pub str: *mut wchar_t,
     pub length: size_t,
-    pub dtor: Option<extern "C" fn(str: *mut wchar_t)>,
+    pub dtor: Option<unsafe extern "C" fn(str: *mut wchar_t)>,
 }
 
 pub type cef_main_args_t = cef_main_args;
@@ -1223,6 +1237,8 @@ pub struct cef_run_file_dialog_callback {
 // in the comments.
 ///
 pub type cef_browser_host_t = cef_browser_host;
+
+#[repr(C)]
 pub struct cef_browser_host {
   ///
   // Base structure.
@@ -1233,14 +1249,6 @@ pub struct cef_browser_host {
   // Returns the hosted browser object.
   ///
   pub get_browser: Option<extern "C" fn(browser_host: *mut cef_browser_host) -> *mut cef_browser>,
-
-  ///
-  // Call this function before destroying a contained browser window. This
-  // function performs any internal cleanup that may be needed before the
-  // browser window is destroyed. See cef_life_span_handler_t::do_close()
-  // documentation for additional usage information.
-  ///
-  pub parent_window_will_close: Option<extern "C" fn(browser_host: *mut cef_browser_host)>,
 
   ///
   // Request that the browser close. The JavaScript 'onbeforeunload' event will
@@ -1259,6 +1267,13 @@ pub struct cef_browser_host {
   // to the window. Otherwise, focus will be removed.
   ///
   pub set_focus: Option<extern "C" fn(browser_host: *mut cef_browser_host, force_close: c_int)>,
+
+  //
+  // Set whether the window containing the browser is visible
+  // (minimized/unminimized, app hidden/unhidden, etc). Only used on Mac OS X.
+  //
+  pub set_window_visibility: Option<extern "C" fn(browser_host: *mut cef_browser_host,
+                                                  visible: c_int)>,
 
   ///
   // Retrieve the window handle for this browser.
@@ -1362,6 +1377,20 @@ pub struct cef_browser_host {
   ///
   pub is_mouse_cursor_change_disabled: Option<extern "C" fn(browser_host: *mut cef_browser_host) -> c_int>,
 
+  //
+  // If a misspelled word is currently selected in an editable node calling this
+  // function will replace it with the specified |word|.
+  //
+  pub replace_misspelling: Option<extern "C" fn(browser_host: *mut cef_browser_host,
+                                                word: *const cef_string_t)>,
+
+  //
+  // Add the specified |word| to the spelling dictionary.
+  //
+  pub add_word_to_dictionary: Option<extern "C" fn(browser_host: *mut cef_browser_host,
+                                                   word: *const cef_string_t)>,
+
+
   ///
   // Returns true (1) if window rendering is disabled.
   ///
@@ -1458,8 +1487,101 @@ pub struct cef_browser_host {
   ///
   // Performs any additional actions after NSTextInputClient handles the event.
   ///
-  pub handle_key_event_after_text_input_client: Option<extern "C" fn(browser_host: *mut cef_browser_host,
-                                                       key_event: *mut cef_event_handle_t)>,
+  pub handle_key_event_after_text_input_client:
+      Option<extern "C" fn(browser_host: *mut cef_browser_host,
+                           key_event: *mut cef_event_handle_t)>,
+
+  //
+  // Call this function when the user drags the mouse into the web view (before
+  // calling DragTargetDragOver/DragTargetLeave/DragTargetDrop). |drag_data|
+  // should not contain file contents as this type of data is not allowed to be
+  // dragged into the web view. File contents can be removed using
+  // cef_drag_data_t::ResetFileContents (for example, if |drag_data| comes from
+  // cef_render_handler_t::StartDragging). This function is only used when
+  // window rendering is disabled.
+  //
+  pub drag_target_drag_enter: Option<extern "C" fn(browser_host: *mut cef_browser_host_t,
+                                                   drag_data: *mut cef_drag_data_t,
+                                                   event: *const cef_mouse_event_t,
+                                                   allowed_ops: cef_drag_operations_mask_t)>,
+
+
+  //
+  // Call this function each time the mouse is moved across the web view during
+  // a drag operation (after calling DragTargetDragEnter and before calling
+  // DragTargetDragLeave/DragTargetDrop). This function is only used when window
+  // rendering is disabled.
+  //
+  pub drag_target_drag_over: Option<extern "C" fn(browser_host: *mut cef_browser_host_t,
+                                                  event: *const cef_mouse_event_t,
+                                                  allowed_ops: cef_drag_operations_mask_t)>,
+
+  //
+  // Call this function when the user drags the mouse out of the web view (after
+  // calling DragTargetDragEnter). This function is only used when window
+  // rendering is disabled.
+  //
+  pub drag_target_drag_leave: Option<extern "C" fn(browser_host: *mut cef_browser_host_t)>,
+
+  //
+  // Call this function when the user completes the drag operation by dropping
+  // the object onto the web view (after calling DragTargetDragEnter). The
+  // object being dropped is |drag_data|, given as an argument to the previous
+  // DragTargetDragEnter call. This function is only used when window rendering
+  // is disabled.
+  //
+  pub drag_target_drop: Option<extern "C" fn(browser_host: *mut cef_browser_host_t,
+                                             event: *const cef_mouse_event_t)>,
+
+  //
+  // Call this function when the drag operation started by a
+  // cef_render_handler_t::StartDragging call has ended either in a drop or by
+  // being cancelled. |x| and |y| are mouse coordinates relative to the upper-
+  // left corner of the view. If the web view is both the drag source and the
+  // drag target then all DragTarget* functions should be called before
+  // DragSource* mthods. This function is only used when window rendering is
+  // disabled.
+  //
+  pub drag_source_ended_at: Option<extern "C" fn(browser_host: *mut cef_browser_host_t,
+                                                 x: c_int,
+                                                 y: c_int,
+                                                 op: cef_drag_operations_mask_t)>,
+
+  //
+  // Call this function when the drag operation started by a
+  // cef_render_handler_t::StartDragging call has completed. This function may
+  // be called immediately without first calling DragSourceEndedAt to cancel a
+  // drag operation. If the web view is both the drag source and the drag target
+  // then all DragTarget* functions should be called before DragSource* mthods.
+  // This function is only used when window rendering is disabled.
+  //
+  pub drag_source_system_drag_ended: Option<extern "C" fn(browser_host: *mut cef_browser_host_t)>,
+
+  //
+  // Instructs the browser to perform an accelerated composite. The appropriate
+  // Direct3D or OpenGL state must have been set up before calling this
+  // function.
+  //
+  pub composite: Option<extern "C" fn(browser_host: *mut cef_browser_host_t)>,
+
+  //
+  // Instructs the browser to initialize accelerated compositing. The
+  // appropriate Direct3D or OpenGL state must have been set up before calling
+  // this function.
+  //
+  pub initialize_compositing: Option<extern "C" fn(browser_host: *mut cef_browser_host_t)>,
+
+  // Servo-specific fields.
+  pub extra: cef_browser_host_extra,
+}
+
+pub struct cef_browser_host_extra {
+    /// The reference count of the browser host.
+    pub ref_count: uint,
+    /// A reference to the browser.
+    pub browser: *mut cef_browser_t,
+    /// A reference to the client.
+    pub client: *mut cef_client_t,
 }
 
 
@@ -1546,22 +1668,22 @@ pub struct cef_browser {
   ///
   // Returns the main (top-level) frame for the browser window.
   ///
-  pub get_main_frame: Option<extern "C" fn(browser: *mut cef_browser) -> *mut cef_frame>,
+  pub get_main_frame: Option<extern "C" fn(browser: *mut cef_browser) -> *mut cef_frame_t>,
 
   ///
   // Returns the focused frame for the browser window.
   ///
-  pub get_focused_frame: Option<extern "C" fn(browser: *mut cef_browser) -> *mut cef_frame>,
+  pub get_focused_frame: Option<extern "C" fn(browser: *mut cef_browser) -> *mut cef_frame_t>,
 
   ///
   // Returns the frame with the specified identifier, or NULL if not found.
   ///
-  pub get_frame_byident: Option<extern "C" fn(browser: *mut cef_browser, identifier: c_longlong) -> *mut cef_frame>,
+  pub get_frame_byident: Option<extern "C" fn(browser: *mut cef_browser, identifier: c_longlong) -> *mut cef_frame_t>,
 
   ///
   // Returns the frame with the specified name, or NULL if not found.
   ///
-  pub get_frame: Option<extern "C" fn(browser: *mut cef_browser, name: *const cef_string_t) -> *mut cef_frame>,
+  pub get_frame: Option<extern "C" fn(browser: *mut cef_browser, name: *const cef_string_t) -> *mut cef_frame_t>,
 
   ///
   // Returns the number of frames that currently exist.
@@ -1586,6 +1708,19 @@ pub struct cef_browser {
   ///
   pub send_process_message: Option<extern "C" fn(browser: *mut cef_browser, target_process: cef_process_id_t,
                              message: *mut cef_process_message) -> c_int>,
+
+  // Servo-specific stuff follows:
+  pub extra: cef_browser_extra,
+}
+
+/// Servo-specific extra data for browsers.
+pub struct cef_browser_extra {
+    /// The reference count of the browser.
+    pub ref_count: uint,
+    /// A pointer to the browser's primary frame.
+    pub frame: *mut cef_frame_t,
+    /// A pointer to the browser's host.
+    pub host: *mut cef_browser_host_t,
 }
 
 ///
@@ -1637,7 +1772,7 @@ pub struct cef_render_process_handler {
   ///
   pub on_before_navigation: Option<extern "C" fn(render_handler: *mut cef_render_process_handler,
                               browser: *mut cef_browser,
-                              frame: *mut cef_frame,
+                              frame: *mut cef_frame_t,
                               request: *mut cef_request,
                               navigation_type: *mut cef_navigation_type,
                               is_redirect: c_int) -> c_int>,
@@ -1652,7 +1787,7 @@ pub struct cef_render_process_handler {
   ///
   pub on_context_created: Option<extern "C" fn(render_handler: *mut cef_render_process_handler,
                                 browser: *mut cef_browser,
-                                frame: *mut cef_frame,
+                                frame: *mut cef_frame_t,
                                 context: *mut cef_v8context)>,
 
   ///
@@ -1661,7 +1796,7 @@ pub struct cef_render_process_handler {
   ///
   pub on_context_released: Option<extern "C" fn(render_handler: *mut cef_render_process_handler,
                                  browser: *mut cef_browser,
-                                 frame: *mut cef_frame,
+                                 frame: *mut cef_frame_t,
                                  context: *mut cef_v8context)>,
 
   ///
@@ -1671,7 +1806,7 @@ pub struct cef_render_process_handler {
   ///
   pub on_uncaught_exception: Option<extern "C" fn(render_handler: *mut cef_render_process_handler,
                                  browser: *mut cef_browser,
-                                 frame: *mut cef_frame,
+                                 frame: *mut cef_frame_t,
                                  context: *mut cef_v8context,
                                  exception: *mut cef_v8exception,
                                  stackTrace: *mut cef_v8stack_trace)>,
@@ -1686,7 +1821,7 @@ pub struct cef_render_process_handler {
   ///
   pub on_focused_node_changed: Option<extern "C" fn(render_handler: *mut cef_render_process_handler,
                                  browser: *mut cef_browser,
-                                 frame: *mut cef_frame,
+                                 frame: *mut cef_frame_t,
                                  node: *mut cef_domnode)>,
 
   ///
@@ -1908,3 +2043,432 @@ pub struct cef_post_data {
   ///
   pub remove_elements: Option<extern "C" fn(post_data: *mut cef_post_data)>,
 }
+
+//
+// Structure used to represent a frame in the browser window. When used in the
+// browser process the functions of this structure may be called on any thread
+// unless otherwise indicated in the comments. When used in the render process
+// the functions of this structure may only be called on the main thread.
+//
+struct _cef_frame_t {
+  //
+  // Base structure.
+  //
+  pub base: cef_base_t,
+
+  //
+  // True if this object is currently attached to a valid frame.
+  //
+  pub is_valid: extern "C" fn(frame: *mut cef_frame_t),
+
+  //
+  // Execute undo in this frame.
+  //
+  pub undo: extern "C" fn(frame: *mut cef_frame_t),
+
+  //
+  // Execute redo in this frame.
+  //
+  pub redo: extern "C" fn(frame: *mut cef_frame_t),
+
+  //
+  // Execute cut in this frame.
+  //
+  pub cut: extern "C" fn(frame: *mut cef_frame_t),
+
+  //
+  // Execute copy in this frame.
+  //
+  pub copy: extern "C" fn(frame: *mut cef_frame_t),
+
+  //
+  // Execute paste in this frame.
+  //
+  pub paste: extern "C" fn(frame: *mut cef_frame_t),
+
+  //
+  // Execute delete in this frame.
+  //
+  pub del: extern "C" fn(frame: *mut cef_frame_t),
+
+  //
+  // Execute select all in this frame.
+  //
+  pub select_all: extern "C" fn(frame: *mut cef_frame_t),
+
+  //
+  // Save this frame's HTML source to a temporary file and open it in the
+  // default text viewing application. This function can only be called from the
+  // browser process.
+  //
+  pub view_source: extern "C" fn(frame: *mut cef_frame_t),
+
+  //
+  // Retrieve this frame's HTML source as a string sent to the specified
+  // visitor.
+  //
+  pub get_source: extern "C" fn(frame: *mut cef_frame_t, visitor: *mut cef_string_visitor_t),
+
+  //
+  // Retrieve this frame's display text as a string sent to the specified
+  // visitor.
+  //
+  pub get_text: extern "C" fn(frame: *mut cef_frame_t, visitor: *mut cef_string_visitor_t),
+
+  //
+  // Load the request represented by the |request| object.
+  //
+  pub load_request: extern "C" fn(frame: *mut cef_frame_t, request: *mut cef_request_t),
+
+  //
+  // Load the specified |url|.
+  //
+  pub load_url: extern "C" fn(frame: *mut cef_frame_t, url: *mut cef_string_t),
+
+  //
+  // Load the contents of |string_val| with the specified dummy |url|. |url|
+  // should have a standard scheme (for example, http scheme) or behaviors like
+  // link clicks and web security restrictions may not behave as expected.
+  //
+  pub load_string: extern "C" fn(frame: *mut cef_frame_t,
+                                 string_val: *mut cef_string_t,
+                                 url: *const cef_string_t),
+
+  //
+  // Execute a string of JavaScript code in this frame. The |script_url|
+  // parameter is the URL where the script in question can be found, if any. The
+  // renderer may request this URL to show the developer the source of the
+  // error.  The |start_line| parameter is the base line number to use for error
+  // reporting.
+  //
+  pub execute_java_script: extern "C" fn(frame: *mut cef_frame_t,
+                                         code: *mut cef_string_t,
+                                         script_url: *const cef_string_t,
+                                         start_line: c_int),
+
+  //
+  // Returns true (1) if this is the main (top-level) frame.
+  //
+  pub is_main: extern "C" fn(frame: *mut cef_frame_t) -> c_int,
+
+  //
+  // Returns true (1) if this is the focused frame.
+  //
+  pub is_focused: extern "C" fn(frame: *mut cef_frame_t) -> c_int,
+
+  //
+  // Returns the name for this frame. If the frame has an assigned name (for
+  // example, set via the iframe "name" attribute) then that value will be
+  // returned. Otherwise a unique name will be constructed based on the frame
+  // parent hierarchy. The main (top-level) frame will always have an NULL name
+  // value.
+  //
+  // The resulting string must be freed by calling cef_string_userfree_free().
+  pub get_name: extern "C" fn(frame: *mut cef_frame_t) -> cef_string_userfree_t,
+
+  //
+  // Returns the globally unique identifier for this frame.
+  //
+  pub get_identifier: extern "C" fn(frame: *mut cef_frame_t) -> i64,
+
+  //
+  // Returns the parent of this frame or NULL if this is the main (top-level)
+  // frame.
+  //
+  pub get_parent: extern "C" fn(frame: *mut cef_frame_t) -> *mut cef_frame_t,
+
+  //
+  // Returns the URL currently loaded in this frame.
+  //
+  // The resulting string must be freed by calling cef_string_userfree_free().
+  pub get_url: extern "C" fn(frame: *mut cef_frame_t) -> cef_string_userfree_t,
+
+  //
+  // Returns the browser that this frame belongs to.
+  //
+  pub get_browser: extern "C" fn(frame: *mut cef_frame_t) -> *mut cef_browser_t,
+
+  //
+  // Get the V8 context associated with the frame. This function can only be
+  // called from the render process.
+  //
+  pub get_v8context: extern "C" fn(frame: *mut cef_frame_t) -> *mut cef_v8context_t,
+
+  //
+  // Visit the DOM document. This function can only be called from the render
+  // process.
+  //
+  pub visit_dom: extern "C" fn(frame: *mut cef_frame_t, visitor: *mut cef_domvisitor_t),
+
+  // Servo-specific fields.
+  pub extra: cef_frame_extra,
+}
+
+pub type cef_frame_t = _cef_frame_t;
+
+pub struct cef_frame_extra {
+    /// The reference count of the frame.
+    pub ref_count: uint,
+}
+
+//
+// Implement this structure to handle events when window rendering is disabled.
+// The functions of this structure will be called on the UI thread.
+//
+pub struct _cef_render_handler_t {
+  // Base structure.
+  //
+  pub base: cef_base_t,
+
+  //
+  // Called to retrieve the root window rectangle in screen coordinates. Return
+  // true (1) if the rectangle was provided.
+  //
+  pub get_root_screen_rect: extern "C" fn(this: *mut cef_render_handler_t,
+                                          browser: *mut cef_browser_t,
+                                          rect: *mut cef_rect_t)
+                                          -> c_int,
+
+  //
+  // Called to retrieve the view rectangle which is relative to screen
+  // coordinates. Return true (1) if the rectangle was provided.
+  //
+  pub get_view_rect: extern "C" fn(this: *mut cef_render_handler_t,
+                                   browser: *mut cef_browser_t,
+                                   rect: *mut cef_rect_t)
+                                   -> c_int,
+
+  //
+  // Called to retrieve the translation from view coordinates to actual screen
+  // coordinates. Return true (1) if the screen coordinates were provided.
+  //
+  pub get_screen_point: extern "C" fn(this: *mut cef_render_handler_t,
+                                      browser: *mut cef_browser_t,
+                                      viewX: c_int,
+                                      viewY: c_int,
+                                      screenX: c_int,
+                                      screenY: c_int)
+                                      -> c_int,
+
+  //
+  // Called to allow the client to fill in the CefScreenInfo object with
+  // appropriate values. Return true (1) if the |screen_info| structure has been
+  // modified.
+  //
+  // If the screen info rectangle is left NULL the rectangle from GetViewRect
+  // will be used. If the rectangle is still NULL or invalid popups may not be
+  // drawn correctly.
+  //
+  pub get_screen_info: extern "C" fn(this: *mut cef_render_handler_t,
+                                     browser: *mut cef_browser_t,
+                                     screen_info: *mut cef_screen_info_t)
+                                     -> c_int,
+
+  //
+  // Called when the browser wants to show or hide the popup widget. The popup
+  // should be shown if |show| is true (1) and hidden if |show| is false (0).
+  //
+  pub on_popup_show: extern "C" fn(this: *mut cef_render_handler_t,
+                                   browser: *mut cef_browser_t,
+                                   show: c_int),
+
+  //
+  // Called when the browser wants to move or resize the popup widget. |rect|
+  // contains the new location and size.
+  //
+  pub on_popup_size: extern "C" fn(this: *mut cef_render_handler_t,
+                                   browser: *mut cef_browser_t,
+                                   rect: *const cef_rect_t),
+
+  //
+  // Called when an element should be painted. |type| indicates whether the
+  // element is the view or the popup widget. |buffer| contains the pixel data
+  // for the whole image. |dirtyRects| contains the set of rectangles that need
+  // to be repainted. On Windows |buffer| will be |width|*|height|*4 bytes in
+  // size and represents a BGRA image with an upper-left origin.
+  //
+  pub on_paint: extern "C" fn(this: *mut cef_render_handler_t,
+                              browser: *mut cef_browser_t,
+                              paint_type: cef_paint_element_type_t,
+                              dirtyRectsCount: size_t,
+                              dirtyRects: *const cef_rect_t,
+                              buffer: *const c_void,
+                              width: c_int,
+                              height: c_int),
+
+  //
+  // Called when the browser window's cursor has changed.
+  //
+  pub on_cursor_change: extern "C" fn(this: *mut cef_render_handler_t,
+                                      browser: *mut cef_browser_t,
+                                      cursor: cef_cursor_handle_t),
+
+  //
+  // Called when the user starts dragging content in the web view. Contextual
+  // information about the dragged content is supplied by |drag_data|. OS APIs
+  // that run a system message loop may be used within the StartDragging call.
+  //
+  // Return false (0) to abort the drag operation. Don't call any of
+  // cef_browser_host_t::DragSource*Ended* functions after returning false (0).
+  //
+  // Return true (1) to handle the drag operation. Call
+  // cef_browser_host_t::DragSourceEndedAt and DragSourceSystemDragEnded either
+  // synchronously or asynchronously to inform the web view that the drag
+  // operation has ended.
+  //
+  pub start_dragging: extern "C" fn(this: *mut cef_render_handler_t,
+                                    browser: *mut cef_browser_t,
+                                    drag_data: *mut cef_drag_data_t,
+                                    allowed_ops: cef_drag_operations_mask_t,
+                                    x: c_int,
+                                    y: c_int)
+                                    -> c_int,
+
+  //
+  // Called when the web view wants to update the mouse cursor during a drag &
+  // drop operation. |operation| describes the allowed operation (none, move,
+  // copy, link).
+  //
+  pub update_drag_cursor: extern "C" fn(this: *mut cef_render_handler_t,
+                                        browser: *mut cef_browser_t,
+                                        operation: cef_drag_operations_mask_t),
+
+  //
+  // Called when the scroll offset has changed.
+  //
+  pub on_scroll_offset_changed: extern "C" fn(this: *mut cef_render_handler_t,
+                                              browser: *mut cef_browser_t),
+
+  //
+  // Called to retrieve the backing size of the view rectangle which is
+  // relative to screen coordinates. On HiDPI displays, the backing size
+  // can differ from the view size as returned by |GetViewRect|. Return
+  // true if the rectangle was provided.
+  //
+  pub get_backing_rect: extern "C" fn(this: *mut cef_render_handler_t,
+                                      browser: *mut cef_browser_t,
+                                      rect: *mut cef_rect_t)
+                                      -> c_int,
+
+  //
+  // Called when an element should be presented (e.g. double buffers should
+  // page flip). This is called only during accelerated compositing.
+  //
+  pub on_present: extern "C" fn(this: *mut cef_render_handler_t,
+                                browser: *mut cef_browser_t),
+}
+
+pub type cef_render_handler_t = _cef_render_handler_t;
+
+#[repr(C)]
+pub struct _cef_window_info_t {
+    window_name: cef_string_t,
+    x: c_int,
+    y: c_int,
+    width: c_int,
+    height: c_int,
+    hidden: c_int,
+    parent_view: cef_window_handle_t,
+    pub windowless_rendering_enabled: c_int,
+    transparent_painting_enabled: c_int,
+    view: cef_window_handle_t,
+}
+
+pub type cef_window_info_t = _cef_window_info_t;
+
+//
+// Implement this structure to provide handler implementations.
+//
+pub struct _cef_client_t {
+  //
+  // Base structure.
+  //
+  pub base: cef_base_t,
+
+  //
+  // Return the handler for context menus. If no handler is provided the default
+  // implementation will be used.
+  //
+  pub get_context_menu_handler: extern "C" fn(this: *mut cef_client_t)
+                                              -> *mut cef_context_menu_handler_t,
+
+  //
+  // Return the handler for dialogs. If no handler is provided the default
+  // implementation will be used.
+  //
+  pub get_dialog_handler: extern "C" fn(this: *mut cef_client_t) -> *mut cef_dialog_handler_t,
+
+  //
+  // Return the handler for browser display state events.
+  //
+  pub get_display_handler: extern "C" fn(this: *mut cef_client_t) -> *mut cef_display_handler_t,
+
+  //
+  // Return the handler for download events. If no handler is returned downloads
+  // will not be allowed.
+  //
+  pub get_download_handler: extern "C" fn(this: *mut cef_client_t) -> *mut cef_download_handler_t,
+
+  //
+  // Return the handler for drag events.
+  //
+  pub get_drag_handler: extern "C" fn(this: *mut cef_client_t) -> *mut cef_drag_handler_t,
+
+  //
+  // Return the handler for focus events.
+  //
+  pub get_focus_handler: extern "C" fn(this: *mut cef_client_t) -> *mut cef_focus_handler_t,
+
+  //
+  // Return the handler for geolocation permissions requests. If no handler is
+  // provided geolocation access will be denied by default.
+  //
+  pub get_geolocation_handler: extern "C" fn(this: *mut cef_client_t)
+                                             -> *mut cef_geolocation_handler_t,
+
+  //
+  // Return the handler for JavaScript dialogs. If no handler is provided the
+  // default implementation will be used.
+  //
+  pub get_jsdialog_handler: extern "C" fn(this: *mut cef_client_t) -> *mut cef_jsdialog_handler_t,
+
+  //
+  // Return the handler for keyboard events.
+  //
+  pub get_keyboard_handler: extern "C" fn(this: *mut cef_client_t) -> *mut cef_keyboard_handler_t,
+
+  //
+  // Return the handler for browser life span events.
+  //
+  pub get_life_span_handler: extern "C" fn(this: *mut cef_client_t)
+                                           -> *mut cef_life_span_handler_t,
+
+  //
+  // Return the handler for browser load status events.
+  //
+  pub get_load_handler: extern "C" fn(this: *mut cef_client_t) -> *mut cef_load_handler_t,
+
+  //
+  // Return the handler for off-screen rendering events.
+  //
+  pub get_render_handler: extern "C" fn(this: *mut cef_client_t) -> *mut cef_render_handler_t,
+
+  //
+  // Return the handler for browser request events.
+  //
+  pub get_request_handler: extern "C" fn(this: *mut cef_client_t) -> *mut cef_request_handler_t,
+
+  //
+  // Called when a new message is received from a different process. Return true
+  // (1) if the message was handled or false (0) otherwise. Do not keep a
+  // reference to or attempt to access the message outside of this callback.
+  //
+  pub on_process_message_received: extern "C" fn(this: *mut cef_client_t,
+                                                 browser: *mut cef_browser_t,
+                                                 source_process: cef_process_id_t,
+                                                 message: *mut cef_process_message_t)
+                                                 -> c_int,
+}
+
+pub type cef_client_t = _cef_client_t;
+

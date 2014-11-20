@@ -116,6 +116,26 @@ impl Window {
         }
     }
 
+    pub fn poll_events(&self) -> WindowEvent {
+        {
+            let mut event_queue = self.event_queue.borrow_mut();
+            if !event_queue.is_empty() {
+                return event_queue.remove(0).unwrap();
+            }
+        }
+
+        self.glfw.poll_events();
+        for (_, event) in glfw::flush_messages(&self.events) {
+            self.handle_window_event(&self.glfw_window, event);
+        }
+
+        if self.glfw_window.should_close() {
+            QuitWindowEvent
+        } else {
+            self.event_queue.borrow_mut().remove(0).unwrap_or(IdleWindowEvent)
+        }
+    }
+
     pub unsafe fn set_nested_event_loop_listener(
             &self,
             listener: *mut NestedEventLoopListener + 'static) {
@@ -202,6 +222,14 @@ impl WindowMethods for Window {
              sender: sender,
          } as Box<CompositorProxy+Send>,
          box receiver as Box<CompositorReceiver>)
+    }
+
+    fn prepare_for_composite(&self) -> bool {
+        true
+    }
+
+    fn url_changed(&self, _: &str) {
+        // TODO(pcwalton)
     }
 }
 
