@@ -1472,6 +1472,12 @@ pub struct cef_browser_host {
   pub send_capture_lost_event: Option<extern "C" fn(browser_host: *mut cef_browser_host)>,
 
   ///
+  // Notify the browser that the window hosting it is about to be moved or
+  // resized. This function is only used on Windows and Linux.
+  ///
+  pub notify_move_or_resize_started: Option<extern "C" fn(browser_host: *mut cef_browser_host)>,
+
+  ///
   // Get the NSTextInputContext implementation for enabling IME on Mac when
   // window rendering is disabled.
   ///
