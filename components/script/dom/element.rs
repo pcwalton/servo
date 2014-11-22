@@ -979,6 +979,7 @@ impl<'a> VirtualMethods for JSRef<'a, Element> {
 
         match attr.local_name() {
             &atom!("style") => {
+                // Modifying the `style` attribute might change style.
                 let node: JSRef<Node> = NodeCast::from_ref(*self);
                 let doc = document_from_node(*self).root();
                 let base_url = doc.url().clone();
@@ -991,6 +992,7 @@ impl<'a> VirtualMethods for JSRef<'a, Element> {
                 }
             }
             &atom!("class") => {
+                // Modifying a class can change style.
                 let node: JSRef<Node> = NodeCast::from_ref(*self);
                 if node.is_in_doc() {
                     let document = document_from_node(*self).root();
@@ -998,6 +1000,7 @@ impl<'a> VirtualMethods for JSRef<'a, Element> {
                 }
             }
             &atom!("id") => {
+                // Modifying an ID might change style.
                 let node: JSRef<Node> = NodeCast::from_ref(*self);
                 let value = attr.value();
                 if node.is_in_doc() {
@@ -1005,12 +1008,12 @@ impl<'a> VirtualMethods for JSRef<'a, Element> {
                     if !value.as_slice().is_empty() {
                         let value = Atom::from_slice(value.as_slice());
                         doc.register_named_element(*self, value);
-                    } else {
-                        doc.content_changed(node, OtherNodeDamage);
                     }
+                    doc.content_changed(node, NodeStyleDamaged);
                 }
             }
             _ => {
+                // Modifying any other attribute might change arbitrary things.
                 let node: JSRef<Node> = NodeCast::from_ref(*self);
                 if node.is_in_doc() {
                     let document = document_from_node(*self).root();
@@ -1028,6 +1031,7 @@ impl<'a> VirtualMethods for JSRef<'a, Element> {
 
         match attr.local_name() {
             &atom!("style") => {
+                // Modifying the `style` attribute might change style.
                 *self.style_attribute.borrow_mut() = None;
 
                 let node: JSRef<Node> = NodeCast::from_ref(*self);
@@ -1037,19 +1041,32 @@ impl<'a> VirtualMethods for JSRef<'a, Element> {
                 }
             }
             &atom!("id") => {
+                // Modifying an ID can change style.
                 let node: JSRef<Node> = NodeCast::from_ref(*self);
                 let value = attr.value();
-                if node.is_in_doc() && !value.as_slice().is_empty() {
+                if node.is_in_doc() {
                     let doc = document_from_node(*self).root();
-                    let value = Atom::from_slice(value.as_slice());
-                    doc.unregister_named_element(*self, value);
+                    if !value.as_slice().is_empty() {
+                        let value = Atom::from_slice(value.as_slice());
+                        doc.unregister_named_element(*self, value);
+                    }
+                    doc.content_changed(node, NodeStyleDamaged);
+                }
+            }
+            &atom!("class") => {
+                // Modifying a class can change style.
+                let node: JSRef<Node> = NodeCast::from_ref(*self);
+                if node.is_in_doc() {
+                    let document = document_from_node(*self).root();
+                    document.content_changed(node, NodeStyleDamaged);
                 }
             }
             _ => {
+                // Modifying any other attribute might change arbitrary things.
                 let node: JSRef<Node> = NodeCast::from_ref(*self);
                 if node.is_in_doc() {
                     let doc = document_from_node(*self).root();
-                    doc.content_changed(node, NodeStyleDamaged);
+                    doc.content_changed(node, OtherNodeDamage);
                 }
             }
         }

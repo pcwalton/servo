@@ -296,7 +296,6 @@ impl<'a> PrivateNodeHelpers for JSRef<'a, Node> {
             vtable_for(&node).unbind_from_tree(parent_in_doc);
         }
 
-        document.content_changed(self, OtherNodeDamage);
         document.content_changed(*parent, OtherNodeDamage);
     }
 

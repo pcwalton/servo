@@ -165,9 +165,6 @@ impl Page {
     }
 
     pub fn layout(&self) -> &LayoutRPC {
-        // FIXME This should probably be ReflowForQuery, not Display. All queries currently
-        // currently rely on the display list, which means we can't destroy it by
-        // doing a query reflow.
         self.flush_layout(ReflowForDisplay, NoQuery);
         let layout_rpc: &LayoutRPC = &*self.layout_rpc;
         layout_rpc
