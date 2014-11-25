@@ -50,6 +50,24 @@ pub fn browser_callback_after_created(browser: CefBrowser) {
     browser.downcast().callback_executed.set(true);
 }
 
+cef_class_impl! {
+    ServoCefBrowser : CefBrowser, cef_browser_t {}
+}
+
+local_data_key!(pub GLOBAL_BROWSERS: RefCell<Vec<CefBrowser>>)
+
+pub fn browser_callback_after_created(browser: CefBrowser) {
+    if browser.downcast().client.is_null_cef_object() {
+        return
+    }
+    let client = browser.downcast().client.clone();
+    let life_span_handler = client.get_life_span_handler();
+    if life_span_handler.is_not_null_cef_object() {
+        life_span_handler.on_after_created(browser.clone());
+    }
+    browser.downcast().callback_executed.set(true);
+}
+
 fn browser_host_create(client: CefClient, callback_executed: bool) -> CefBrowser {
     let mut urls = Vec::new();
     urls.push("http://s27.postimg.org/vqbtrolyr/servo.jpg".to_string());
@@ -87,7 +105,6 @@ cef_static_method_impls! {
         browser_host_create(client, false);
         1i32
     }
-
     fn cef_browser_host_create_browser_sync(_window_info: *const cef_window_info_t,
                                             client: *mut cef_client_t,
                                             _url: *const cef_string_t,
