@@ -21,7 +21,7 @@ use types::{cef_load_handler_t, cef_menu_item_type_t, cef_mouse_button_type_t};
 use types::{cef_mouse_event, cef_navigation_type_t};
 use types::{cef_page_range_t, cef_paint_element_type_t, cef_point_t, cef_postdataelement_type_t};
 use types::{cef_popup_features_t, cef_process_id_t};
-use types::{cef_rect_t, cef_request_context_t, cef_request_handler_t};
+use types::{cef_rect_t, cef_request_handler_t};
 use types::{cef_resource_type_t};
 use types::{cef_screen_info_t, cef_size_t, cef_string_t};
 use types::{cef_string_list_t, cef_string_map_t, cef_string_multimap_t, cef_string_utf16};
@@ -126,7 +126,6 @@ cef_noop_wrapper!(*mut cef_geolocation_handler_t)
 cef_noop_wrapper!(*mut cef_jsdialog_handler_t)
 cef_noop_wrapper!(*mut cef_keyboard_handler_t)
 cef_noop_wrapper!(*mut cef_load_handler_t)
-cef_noop_wrapper!(*mut cef_request_context_t)
 cef_noop_wrapper!(*mut cef_request_handler_t)
 cef_noop_wrapper!(*mut cef_string_list_t)
 cef_noop_wrapper!(*mut cef_string_utf16)

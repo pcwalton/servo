@@ -4,7 +4,8 @@
 
 use pipeline::{Pipeline, CompositionPipeline};
 
-use compositor_task::{CompositorProxy, FrameTreeUpdateMsg, LoadComplete, ShutdownComplete, SetLayerOrigin, SetIds};
+use compositor_task::{CompositorProxy, FrameTreeUpdateMsg, LoadComplete, ShutdownComplete};
+use compositor_task::{SetLayerOrigin, SetIds, UrlChanged};
 use devtools_traits;
 use devtools_traits::DevtoolsControlChan;
 use geom::rect::{Rect, TypedRect};
@@ -689,7 +690,8 @@ impl<LTF: LayoutTaskFactory, STF: ScriptTaskFactory> Constellation<LTF, STF> {
     }
 
     fn handle_load_url_msg(&mut self, source_id: PipelineId, load_data: LoadData) {
-        debug!("Constellation: received message to load {:s}", load_data.url.to_string());
+        let url = load_data.url.to_string();
+        debug!("Constellation: received message to load {:s}", url);
         // Make sure no pending page would be overridden.
         let source_frame = self.current_frame().as_ref().unwrap().find(source_id).expect(
             "Constellation: received a LoadUrlMsg from a pipeline_id associated
@@ -723,6 +725,8 @@ impl<LTF: LayoutTaskFactory, STF: ScriptTaskFactory> Constellation<LTF, STF> {
             navigation_type: constellation_msg::Load,
         });
         self.pipelines.insert(pipeline.id, pipeline);
+
+        self.compositor_proxy.send(UrlChanged(url));
     }
 
     fn handle_navigate_msg(&mut self, direction: constellation_msg::NavigationDirection) {

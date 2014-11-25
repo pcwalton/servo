@@ -15,7 +15,7 @@ use time;
 /// The amount of time in nanoseconds that we give to the painting thread to paint new tiles upon
 /// processing a scroll event that caused new tiles to be revealed. When this expires, we give up
 /// and composite anyway (showing a "checkerboard") to avoid dropping the frame.
-static TIMEOUT: i64 = 12_000_000;
+static TIMEOUT: i64 = 8_000_000;
 
 pub struct ScrollingTimerProxy {
     sender: Sender<ToScrollingTimerMsg>,

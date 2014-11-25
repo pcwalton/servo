@@ -7,6 +7,7 @@ use eutil::slice_to_str;
 use libc::{mod, size_t, c_int, c_ushort,c_void};
 use libc::types::os::arch::c95::wchar_t;
 use std::char;
+use std::fmt::{FormatError, Formatter, Show};
 use std::mem;
 use std::ptr;
 use std::slice;
@@ -318,6 +319,22 @@ pub fn empty_utf16_string() -> cef_string_utf16_t {
         str: ptr::null_mut(),
         length: 0,
         dtor: None,
+    }
+}
+
+impl<'a> Show for CefStringRef<'a> {
+    fn fmt(&self, formatter: &mut Formatter) -> Result<(),FormatError> {
+        // FIXME(pcwalton): Would be more efficient sans the temporary.
+        unsafe {
+            let slice =
+                slice::raw::mut_buf_as_slice((**self.c_object).str,
+                                             (**self.c_object).length as uint,
+                                             |slice| {
+                                                 mem::transmute::<&mut [u16],&mut [u16]>(slice)
+                                             });
+            let temporary_string = String::from_utf16(slice).unwrap();
+            write!(formatter, "{}", temporary_string)
+        }
     }
 }
 
