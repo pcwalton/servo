@@ -195,8 +195,6 @@ pub enum Msg {
     /// Indicates that the scrolling timeout with the given starting timestamp has happened and a
     /// composite should happen. (See the `scrolling` module.)
     ScrollTimeout(u64),
-    /// Alerts the compositor that the URL of the page has changed.
-    UrlChanged(String),
 }
 
 impl Show for Msg {
@@ -217,7 +215,6 @@ impl Show for Msg {
             FrameTreeUpdateMsg(..) => write!(f, "FrameTreeUpdateMsg"),
             LoadComplete => write!(f, "LoadComplete"),
             ScrollTimeout(..) => write!(f, "ScrollTimeout"),
-            UrlChanged(..) => write!(f, "UrlChanged"),
         }
     }
 }

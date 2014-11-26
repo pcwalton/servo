@@ -117,8 +117,5 @@ pub trait WindowMethods {
     /// some type of platform-specific graphics context current. Returns true if the composite may
     /// proceed and false if it should not.
     fn prepare_for_composite(&self) -> bool;
-
-    /// Notifies the windowing system that the current URL changed.
-    fn url_changed(&self, url: &str);
 }
 

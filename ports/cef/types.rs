@@ -564,6 +564,8 @@ pub enum cef_log_severity_t {
 // line switches.
 ///
 pub type cef_settings_t = cef_settings;
+
+#[repr(C)]
 pub struct cef_settings {
   ///
   // Size of this structure.
@@ -599,6 +601,14 @@ pub struct cef_settings {
   // called from your application message loop.
   ///
   pub multi_threaded_message_loop: c_int,
+
+
+  ///
+  // Set to true (1) to enable windowless (off-screen) rendering support. Do not
+  // enable this value if the application does not use windowless rendering as
+  // it may reduce rendering performance on some systems.
+  ///
+  pub windowless_rendering_enabled: c_int,
 
   ///
   // Set to true (1) to disable configuration of browser process features using
@@ -665,12 +675,6 @@ pub struct cef_settings {
   // "disable".
   ///
   pub log_severity: cef_log_severity_t,
-
-  ///
-  // Enable DCHECK in release mode to ease debugging. Also configurable using the
-  // "enable-release-dcheck" command-line switch.
-  ///
-  pub release_dcheck_enabled: c_int,
 
   ///
   // Custom flags that will be used when initializing the V8 JavaScript engine.
@@ -762,6 +766,11 @@ pub struct cef_settings {
   // of the background color but will be otherwise ignored.
   ///
   pub background_color: cef_color_t,
+
+  //
+  // Determines how many rendering threads are used.
+  //
+  pub rendering_threads: c_int,
 }
 
 ///

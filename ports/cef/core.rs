@@ -21,6 +21,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::rt;
 
+const MAX_RENDERING_THREADS: uint = 128;
+
 // TODO(pcwalton): Support multiple windows.
 pub enum ServoCefGlobals {
     OnScreenGlobals(RefCell<Rc<glfw_app::window::Window>>,
@@ -45,7 +47,7 @@ static CEF_API_HASH_PLATFORM: &'static [u8] = b"2bc564c3871965ef3a2531b528bda3e1
 
 #[no_mangle]
 pub extern "C" fn cef_initialize(args: *const cef_main_args_t,
-                                 _settings: *mut cef_settings_t,
+                                 settings: *mut cef_settings_t,
                                  application: *mut cef_app_t,
                                  _windows_sandbox_info: *const c_void)
                                  -> c_int {
@@ -82,9 +84,16 @@ pub extern "C" fn cef_initialize(args: *const cef_main_args_t,
         time_profiler_period: None,
         memory_profiler_period: None,
         enable_experimental: false,
-        layout_threads: 1,
         nonincremental_layout: false,
-        //layout_threads: cmp::max(rt::default_sched_threads() * 3 / 4, 1),
+        layout_threads: unsafe {
+            if ((*settings).rendering_threads as uint) < 1 {
+                1
+            } else if (*settings).rendering_threads as uint > MAX_RENDERING_THREADS {
+                MAX_RENDERING_THREADS
+            } else {
+                (*settings).rendering_threads as uint
+            }
+        },
         output_file: None,
         headless: false,
         hard_fail: false,
@@ -207,6 +216,31 @@ pub fn send_window_event(event: WindowEvent) {
                         browser.handle_event(event);
                     }
                 }
+            }
+        }
+    }
+}
+
+pub fn repaint_synchronously_if_offscreen() {
+    let mut the_globals = globals.get();
+    let the_globals = match the_globals.as_mut() {
+        None => return,
+        Some(the_globals) => the_globals,
+    };
+    match **the_globals {
+        OnScreenGlobals(..) => {}
+        OffScreenGlobals(_, ref browser) => {
+            match browser.try_borrow_mut() {
+                None => {
+                    // Uh-oh, another event is processing. We're in a bad spot now, since
+                    // sending an event to the browser would cause a nested event (which is
+                    // forbidden), but we want to repaint synchronously, so we *have* to send
+                    // that event. Just do nothing, because not fulfilling the request is
+                    // better than looping endlessly...
+                    error!("tried to repaint synchronously while an event was being processed!");
+                    return
+                }
+                Some(ref mut browser) => browser.repaint_synchronously(),
             }
         }
     }

@@ -9,7 +9,7 @@ use compositor_task::{CompositorProxy, CompositorReceiver, CompositorTask};
 use compositor_task::{CreateOrUpdateDescendantLayer, CreateOrUpdateRootLayer, Exit};
 use compositor_task::{FrameTreeUpdateMsg, GetGraphicsMetadata, LayerProperties};
 use compositor_task::{LoadComplete, Msg, Paint, RenderMsgDiscarded, ScrollFragmentPoint};
-use compositor_task::{ScrollTimeout, SetIds, SetLayerOrigin, ShutdownComplete, UrlChanged};
+use compositor_task::{ScrollTimeout, SetIds, SetLayerOrigin, ShutdownComplete};
 use constellation::{SendableFrameTree, FrameTreeDiff};
 use pipeline::CompositionPipeline;
 use scrolling::ScrollingTimerProxy;
@@ -322,10 +322,6 @@ impl<Window: WindowMethods> IOCompositor<Window> {
                 }
             }
 
-            (UrlChanged(ref url), NotShuttingDown) => {
-                self.url_changed(url.as_slice());
-            }
-
             // When we are shutting_down, we need to avoid performing operations
             // such as Paint that may crash because we have begun tearing down
             // the rest of our resources.
@@ -371,10 +367,6 @@ impl<Window: WindowMethods> IOCompositor<Window> {
         }
 
         self.window.set_render_state(render_state);
-    }
-
-    fn url_changed(&mut self, url: &str) {
-        self.window.url_changed(url);
     }
 
     fn all_pipelines_in_idle_render_state(&self) -> bool {

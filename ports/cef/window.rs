@@ -19,7 +19,8 @@ use gleam::gl;
 use layers::geometry::DevicePixel;
 use layers::platform::surface::NativeGraphicsMetadata;
 use libc::{c_char, c_void};
-use servo_msg::compositor_msg::{ReadyState, RenderState};
+use servo_msg::compositor_msg::{Blank, FinishedLoading, Loading, PerformingLayout, ReadyState};
+use servo_msg::compositor_msg::{RenderState};
 use servo_util::geometry::ScreenPx;
 use std::cell::RefCell;
 use std::ptr;
@@ -104,8 +105,20 @@ impl WindowMethods for Window {
         }
     }
 
-    fn set_ready_state(&self, _: ReadyState) {
-        // TODO(pcwalton)
+    fn set_ready_state(&self, ready_state: ReadyState) {
+        let browser = self.cef_browser.borrow();
+        let browser = match *browser {
+            None => return,
+            Some(ref browser) => browser,
+        };
+        let is_loading = match ready_state {
+            Blank | FinishedLoading => 0,
+            Loading | PerformingLayout => 1,
+        };
+        browser.get_host()
+               .get_client()
+               .get_load_handler()
+               .on_loading_state_change(browser.clone(), is_loading, 1, 1);
     }
 
     fn set_render_state(&self, _: RenderState) {
@@ -162,10 +175,6 @@ impl WindowMethods for Window {
             }
         }
         true
-    }
-
-    fn url_changed(&self, _: &str) {
-        // TODO(pcwalton)
     }
 }
 

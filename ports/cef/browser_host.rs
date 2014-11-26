@@ -37,6 +37,7 @@ cef_class_impl! {
                 .get_backing_rect(this.downcast().browser.borrow().clone().unwrap(), &mut rect);
             let size = TypedSize2D(rect.width as uint, rect.height as uint);
             core::send_window_event(ResizeWindowEvent(size));
+            core::repaint_synchronously_if_offscreen();
         }
 
         fn send_key_event(&_this, event: *const cef_key_event) -> () {

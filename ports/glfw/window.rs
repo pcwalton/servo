@@ -220,10 +220,6 @@ impl WindowMethods for Window {
     fn prepare_for_composite(&self) -> bool {
         true
     }
-
-    fn url_changed(&self, _: &str) {
-        // TODO(pcwalton)
-    }
 }
 
 impl Window {

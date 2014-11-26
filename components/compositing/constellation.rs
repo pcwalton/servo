@@ -5,7 +5,7 @@
 use pipeline::{Pipeline, CompositionPipeline};
 
 use compositor_task::{CompositorProxy, FrameTreeUpdateMsg, LoadComplete, ShutdownComplete};
-use compositor_task::{SetLayerOrigin, SetIds, UrlChanged};
+use compositor_task::{SetLayerOrigin, SetIds};
 use devtools_traits;
 use devtools_traits::DevtoolsControlChan;
 use geom::rect::{Rect, TypedRect};
@@ -725,8 +725,6 @@ impl<LTF: LayoutTaskFactory, STF: ScriptTaskFactory> Constellation<LTF, STF> {
             navigation_type: constellation_msg::Load,
         });
         self.pipelines.insert(pipeline.id, pipeline);
-
-        self.compositor_proxy.send(UrlChanged(url));
     }
 
     fn handle_navigate_msg(&mut self, direction: constellation_msg::NavigationDirection) {

@@ -19,7 +19,7 @@ pub enum RenderState {
     RenderingRenderState,
 }
 
-#[deriving(Eq, Ord, PartialEq, PartialOrd, Clone)]
+#[deriving(Eq, Ord, PartialEq, PartialOrd, Clone, Show)]
 pub enum ReadyState {
     /// Informs the compositor that nothing has been done yet. Used for setting status
     Blank,
