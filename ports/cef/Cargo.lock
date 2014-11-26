@@ -60,7 +60,7 @@ dependencies = [
 [[package]]
 name = "cocoa"
 version = "0.1.1"
-source = "git+https://github.com/servo/rust-cocoa#78b823bec1affcab20b6977e1057125088a6034c"
+source = "git+https://github.com/servo/rust-cocoa#084f8e1baf40391eb12819d16765af25ca96c7ec"
 
 [[package]]
 name = "compositing"
