@@ -25,6 +25,7 @@ use servo_util::time::TimeProfilerChan;
 use std::comm::{channel, Sender, Receiver};
 use std::fmt::{FormatError, Formatter, Show};
 use std::rc::Rc;
+use url::Url;
 
 /// Sends messages to the compositor. This is a trait supplied by the port because the method used
 /// to communicate with the compositor may have to kick OS event loops awake, communicate cross-
@@ -83,6 +84,7 @@ impl ScriptListener for Box<CompositorProxy+'static+Send> {
     }
 }
 
+/// Information about each layer that the compositor keeps.
 pub struct LayerProperties {
     pub pipeline_id: PipelineId,
     pub epoch: Epoch,
@@ -269,5 +271,7 @@ pub trait CompositorEventListener {
     fn handle_event(&mut self, event: WindowEvent) -> bool;
     fn repaint_synchronously(&mut self);
     fn shutdown(&mut self);
+    fn pinch_zoom_level(&self) -> f32;
+    fn url_for_main_frame(&self) -> Option<Url>;
 }
 

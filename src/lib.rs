@@ -62,6 +62,7 @@ use std::os;
 use std::rc::Rc;
 #[cfg(not(test))]
 use std::task::TaskBuilder;
+use url::Url;
 
 pub struct Browser<Window> {
     pool: green::SchedPool,
@@ -162,6 +163,14 @@ impl<Window> Browser<Window> where Window: WindowMethods + 'static {
 
     pub fn repaint_synchronously(&mut self) {
         self.compositor.repaint_synchronously()
+    }
+
+    pub fn pinch_zoom_level(&self) -> f32 {
+        self.compositor.pinch_zoom_level()
+    }
+
+    pub fn url_for_main_frame(&self) -> Option<Url> {
+        self.compositor.url_for_main_frame()
     }
 
     pub fn shutdown(mut self) {

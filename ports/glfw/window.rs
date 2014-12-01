@@ -220,6 +220,8 @@ impl WindowMethods for Window {
     fn prepare_for_composite(&self) -> bool {
         true
     }
+
+    fn load_end(&self) {}
 }
 
 impl Window {

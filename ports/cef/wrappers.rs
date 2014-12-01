@@ -23,7 +23,7 @@ use types::{cef_page_range_t, cef_paint_element_type_t, cef_point_t, cef_postdat
 use types::{cef_popup_features_t, cef_process_id_t};
 use types::{cef_rect_t, cef_request_handler_t};
 use types::{cef_resource_type_t};
-use types::{cef_screen_info_t, cef_size_t, cef_string_t};
+use types::{cef_screen_info_t, cef_size_t, cef_string_t, cef_string_userfree_t};
 use types::{cef_string_list_t, cef_string_map_t, cef_string_multimap_t, cef_string_utf16};
 use types::{cef_termination_status_t, cef_text_input_context_t, cef_thread_id_t};
 use types::{cef_time_t, cef_transition_type_t, cef_urlrequest_status_t};
@@ -235,6 +235,75 @@ impl<'a,'b> CefWrap<*mut *const c_char> for &'a mut &'b str {
     }
     unsafe fn to_rust(_: *mut *const c_char) -> &'a mut &'b str {
         panic!("unimplemented CEF type conversion: *mut *const c_char")
+    }
+}
+
+impl<'a> CefWrap<cef_string_userfree_t> for String {
+    fn to_c(string: String) -> cef_string_userfree_t {
+        let mut utf16_chars: Vec<u16> = Utf16Encoder::new(string.chars()).collect();
+        utf16_chars.push(0);    // So that we can figure out the length when we go to free...
+
+        let boxed_string;
+        unsafe {
+            boxed_string = libc::malloc(mem::size_of::<cef_string_utf16>() as u64) as
+                *mut cef_string_utf16;
+            ptr::write(&mut (*boxed_string).str, utf16_chars.as_mut_ptr());
+            ptr::write(&mut (*boxed_string).length, (utf16_chars.len() - 1) as u64);
+            ptr::write(&mut (*boxed_string).dtor, Some(free_utf16_vec));
+            mem::forget(utf16_chars);
+        }
+        boxed_string
+    }
+    unsafe fn to_rust(_: cef_string_userfree_t) -> String {
+        panic!("unimplemented CEF type conversion: cef_string_userfree_t")
+    }
+}
+
+extern "C" fn free_utf16_vec(string: *mut c_ushort) {
+    unsafe {
+        // Find the length of the vector.
+        let mut len = 0;
+        let mut ptr = string;
+        while (*ptr) != 0 {
+            ptr = ptr.offset(1);
+            len += 1;
+        }
+        len += 1;
+
+        // Recreate the vector and destroy it.
+        drop(Vec::from_raw_parts(string, len, len));
+    }
+}
+
+// TODO(pcwalton): Post Rust-upgrade, remove this and use `collections::str::Utf16Encoder`.
+pub struct Utf16Encoder<I> {
+    chars: I,
+    extra: u16,
+}
+
+impl<I> Utf16Encoder<I> {
+    pub fn new(chars: I) -> Utf16Encoder<I> where I: Iterator<char> {
+        Utf16Encoder {
+            chars: chars,
+            extra: 0,
+        }
+    }
+}
+
+impl<I> Iterator<u16> for Utf16Encoder<I> where I: Iterator<char> {
+    fn next(&mut self) -> Option<u16> {
+        if self.extra != 0 {
+            return Some(mem::replace(&mut self.extra, 0))
+        }
+
+        let mut buf = [0u16, ..2];
+        self.chars.next().map(|ch| {
+            let n = ch.encode_utf16(buf.as_mut_slice()).unwrap_or(0);
+            if n == 2 {
+                self.extra = buf[1]
+            }
+            buf[0]
+        })
     }
 }
 

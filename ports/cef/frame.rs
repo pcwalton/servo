@@ -4,7 +4,7 @@
 
 use interfaces::{CefFrame, cef_frame_t};
 use string::CefStringRef;
-use types::cef_string_t;
+use types::{cef_string_t, cef_string_userfree_t};
 
 use core;
 use compositing::windowing::LoadUrlWindowEvent;
@@ -17,6 +17,12 @@ cef_class_impl! {
             unsafe {
                 let url = CefStringRef::from_c_object(&url).to_string();
                 core::send_window_event(LoadUrlWindowEvent(url));
+            }
+        }
+        fn get_url(&_this) -> cef_string_userfree_t {
+            match core::url_for_main_frame() {
+                None => "".to_string(),
+                Some(url) => url.to_string(),
             }
         }
     }

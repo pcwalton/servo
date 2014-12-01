@@ -67,7 +67,7 @@ pub type CefBrowserSettings = cef_browser_settings_t;
 pub type CefScreenInfo = cef_screen_info_t;
 
 pub type cef_string_t = cef_string_utf16; //FIXME: this is #defined...
-pub type cef_string_userfree_t = cef_string_t; //FIXME: this is #defined...
+pub type cef_string_userfree_t = *mut cef_string_t; //FIXME: this is #defined...
 
 pub struct cef_string_utf8 {
     pub str: *mut u8,
@@ -78,7 +78,7 @@ pub type cef_string_utf8_t = cef_string_utf8;
 pub type cef_string_userfree_utf8_t = cef_string_utf8;
 
 pub type cef_string_utf16_t = cef_string_utf16;
-pub type cef_string_userfree_utf16_t = cef_string_utf16;
+pub type cef_string_userfree_utf16_t = *mut cef_string_utf16;
 pub struct cef_string_utf16 {
     pub str: *mut c_ushort,
     pub length: size_t,

@@ -20,6 +20,7 @@ use std::c_str::CString;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::rt;
+use std_url::Url;
 
 const MAX_RENDERING_THREADS: uint = 128;
 
@@ -221,29 +222,28 @@ pub fn send_window_event(event: WindowEvent) {
     }
 }
 
-pub fn repaint_synchronously_if_offscreen() {
-    let mut the_globals = globals.get();
-    let the_globals = match the_globals.as_mut() {
-        None => return,
-        Some(the_globals) => the_globals,
-    };
-    match **the_globals {
-        OnScreenGlobals(..) => {}
-        OffScreenGlobals(_, ref browser) => {
-            match browser.try_borrow_mut() {
-                None => {
-                    // Uh-oh, another event is processing. We're in a bad spot now, since
-                    // sending an event to the browser would cause a nested event (which is
-                    // forbidden), but we want to repaint synchronously, so we *have* to send
-                    // that event. Just do nothing, because not fulfilling the request is
-                    // better than looping endlessly...
-                    error!("tried to repaint synchronously while an event was being processed!");
-                    return
+macro_rules! browser_method_delegate(
+    ( $( fn $method:ident ( ) -> $return_type:ty ; )* ) => (
+        $(
+            pub fn $method() -> $return_type {
+                let mut the_globals = globals.get();
+                let the_globals = match the_globals.as_mut() {
+                    None => panic!("{}: no globals created", stringify!($method)),
+                    Some(the_globals) => the_globals,
+                };
+                match **the_globals {
+                    OnScreenGlobals(_, ref browser) => browser.borrow_mut().$method(),
+                    OffScreenGlobals(_, ref browser) => browser.borrow_mut().$method(),
                 }
-                Some(ref mut browser) => browser.repaint_synchronously(),
             }
-        }
-    }
+        )*
+    )
+)
+
+browser_method_delegate! {
+    fn repaint_synchronously() -> ();
+    fn pinch_zoom_level() -> f32;
+    fn url_for_main_frame() -> Option<Url>;
 }
 
 #[no_mangle]

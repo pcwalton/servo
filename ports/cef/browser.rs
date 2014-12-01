@@ -32,6 +32,7 @@ cef_class_impl! {
         fn go_forward(&_this) -> () {
             core::send_window_event(NavigationWindowEvent(Forward));
         }
+
         // Returns the main (top-level) frame for the browser window.
         fn get_main_frame(&this) -> *mut cef_frame_t {
             this.downcast().frame.clone()

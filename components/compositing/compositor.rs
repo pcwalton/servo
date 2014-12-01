@@ -3,7 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 use compositor_layer::{CompositorData, CompositorLayer, DoesntWantScrollEvents};
-use compositor_layer::WantsScrollEvents;
+use compositor_layer::{WantsScrollEvents};
 use compositor_task::{ChangeReadyState, ChangeRenderState, CompositorEventListener};
 use compositor_task::{CompositorProxy, CompositorReceiver, CompositorTask};
 use compositor_task::{CreateOrUpdateDescendantLayer, CreateOrUpdateRootLayer, Exit};
@@ -23,6 +23,7 @@ use windowing::{WindowEvent, WindowMethods, WindowNavigateMsg, ZoomWindowEvent};
 
 use azure::azure_hl;
 use std::cmp;
+use std::comm;
 use std::mem;
 use std::num::Zero;
 use geom::point::{Point2D, TypedPoint2D};
@@ -41,7 +42,7 @@ use gleam::gl;
 use script_traits::{ViewportMsg, ScriptControlChan};
 use servo_msg::compositor_msg::{Blank, Epoch, FinishedLoading, IdleRenderState, LayerId};
 use servo_msg::compositor_msg::{ReadyState, RenderingRenderState, RenderState, Scrollable};
-use servo_msg::constellation_msg::{ConstellationChan, ExitMsg, LoadUrlMsg};
+use servo_msg::constellation_msg::{ConstellationChan, ExitMsg, GetPipelineLoadDataMsg, LoadUrlMsg};
 use servo_msg::constellation_msg::{NavigateMsg, LoadData, PipelineId, ResizedWindowMsg};
 use servo_msg::constellation_msg::{WindowSizeData, KeyState, Key, KeyModifiers};
 use servo_msg::constellation_msg;
@@ -303,13 +304,18 @@ impl<Window: WindowMethods> IOCompositor<Window> {
                 self.scroll_fragment_to_point(pipeline_id, layer_id, point);
             }
 
-            (LoadComplete(..), NotShuttingDown) => {
+            (LoadComplete, NotShuttingDown) => {
                 self.got_load_complete_message = true;
 
                 // If we're rendering in headless mode, schedule a recomposite.
                 if opts::get().output_file.is_some() {
                     self.composite_if_necessary();
                 }
+
+                // Inform the embedder that the load has finished.
+                //
+                // TODO(pcwalton): Specify which frame's load completed.
+                self.window.load_end();
             }
 
             (ScrollTimeout(timestamp), NotShuttingDown) => {
@@ -1249,5 +1255,23 @@ impl<Window> CompositorEventListener for IOCompositor<Window> where Window: Wind
         memory_profiler_chan.send(memory::ExitMsg);
 
         self.scrolling_timer.shutdown();
+    }
+
+    fn pinch_zoom_level(&self) -> f32 {
+        self.viewport_zoom.get() as f32
+    }
+
+    fn url_for_main_frame(&self) -> Option<Url> {
+        let root_pipeline_id = match self.root_pipeline {
+            None => return None,
+            Some(ref root_pipeline) => root_pipeline.id,
+        };
+        let (sender, receiver) = comm::channel();
+        let ConstellationChan(ref chan) = self.constellation_chan;
+        chan.send(GetPipelineLoadDataMsg(root_pipeline_id, sender));
+        match receiver.recv() {
+            None => None,
+            Some(load_data) => Some(load_data.url),
+        }
     }
 }

@@ -9,11 +9,11 @@ use types::{KEYEVENT_CHAR, KEYEVENT_KEYDOWN, KEYEVENT_KEYUP, KEYEVENT_RAWKEYDOWN
 use types::{cef_mouse_button_type_t, cef_mouse_event, cef_rect_t};
 
 use compositing::windowing::{InitializeCompositingWindowEvent, KeyEvent, MouseWindowClickEvent};
-use compositing::windowing::{MouseWindowEventClass, MouseWindowMouseUpEvent, ResizeWindowEvent};
-use compositing::windowing::{ScrollWindowEvent};
+use compositing::windowing::{MouseWindowEventClass, MouseWindowMouseUpEvent, PinchZoomWindowEvent};
+use compositing::windowing::{ResizeWindowEvent, ScrollWindowEvent};
 use geom::point::TypedPoint2D;
 use geom::size::TypedSize2D;
-use libc::c_int;
+use libc::{c_double, c_int};
 use servo_msg::constellation_msg::{mod, KeyModifiers, Pressed, Released, Repeated};
 use std::cell::RefCell;
 
@@ -37,7 +37,7 @@ cef_class_impl! {
                 .get_backing_rect(this.downcast().browser.borrow().clone().unwrap(), &mut rect);
             let size = TypedSize2D(rect.width as uint, rect.height as uint);
             core::send_window_event(ResizeWindowEvent(size));
-            core::repaint_synchronously_if_offscreen();
+            core::repaint_synchronously();
         }
 
         fn send_key_event(&_this, event: *const cef_key_event) -> () {
@@ -120,6 +120,15 @@ cef_class_impl! {
             let delta = TypedPoint2D(delta_x as f32, delta_y as f32);
             let origin = TypedPoint2D((*event).x as i32, (*event).y as i32);
             core::send_window_event(ScrollWindowEvent(delta, origin))
+        }
+
+        fn get_zoom_level(&_this) -> c_double {
+            core::pinch_zoom_level() as c_double
+        }
+
+        fn set_zoom_level(&this, new_zoom_level: c_double) -> () {
+            let old_zoom_level = this.get_zoom_level();
+            core::send_window_event(PinchZoomWindowEvent((new_zoom_level / old_zoom_level) as f32))
         }
 
         fn initialize_compositing(&_this) -> () {

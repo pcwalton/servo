@@ -16,6 +16,7 @@ use servo_util::memory::MemoryProfilerChan;
 use servo_util::memory;
 use servo_util::time::TimeProfilerChan;
 use servo_util::time;
+use url::Url;
 
 /// Starts the compositor, which listens for messages on the specified port.
 ///
@@ -119,5 +120,13 @@ impl CompositorEventListener for NullCompositor {
 
         self.time_profiler_chan.send(time::ExitMsg);
         self.memory_profiler_chan.send(memory::ExitMsg);
+    }
+
+    fn pinch_zoom_level(&self) -> f32 {
+        1.0
+    }
+
+    fn url_for_main_frame(&self) -> Option<Url> {
+        None
     }
 }

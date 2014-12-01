@@ -98,6 +98,8 @@ pub trait WindowMethods {
     fn set_ready_state(&self, ready_state: ReadyState);
     /// Sets the render state of the current page.
     fn set_render_state(&self, render_state: RenderState);
+    /// Called when the browser is done loading a frame.
+    fn load_end(&self);
 
     /// Returns the hidpi factor of the monitor.
     fn hidpi_factor(&self) -> ScaleFactor<ScreenPx, DevicePixel, f32>;

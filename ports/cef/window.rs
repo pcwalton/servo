@@ -7,6 +7,7 @@
 //! This is used for off-screen rendering mode only; on-screen windows (the default embedding mode)
 //! are managed by a platform toolkit (GLFW or Glutin).
 
+use frame::ServoCefFrame;
 use interfaces::CefBrowser;
 use render_handler::CefRenderHandlerExtensions;
 use types::cef_rect_t;
@@ -175,6 +176,19 @@ impl WindowMethods for Window {
             }
         }
         true
+    }
+
+    fn load_end(&self) {
+        // FIXME(pcwalton): The status code 200 is a lie.
+        let browser = self.cef_browser.borrow();
+        let browser = match *browser {
+            None => return,
+            Some(ref browser) => browser,
+        };
+        browser.get_host()
+               .get_client()
+               .get_load_handler()
+               .on_load_end((*browser).clone(), ServoCefFrame.as_cef_interface(), 200);
     }
 }
 
