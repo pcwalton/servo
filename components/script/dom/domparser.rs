@@ -61,7 +61,7 @@ impl<'a> DOMParserMethods for JSRef<'a, DOMParser> {
                 let parser = ServoHTMLParser::new(url.clone(), document).root().clone();
                 parser.parse_chunk(s);
                 parser.finish();
-                document.set_ready_state(DocumentReadyStateValues::Complete);
+                document.set_ready_state(DocumentReadyState::Complete);
                 Ok(Temporary::from_rooted(document))
             }
             Text_xml => {
