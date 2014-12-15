@@ -4,6 +4,7 @@
 
 //! Data needed by the layout task.
 
+use animation;
 use css::matching::{ApplicableDeclarationsCache, StyleSharingCandidateCache};
 
 use geom::{Rect, Size2D};
@@ -47,6 +48,7 @@ fn create_or_get_local_context(shared_layout_context: &SharedLayoutContext) -> *
     *context
 }
 
+/// Layout information shared among all workers. This must be thread-safe.
 pub struct SharedLayoutContext {
     /// The local image cache.
     pub image_cache: Arc<Mutex<LocalImageCache<UntrustedNodeAddress>>>,
@@ -63,13 +65,16 @@ pub struct SharedLayoutContext {
     /// Interface to the font cache task.
     pub font_cache_task: FontCacheTask,
 
+    /// Interface to the animation thread. There is one of these per layout thread.
+    pub animation_proxy: Sender<animation::Msg>,
+
     /// The CSS selector stylist.
     ///
     /// FIXME(#2604): Make this no longer an unsafe pointer once we have fast `RWArc`s.
     pub stylist: *const Stylist,
 
     /// The root node at which we're starting the layout.
-    pub reflow_root: OpaqueNode,
+    pub reflow_root: Option<OpaqueNode>,
 
     /// The URL.
     pub url: Url,

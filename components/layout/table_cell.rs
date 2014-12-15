@@ -148,7 +148,7 @@ impl Flow for TableCellFlow {
         self.block_flow.repair_style(new_style)
     }
 
-    fn iterate_through_fragment_bounds(&self, iterator: &mut FragmentBoundsIterator) {
+    fn iterate_through_fragment_bounds(&mut self, iterator: &mut FragmentBoundsIterator) {
         self.block_flow.iterate_through_fragment_bounds(iterator);
     }
 }

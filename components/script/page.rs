@@ -14,7 +14,7 @@ use dom::window::Window;
 use layout_interface::{
     ContentBoxQuery, ContentBoxResponse, ContentBoxesQuery, ContentBoxesResponse,
     GetRPCMsg, HitTestResponse, LayoutChan, LayoutRPC, MouseOverResponse, Reflow,
-    ReflowForScriptQuery, ReflowGoal, ReflowMsg, ReflowQueryType,
+    ReflowForScriptQuery, ReflowGoal, ReflowMsg, ReflowQueryType, ScriptReflow,
     TrustedNodeAddress
 };
 use script_traits::{UntrustedNodeAddress, ScriptControlChan};
@@ -377,11 +377,13 @@ impl Page {
         let window_size = self.window_size.get();
 
         // Send new document and relevant styles to layout.
-        let reflow = box Reflow {
+        let reflow = box ScriptReflow {
+            reflow_info: Reflow {
+                goal: goal,
+                url: self.get_url(),
+                iframe: self.subpage_id.is_some(),
+            },
             document_root: root.to_trusted_node_address(),
-            url: self.get_url(),
-            iframe: self.subpage_id.is_some(),
-            goal: goal,
             window_size: window_size,
             script_chan: script_chan,
             script_join_chan: join_chan,

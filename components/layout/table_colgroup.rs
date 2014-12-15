@@ -96,7 +96,7 @@ impl Flow for TableColGroupFlow {
 
     fn repair_style(&mut self, _: &Arc<ComputedValues>) {}
 
-    fn iterate_through_fragment_bounds(&self, _: &mut FragmentBoundsIterator) {
+    fn iterate_through_fragment_bounds(&mut self, _: &mut FragmentBoundsIterator) {
     }
 }
 

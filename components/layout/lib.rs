@@ -36,11 +36,13 @@ extern crate collections;
 extern crate encoding;
 extern crate libc;
 extern crate sync;
+extern crate time;
 extern crate url;
 
 // Listed first because of macro definitions
 pub mod layout_debug;
 
+pub mod animation;
 pub mod block;
 pub mod construct;
 pub mod context;

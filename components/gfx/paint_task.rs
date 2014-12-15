@@ -342,12 +342,12 @@ impl<C> PaintTask<C> where C: PaintListener + Send {
         })
     }
 
-    /// Paints one layer and sends the tiles back to the layer.
+    /// Paints one layer and places the painted tiles in `replies`.
     fn paint(&mut self,
-              replies: &mut Vec<(LayerId, Box<LayerBufferSet>)>,
-              mut tiles: Vec<BufferRequest>,
-              scale: f32,
-              layer_id: LayerId) {
+             replies: &mut Vec<(LayerId, Box<LayerBufferSet>)>,
+             mut tiles: Vec<BufferRequest>,
+             scale: f32,
+             layer_id: LayerId) {
         time::profile(time::PaintingCategory, None, self.time_profiler_chan.clone(), || {
             // Bail out if there is no appropriate stacking context.
             let stacking_context = match self.root_stacking_context {

@@ -4,9 +4,10 @@
 
 //! High-level interface to CSS selector matching.
 
+use animation;
 use css::node_style::StyledNode;
 use incremental::{mod, RestyleDamage};
-use util::{LayoutDataAccess, LayoutDataWrapper};
+use util::{LayoutDataAccess, LayoutDataWrapper, OpaqueNodeMethods};
 use wrapper::{LayoutElement, LayoutNode, TLayoutNode};
 
 use script::dom::node::{TextNodeTypeId};
@@ -373,7 +374,8 @@ pub trait MatchMethods {
     unsafe fn cascade_node(&self,
                            parent: Option<LayoutNode>,
                            applicable_declarations: &ApplicableDeclarations,
-                           applicable_declarations_cache: &mut ApplicableDeclarationsCache);
+                           applicable_declarations_cache: &mut ApplicableDeclarationsCache,
+                           animation_thread_proxy: &Sender<animation::Msg>);
 }
 
 trait PrivateMatchMethods {
@@ -381,8 +383,9 @@ trait PrivateMatchMethods {
                                    parent_style: Option<&Arc<ComputedValues>>,
                                    applicable_declarations: &[DeclarationBlock],
                                    style: &mut Option<Arc<ComputedValues>>,
-                                   applicable_declarations_cache: &mut
-                                   ApplicableDeclarationsCache,
+                                   applicable_declarations_cache:
+                                    &mut ApplicableDeclarationsCache,
+                                   animation_thread_proxy: &Sender<animation::Msg>,
                                    shareable: bool)
                                    -> RestyleDamage;
 
@@ -397,11 +400,12 @@ impl<'ln> PrivateMatchMethods for LayoutNode<'ln> {
                                    parent_style: Option<&Arc<ComputedValues>>,
                                    applicable_declarations: &[DeclarationBlock],
                                    style: &mut Option<Arc<ComputedValues>>,
-                                   applicable_declarations_cache: &mut
-                                   ApplicableDeclarationsCache,
+                                   applicable_declarations_cache:
+                                    &mut ApplicableDeclarationsCache,
+                                   animation_thread_proxy: &Sender<animation::Msg>,
                                    shareable: bool)
                                    -> RestyleDamage {
-        let this_style;
+        let mut this_style;
         let cacheable;
         match parent_style {
             Some(ref parent_style) => {
@@ -415,7 +419,7 @@ impl<'ln> PrivateMatchMethods for LayoutNode<'ln> {
                                                         Some(&***parent_style),
                                                         cached_computed_values);
                 cacheable = is_cacheable;
-                this_style = Arc::new(the_style);
+                this_style = the_style
             }
             None => {
                 let (the_style, is_cacheable) = cascade(applicable_declarations,
@@ -423,21 +427,38 @@ impl<'ln> PrivateMatchMethods for LayoutNode<'ln> {
                                                         None,
                                                         None);
                 cacheable = is_cacheable;
-                this_style = Arc::new(the_style);
+                this_style = the_style
             }
         };
+
+        // Trigger transitions if necessary. This will reset `this_style` back to its old value if
+        // it did trigger a transition.
+        match *style {
+            None => {
+                // This is a newly-created node; we've nothing to transition from!
+            }
+            Some(ref style) => {
+                let node = OpaqueNodeMethods::from_layout_node(self);
+                animation::start_transitions_if_applicable(animation_thread_proxy,
+                                                           node,
+                                                           &**style,
+                                                           &mut this_style);
+            }
+        }
+
+        // Calculate style difference.
+        let this_style = Arc::new(this_style);
+        let damage = incremental::compute_damage(style, &*this_style);
 
         // Cache the resolved style if it was cacheable.
         if cacheable {
             applicable_declarations_cache.insert(applicable_declarations, this_style.clone());
         }
 
-        // Calculate style difference and write.
-        let damage = incremental::compute_damage(style, &*this_style);
+        // Write in the final style and return the damage done to our caller.
         *style = Some(this_style);
         damage
     }
-
 
     fn share_style_with_candidate_if_possible(&self,
                                               parent_node: Option<LayoutNode>,
@@ -584,7 +605,8 @@ impl<'ln> MatchMethods for LayoutNode<'ln> {
     unsafe fn cascade_node(&self,
                            parent: Option<LayoutNode>,
                            applicable_declarations: &ApplicableDeclarations,
-                           applicable_declarations_cache: &mut ApplicableDeclarationsCache) {
+                           applicable_declarations_cache: &mut ApplicableDeclarationsCache,
+                           animation_thread_proxy: &Sender<animation::Msg>) {
         // Get our parent's style. This must be unsafe so that we don't touch the parent's
         // borrow flags.
         //
@@ -594,8 +616,12 @@ impl<'ln> MatchMethods for LayoutNode<'ln> {
             None => None,
             Some(parent_node) => {
                 let parent_layout_data_ref = parent_node.borrow_layout_data_unchecked();
-                let parent_layout_data = (&*parent_layout_data_ref).as_ref().expect("no parent data!?");
-                let parent_style = parent_layout_data.shared_data.style.as_ref().expect("parent hasn't been styled yet!");
+                let parent_layout_data = (&*parent_layout_data_ref).as_ref()
+                                                                   .expect("no parent data!?");
+                let parent_style = parent_layout_data.shared_data
+                                                     .style
+                                                     .as_ref()
+                                                     .expect("parent hasn't been styled yet!");
                 Some(parent_style)
             }
         };
@@ -619,6 +645,7 @@ impl<'ln> MatchMethods for LayoutNode<'ln> {
                             applicable_declarations.normal.as_slice(),
                             &mut layout_data.shared_data.style,
                             applicable_declarations_cache,
+                            animation_thread_proxy,
                             applicable_declarations.normal_shareable);
                         if applicable_declarations.before.len() > 0 {
                            damage = damage | self.cascade_node_pseudo_element(
@@ -626,6 +653,7 @@ impl<'ln> MatchMethods for LayoutNode<'ln> {
                                applicable_declarations.before.as_slice(),
                                &mut layout_data.data.before_style,
                                applicable_declarations_cache,
+                               animation_thread_proxy,
                                false);
                         }
                         if applicable_declarations.after.len() > 0 {
@@ -634,6 +662,7 @@ impl<'ln> MatchMethods for LayoutNode<'ln> {
                                applicable_declarations.after.as_slice(),
                                &mut layout_data.data.after_style,
                                applicable_declarations_cache,
+                               animation_thread_proxy,
                                false);
                         }
                         layout_data.data.restyle_damage = damage;

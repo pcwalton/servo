@@ -170,7 +170,8 @@ impl<'a> PreorderDomTraversal for RecalcStyleForNode<'a> {
                     unsafe {
                         node.cascade_node(parent_opt,
                                           &applicable_declarations,
-                                          self.layout_context.applicable_declarations_cache());
+                                          self.layout_context.applicable_declarations_cache(),
+                                          &self.layout_context.shared.animation_proxy);
                     }
 
                     // Add ourselves to the LRU cache.

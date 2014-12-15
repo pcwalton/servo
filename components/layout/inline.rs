@@ -1252,12 +1252,13 @@ impl Flow for InlineFlow {
 
     fn repair_style(&mut self, _: &Arc<ComputedValues>) {}
 
-    fn iterate_through_fragment_bounds(&self, iterator: &mut FragmentBoundsIterator) {
-        for fragment in self.fragments.fragments.iter() {
+    fn iterate_through_fragment_bounds(&mut self, iterator: &mut FragmentBoundsIterator) {
+        for fragment in self.fragments.fragments.iter_mut() {
             if iterator.should_process(fragment) {
                 let fragment_origin =
                     self.base.stacking_relative_position_of_child_fragment(fragment);
-                iterator.process(fragment, fragment.stacking_relative_bounds(&fragment_origin));
+                let bounds = fragment.stacking_relative_bounds(&fragment_origin);
+                iterator.process(fragment, bounds);
             }
         }
     }

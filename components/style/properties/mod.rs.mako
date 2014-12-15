@@ -2,7 +2,11 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-// This file is a Mako template: http://www.makotemplates.org/
+//! Definitions and parsing rules for all CSS properties that we handle.
+//!
+//! This file is a Mako template: http://www.makotemplates.org/
+//!
+//! Do not edit `properties/mod.rs`! Edit `properties/mod.rs.mako` instead.
 
 pub use std::ascii::AsciiExt;
 
@@ -14,7 +18,7 @@ pub use cssparser::*;
 pub use cssparser::ast::*;
 pub use geom::SideOffsets2D;
 pub use self::common_types::specified::{Angle, AngleAoc, AngleOrCorner, Bottom, CornerAoc};
-pub use self::common_types::specified::{Left, Right, Top};
+pub use self::common_types::specified::{Left, Right, Time, Top};
 
 use errors::{ErrorLoggerIterator, log_css_error};
 pub use parsing_utils::*;
@@ -23,8 +27,9 @@ use selector_matching::DeclarationBlock;
 
 
 pub use self::property_bit_field::PropertyBitField;
-pub mod common_types;
 
+pub mod animation;
+pub mod common_types;
 
 <%!
 
@@ -1326,6 +1331,21 @@ pub mod longhands {
             }
         }
     </%self:single_component_value>
+
+    ${new_style_struct("Animation", is_inherited=False)}
+
+    // TODO(pcwalton): Multiple transitions.
+    ${predefined_type("transition-duration", "Time", "Time(0.0)")}
+
+    // TODO(pcwalton): Lots more timing functions.
+    // TODO(pcwalton): Multiple transitions.
+    ${single_keyword("transition-timing-function", "linear")}
+
+    // TODO(pcwalton): Lots more properties.
+    // TODO(pcwalton): Multiple transitions.
+    ${single_keyword("transition-property", "none left")}
+
+    // TODO(pcwalton): `transition-delay`.
 }
 
 
@@ -1760,6 +1780,8 @@ pub mod shorthands {
             }
         })
     </%self:shorthand>
+
+    // TODO(pcwalton): `transition`.
 }
 
 
@@ -2013,7 +2035,7 @@ pub mod style_structs {
 #[deriving(Clone)]
 pub struct ComputedValues {
     % for style_struct in STYLE_STRUCTS:
-        ${style_struct.ident}: Arc<style_structs::${style_struct.name}>,
+        pub ${style_struct.ident}: Arc<style_structs::${style_struct.name}>,
     % endfor
     shareable: bool,
     pub writing_mode: WritingMode,

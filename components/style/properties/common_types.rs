@@ -242,6 +242,38 @@ pub mod specified {
         }
     }
 
+    /// A time in seconds according to CSS-VALUES § 6.2.
+    #[deriving(Clone, PartialEq, PartialOrd)]
+    pub struct Time(pub CSSFloat);
+
+    impl Time {
+        /// Returns the time in fractional seconds.
+        pub fn seconds(self) -> f64 {
+            let Time(seconds) = self;
+            seconds
+        }
+
+        /// Parses a time according to CSS-VALUES § 6.2.
+        fn parse_dimension(value: CSSFloat, unit: &str) -> Result<Time,()> {
+            if unit.eq_ignore_ascii_case("s") {
+                Ok(Time(value))
+            } else if unit.eq_ignore_ascii_case("ms") {
+                Ok(Time(value / 1000.0))
+            } else {
+                Err(())
+            }
+        }
+
+        pub fn parse(input: &ComponentValue) -> Result<Time,()> {
+            match input {
+                &Dimension(ref value, ref unit) => {
+                    Time::parse_dimension(value.value, unit.as_slice())
+                }
+                _ => Err(()),
+            }
+        }
+    }
+
     /// Specified values for an image according to CSS-IMAGES.
     #[deriving(Clone)]
     pub enum Image {
@@ -449,7 +481,7 @@ pub mod specified {
 
 pub mod computed {
     pub use super::specified::{Angle, AngleAoc, AngleOrCorner, CornerAoc, HorizontalDirection};
-    pub use super::specified::{VerticalDirection};
+    pub use super::specified::{Time, VerticalDirection};
     pub use cssparser::Color as CSSColor;
     pub use super::super::longhands::computed_as_specified as compute_CSSColor;
     use super::*;
@@ -551,6 +583,12 @@ pub mod computed {
             specified::LPN_Percentage(value) => LPN_Percentage(value),
             specified::LPN_None => LPN_None,
         }
+    }
+
+    #[allow(non_snake_case)]
+    #[inline]
+    pub fn compute_Time(value: specified::Time, _: &Context) -> Time {
+        value
     }
 
     /// Computed values for an image according to CSS-IMAGES.

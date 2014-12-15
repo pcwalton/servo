@@ -1603,7 +1603,7 @@ bitflags! {
 /// A top-down fragment bounds iteration handler.
 pub trait FragmentBoundsIterator {
     /// The operation to perform.
-    fn process(&mut self, fragment: &Fragment, bounds: Rect<Au>);
+    fn process(&mut self, fragment: &mut Fragment, bounds: Rect<Au>);
 
     /// Returns true if this fragment must be processed in-order. If this returns false,
     /// we skip the operation for this fragment, but continue processing siblings.

@@ -17,6 +17,7 @@ use std::any::{Any, AnyRefExt};
 use std::comm::{channel, Receiver, Sender};
 use std::boxed::BoxAny;
 use style::Stylesheet;
+use style::animation::PropertyAnimation;
 use url::Url;
 
 pub use dom::node::TrustedNodeAddress;
@@ -30,10 +31,13 @@ pub enum Msg {
     LoadStylesheetMsg(Url),
 
     /// Requests a reflow.
-    ReflowMsg(Box<Reflow>),
+    ReflowMsg(Box<ScriptReflow>),
 
     /// Get an RPC interface.
     GetRPCMsg(Sender<Box<LayoutRPC + Send>>),
+
+    /// Requests that the layout task render the next frame of the given animation.
+    UpdateAnimationMsg(Box<Animation>),
 
     /// Destroys layout data associated with a DOM node.
     ///
@@ -91,14 +95,20 @@ pub enum ReflowQueryType {
 
 /// Information needed for a reflow.
 pub struct Reflow {
-    /// The document node.
-    pub document_root: TrustedNodeAddress,
     /// The goal of reflow: either to render to the screen or to flush layout info for script.
     pub goal: ReflowGoal,
     /// The URL of the page.
     pub url: Url,
     /// Is the current reflow of an iframe, as opposed to a root window?
     pub iframe: bool,
+}
+
+/// Information needed for a script-initiated reflow.
+pub struct ScriptReflow {
+    /// General reflow data.
+    pub reflow_info: Reflow,
+    /// The document node.
+    pub document_root: TrustedNodeAddress,
     /// The channel through which messages can be sent back to the script task.
     pub script_chan: ScriptControlChan,
     /// The current window size.
@@ -148,3 +158,27 @@ impl ScriptLayoutChan for OpaqueScriptLayoutChannel {
         *receiver.downcast::<Receiver<Msg>>().unwrap()
     }
 }
+
+/// Type of an opaque node.
+pub type OpaqueNode = u64;
+
+/// State relating to an animation.
+pub struct Animation {
+    /// An opaque reference to the DOM node participating in the animation.
+    pub node: OpaqueNode,
+    /// A description of the property animation that is occurring.
+    pub property_animation: PropertyAnimation,
+    /// The start time of the animation, as returned by `time::precise_time_s()`.
+    pub start_time: f64,
+    /// The end time of the animation, as returned by `time::precise_time_s()`.
+    pub end_time: f64,
+}
+
+impl Animation {
+    /// Returns the duration of this animation in seconds.
+    #[inline]
+    pub fn duration(&self) -> f64 {
+        self.end_time - self.start_time
+    }
+}
+

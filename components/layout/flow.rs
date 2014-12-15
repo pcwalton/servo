@@ -223,7 +223,7 @@ pub trait Flow: fmt::Show + ToString + Sync {
     fn build_display_list(&mut self, layout_context: &LayoutContext);
 
     /// Perform an iteration of fragment bounds on this flow.
-    fn iterate_through_fragment_bounds(&self, iterator: &mut FragmentBoundsIterator);
+    fn iterate_through_fragment_bounds(&mut self, iterator: &mut FragmentBoundsIterator);
 
     fn compute_collapsible_block_start_margin(&mut self,
                                               _layout_context: &mut LayoutContext,

@@ -42,7 +42,7 @@ pub use selector_matching::{CommonStyleAffectingAttributeInfo, CommonStyleAffect
 pub use selector_matching::{AttrIsPresentMode, AttrIsEqualMode};
 pub use selector_matching::{matches, matches_simple_selector, common_style_affecting_attributes};
 pub use selector_matching::{RECOMMENDED_SELECTOR_BLOOM_FILTER_SIZE,SELECTOR_WHITESPACE};
-pub use properties::{cascade, cascade_anonymous, computed};
+pub use properties::{animation, cascade, cascade_anonymous, computed};
 pub use properties::{PropertyDeclaration, ComputedValues, computed_values, style_structs};
 pub use properties::{PropertyDeclarationBlock, parse_style_attribute};  // Style attributes
 pub use properties::{CSSFloat, DeclaredValue, PropertyDeclarationParseResult};

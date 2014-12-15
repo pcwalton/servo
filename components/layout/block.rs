@@ -1872,12 +1872,12 @@ impl Flow for BlockFlow {
         self.fragment.repair_style(new_style)
     }
 
-    fn iterate_through_fragment_bounds(&self, iterator: &mut FragmentBoundsIterator) {
+    fn iterate_through_fragment_bounds(&mut self, iterator: &mut FragmentBoundsIterator) {
         if iterator.should_process(&self.fragment) {
             let fragment_origin =
                 self.base.stacking_relative_position_of_child_fragment(&self.fragment);
-            iterator.process(&self.fragment,
-                             self.fragment.stacking_relative_bounds(&fragment_origin));
+            let bounds = self.fragment.stacking_relative_bounds(&fragment_origin);
+            iterator.process(&mut self.fragment, bounds);
         }
     }
 }
