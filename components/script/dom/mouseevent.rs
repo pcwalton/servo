@@ -11,7 +11,7 @@ use dom::bindings::global::GlobalRef;
 use dom::bindings::global;
 use dom::bindings::js::{MutNullableJS, JSRef, RootedReference, Temporary, OptionalSettable};
 use dom::bindings::utils::{Reflectable, Reflector, reflect_dom_object};
-use dom::event::Event;
+use dom::event::{Event, EventTypeId};
 use dom::eventtarget::EventTarget;
 use dom::uievent::UIEvent;
 use dom::window::Window;

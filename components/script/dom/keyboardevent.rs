@@ -11,7 +11,7 @@ use dom::bindings::global::GlobalRef;
 use dom::bindings::global;
 use dom::bindings::js::{JSRef, Temporary, RootedReference};
 use dom::bindings::utils::{Reflectable, Reflector, reflect_dom_object};
-use dom::event::Event;
+use dom::event::{Event, EventTypeId};
 use dom::uievent::UIEvent;
 use dom::window::Window;
 use servo_msg::constellation_msg;

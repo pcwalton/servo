@@ -10,7 +10,7 @@ use dom::bindings::error::Fallible;
 use dom::bindings::global::GlobalRef;
 use dom::bindings::js::{JSRef, Temporary};
 use dom::bindings::utils::{Reflectable, Reflector, reflect_dom_object};
-use dom::event::Event;
+use dom::event::{Event, EventTypeId};
 use servo_util::str::DOMString;
 
 #[dom_struct]

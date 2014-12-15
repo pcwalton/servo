@@ -9,7 +9,7 @@ use dom::document::Document;
 use dom::element::ElementTypeId;
 use dom::eventtarget::{EventTarget, EventTargetTypeId};
 use dom::htmlelement::HTMLElement;
-use dom::node::NodeTypeId::Element;
+use dom::node::NodeTypeId;
 use servo_util::str::DOMString;
 
 #[dom_struct]

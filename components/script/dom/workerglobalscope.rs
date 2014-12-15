@@ -48,7 +48,7 @@ pub struct WorkerGlobalScope {
 }
 
 impl WorkerGlobalScope {
-    pub fn new_inherited(type_id: WorkerGlobalScopeId,
+    pub fn new_inherited(type_id: WorkerGlobalScopeTypeId,
                          worker_url: Url,
                          cx: Rc<Cx>,
                          resource_task: ResourceTask,

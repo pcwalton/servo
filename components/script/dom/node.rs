@@ -256,7 +256,7 @@ impl LayoutDataRef {
 #[deriving(PartialEq, Show)]
 #[jstraceable]
 pub enum NodeTypeId {
-    Doctype,
+    DocumentType,
     DocumentFragment,
     Comment,
     Document,
