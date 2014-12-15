@@ -214,16 +214,16 @@ impl<'a> VirtualMethods for JSRef<'a, HTMLIFrameElement> {
 
         match attr.local_name() {
             &atom!("sandbox") => {
-                let mut modes = AllowNothing as u8;
+                let mut modes = SandboxAllowance::AllowNothing as u8;
                 for word in attr.value().as_slice().split(' ') {
                     modes |= match word.to_ascii_lower().as_slice() {
-                        "allow-same-origin" => AllowSameOrigin,
-                        "allow-forms" => AllowForms,
-                        "allow-pointer-lock" => AllowPointerLock,
-                        "allow-popups" => AllowPopups,
-                        "allow-scripts" => AllowScripts,
-                        "allow-top-navigation" => AllowTopNavigation,
-                        _ => AllowNothing
+                        "allow-same-origin" => SandboxAllowance::AllowSameOrigin,
+                        "allow-forms" => SandboxAllowance::AllowForms,
+                        "allow-pointer-lock" => SandboxAllowance::AllowPointerLock,
+                        "allow-popups" => SandboxAllowance::AllowPopups,
+                        "allow-scripts" => SandboxAllowance::AllowScripts,
+                        "allow-top-navigation" => SandboxAllowance::AllowTopNavigation,
+                        _ => SandboxAllowance::AllowNothing
                     } as u8;
                 }
                 self.sandbox.set(Some(modes));

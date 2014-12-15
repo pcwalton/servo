@@ -6,7 +6,6 @@ use dom::attr::{Attr, AttrHelpers, AttrValue};
 use dom::bindings::cell::DOMRefCell;
 use dom::bindings::codegen::Bindings::DocumentBinding;
 use dom::bindings::codegen::Bindings::DocumentBinding::{DocumentMethods, DocumentReadyState};
-use dom::bindings::codegen::Bindings::DocumentBinding::DocumentReadyStateValues;
 use dom::bindings::codegen::Bindings::EventHandlerBinding::EventHandlerNonNull;
 use dom::bindings::codegen::Bindings::EventTargetBinding::EventTargetMethods;
 use dom::bindings::codegen::Bindings::NodeBinding::NodeMethods;
@@ -406,9 +405,9 @@ impl Document {
         let url = url.unwrap_or_else(|| Url::parse("about:blank").unwrap());
 
         let ready_state = if source == DocumentSource::FromParser {
-            DocumentReadyStateValues::Loading
+            DocumentReadyState::Loading
         } else {
-            DocumentReadyStateValues::Complete
+            DocumentReadyState::Complete
         };
 
         Document {

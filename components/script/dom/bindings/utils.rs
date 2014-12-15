@@ -124,7 +124,7 @@ pub unsafe fn get_dom_class(obj: *mut JSObject) -> Result<DOMClass, ()> {
 /// not a reflector for a DOM object of the given type (as defined by the
 /// proto_id and proto_depth).
 pub fn unwrap_jsmanaged<T: Reflectable>(mut obj: *mut JSObject,
-                                        proto_id: PrototypeList::id::ID,
+                                        proto_id: PrototypeList::id,
                                         proto_depth: uint) -> Result<JS<T>, ()> {
     unsafe {
         let dom_class = get_dom_class(obj).or_else(|_| {
@@ -212,11 +212,11 @@ impl ConstantSpec {
     /// Returns a `JSVal` that represents the value of this `ConstantSpec`.
     pub fn get_value(&self) -> JSVal {
         match self.value {
-            NullVal => NullValue(),
-            IntVal(i) => Int32Value(i),
-            UintVal(u) => UInt32Value(u),
-            DoubleVal(d) => DoubleValue(d),
-            BoolVal(b) => BooleanValue(b),
+            ConstantVal::NullVal => NullValue(),
+            ConstantVal::IntVal(i) => Int32Value(i),
+            ConstantVal::UintVal(u) => UInt32Value(u),
+            ConstantVal::DoubleVal(d) => DoubleValue(d),
+            ConstantVal::BoolVal(b) => BooleanValue(b),
         }
     }
 }
@@ -234,7 +234,7 @@ pub struct NativePropertyHooks {
 pub struct DOMClass {
     /// A list of interfaces that this object implements, in order of decreasing
     /// derivedness.
-    pub interface_chain: [PrototypeList::id::ID, ..MAX_PROTO_CHAIN_LENGTH],
+    pub interface_chain: [PrototypeList::id, ..MAX_PROTO_CHAIN_LENGTH],
 
     /// The NativePropertyHooks for the interface associated with this class.
     pub native_hooks: &'static NativePropertyHooks,

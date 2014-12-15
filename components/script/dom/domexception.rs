@@ -42,21 +42,21 @@ pub enum DOMErrorName {
 impl DOMErrorName {
     fn from_error(error: Error) -> DOMErrorName {
         match error {
-            error::IndexSize => IndexSizeError,
-            error::NotFound => NotFoundError,
-            error::HierarchyRequest => HierarchyRequestError,
-            error::InvalidCharacter => InvalidCharacterError,
-            error::NotSupported => NotSupportedError,
-            error::InvalidState => InvalidStateError,
-            error::Syntax => SyntaxError,
-            error::NamespaceError => NamespaceError,
-            error::InvalidAccess => InvalidAccessError,
-            error::Security => SecurityError,
-            error::Network => NetworkError,
-            error::Abort => AbortError,
-            error::Timeout => TimeoutError,
-            error::DataClone => DataCloneError,
-            error::FailureUnknown => panic!(),
+            Error::IndexSize => DOMErrorName::IndexSizeError,
+            Error::NotFound => DOMErrorName::NotFoundError,
+            Error::HierarchyRequest => DOMErrorName::HierarchyRequestError,
+            Error::InvalidCharacter => DOMErrorName::InvalidCharacterError,
+            Error::NotSupported => DOMErrorName::NotSupportedError,
+            Error::InvalidState => DOMErrorName::InvalidStateError,
+            Error::Syntax => DOMErrorName::SyntaxError,
+            Error::NamespaceError => DOMErrorName::NamespaceError,
+            Error::InvalidAccess => DOMErrorName::InvalidAccessError,
+            Error::Security => DOMErrorName::SecurityError,
+            Error::Network => DOMErrorName::NetworkError,
+            Error::Abort => DOMErrorName::AbortError,
+            Error::Timeout => DOMErrorName::TimeoutError,
+            Error::DataClone => DOMErrorName::DataCloneError,
+            Error::FailureUnknown => panic!(),
         }
     }
 }

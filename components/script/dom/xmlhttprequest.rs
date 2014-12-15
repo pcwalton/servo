@@ -570,7 +570,7 @@ impl<'a> XMLHttpRequestMethods for JSRef<'a, XMLHttpRequest> {
 
             if !request_headers.has::<Accept>() {
                 request_headers.set(
-                    Accept(vec![Mime(mime::TopStar, mime::SubStar, vec![])]));
+                    Accept(vec![Mime(mime::TopLevel::Star, mime::SubLevel::Star, vec![])]));
             }
         } // drops the borrow_mut
 

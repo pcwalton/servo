@@ -92,9 +92,9 @@ impl ErrorEvent {
 
         let col_num = init.colno.unwrap_or(0);
 
-        let bubbles = if init.parent.bubbles { Bubbles } else { DoesNotBubble };
+        let bubbles = if init.parent.bubbles { EventBubbles::Bubbles } else { EventBubbles::DoesNotBubble };
 
-        let cancelable = if init.parent.cancelable { Cancelable } else { NotCancelable };
+        let cancelable = if init.parent.cancelable { EventCancelable::Cancelable } else { EventCancelable::NotCancelable };
 
         let event = ErrorEvent::new(global, type_,
                                 bubbles, cancelable,

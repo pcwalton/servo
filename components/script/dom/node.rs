@@ -1220,7 +1220,7 @@ impl Node {
         // Step 1.
         match node.parent_node().root() {
             Some(parent) => {
-                Node::remove(node, *parent, Unsuppressed);
+                Node::remove(node, *parent, SuppressObserver::Unsuppressed);
             }
             None => (),
         }
@@ -1364,7 +1364,7 @@ impl Node {
         Node::adopt(node, *document);
 
         // Step 10.
-        Node::insert(node, parent, referenceChild, Unsuppressed);
+        Node::insert(node, parent, referenceChild, SuppressObserver::Unsuppressed);
 
         // Step 11.
         return Ok(Temporary::from_rooted(node))
@@ -1391,8 +1391,8 @@ impl Node {
 
         fn fire_observer_if_necessary(node: JSRef<Node>, suppress_observers: SuppressObserver) {
             match suppress_observers {
-                Unsuppressed => node.node_inserted(),
-                Suppressed => ()
+                SuppressObserver::Unsuppressed => node.node_inserted(),
+                SuppressObserver::Suppressed => ()
             }
         }
 
@@ -1407,7 +1407,7 @@ impl Node {
                 let mut kids = Vec::new();
                 for kid in node.children() {
                     kids.push(kid.clone());
-                    Node::remove(kid, node, Suppressed);
+                    Node::remove(kid, node, SuppressObserver::Suppressed);
                 }
 
                 // Step 7: mutation records.
@@ -1458,12 +1458,12 @@ impl Node {
 
         // Step 4.
         for child in parent.children() {
-            Node::remove(child, parent, Suppressed);
+            Node::remove(child, parent, SuppressObserver::Suppressed);
         }
 
         // Step 5.
         match node {
-            Some(node) => Node::insert(node, parent, None, Suppressed),
+            Some(node) => Node::insert(node, parent, None, SuppressObserver::Suppressed),
             None => (),
         }
 
@@ -1488,7 +1488,7 @@ impl Node {
         }
 
         // Step 2.
-        Node::remove(child, parent, Unsuppressed);
+        Node::remove(child, parent, SuppressObserver::Unsuppressed);
 
         // Step 3.
         Ok(Temporary::from_rooted(child))
@@ -1507,8 +1507,8 @@ impl Node {
 
         // Step 9.
         match suppress_observers {
-            Suppressed => (),
-            Unsuppressed => node.node_removed(parent.is_in_doc()),
+            SuppressObserver::Suppressed => (),
+            SuppressObserver::Unsuppressed => node.node_removed(parent.is_in_doc()),
         }
     }
 
@@ -1958,10 +1958,10 @@ impl<'a> NodeMethods for JSRef<'a, Node> {
 
         {
             // Step 10.
-            Node::remove(child, self, Suppressed);
+            Node::remove(child, self, SuppressObserver::Suppressed);
 
             // Step 11.
-            Node::insert(node, self, reference_child, Suppressed);
+            Node::insert(node, self, reference_child, SuppressObserver::Suppressed);
         }
 
         // Step 12-14.
@@ -2294,11 +2294,11 @@ impl<'a> style::TNode<'a, JSRef<'a, Element>> for JSRef<'a, Node> {
             }
         };
         match attr.namespace {
-            style::SpecificNamespace(ref ns) => {
+            style::NamespaceConstraint::Specific(ref ns) => {
                 self.as_element().get_attribute(ns.clone(), name).root()
                     .map_or(false, |attr| test(attr.value().as_slice()))
             },
-            style::AnyNamespace => {
+            style::NamespaceConstraint::Any => {
                 self.as_element().get_attributes(name).iter()
                     .map(|attr| attr.root())
                     .any(|attr| test(attr.value().as_slice()))

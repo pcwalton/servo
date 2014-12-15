@@ -115,7 +115,7 @@ impl<'a> HTMLFormElementMethods for JSRef<'a, HTMLFormElement> {
 
     // https://html.spec.whatwg.org/multipage/forms.html#the-form-element:concept-form-submit
     fn Submit(self) {
-        self.submit(FromFormSubmitMethod, FormSubmitter::FormElement(self));
+        self.submit(SubmittedFrom::FromFormSubmitMethod, FormSubmitter::FormElement(self));
     }
 }
 
@@ -174,16 +174,16 @@ impl<'a> HTMLFormElementHelpers for JSRef<'a, HTMLFormElement> {
         let mut load_data = LoadData::new(action_components);
         // Step 18
         match (scheme.as_slice(), method) {
-            (_, FormDialog) => return, // Unimplemented
-            ("http", FormGet) | ("https", FormGet) => {
+            (_, FormMethod::FormDialog) => return, // Unimplemented
+            ("http", FormMethod::FormGet) | ("https", FormMethod::FormGet) => {
                 load_data.url.query = Some(parsed_data);
             },
-            ("http", FormPost) | ("https", FormPost) => {
+            ("http", FormMethod::FormPost) | ("https", FormMethod::FormPost) => {
                 load_data.method = Post;
                 load_data.data = Some(parsed_data.into_bytes());
             },
             // https://html.spec.whatwg.org/multipage/forms.html#submit-get-action
-            ("ftp", _) | ("javascript", _) | ("data", FormGet) => (),
+            ("ftp", _) | ("javascript", _) | ("data", FormMethod::FormGet) => (),
             _ => return // Unimplemented (data and mailto)
         }
 
@@ -257,7 +257,7 @@ impl<'a> HTMLFormElementHelpers for JSRef<'a, HTMLFormElement> {
 
                     let mut value = input.Value();
                     let is_submitter = match submitter {
-                        Some(InputElement(s)) => {
+                        Some(FormSubmitter::InputElement(s)) => {
                             input == s
                         },
                         _ => false
@@ -374,11 +374,11 @@ impl<'a> FormSubmitter<'a> {
             }
         };
         match attr.as_slice() {
-            "multipart/form-data" => FormDataEncoded,
-            "text/plain" => TextPlainEncoded,
+            "multipart/form-data" => FormEncType::FormDataEncoded,
+            "text/plain" => FormEncType::TextPlainEncoded,
             // https://html.spec.whatwg.org/multipage/forms.html#attr-fs-enctype
             // urlencoded is the default
-            _ => UrlEncoded
+            _ => FormEncType::UrlEncoded
         }
     }
 
@@ -393,9 +393,9 @@ impl<'a> FormSubmitter<'a> {
             }
         };
         match attr.as_slice() {
-            "dialog" => FormDialog,
-            "post" => FormPost,
-            _ => FormGet
+            "dialog" => FormMethod::FormDialog,
+            "post" => FormMethod::FormPost,
+            _ => FormMethod::FormGet
         }
     }
 

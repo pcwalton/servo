@@ -88,7 +88,7 @@ impl InputActivationState {
             checked: false,
             checked_radio: Default::default(),
             was_mutable: false,
-            old_type: InputText
+            old_type: InputType::InputText
         }
     }
 }
@@ -105,7 +105,7 @@ impl HTMLInputElement {
     fn new_inherited(localName: DOMString, prefix: Option<DOMString>, document: JSRef<Document>) -> HTMLInputElement {
         HTMLInputElement {
             htmlelement: HTMLElement::new_inherited(ElementTypeId::HTMLInputElement, localName, prefix, document),
-            input_type: Cell::new(InputText),
+            input_type: Cell::new(InputType::InputText),
             checked: Cell::new(false),
             indeterminate: Cell::new(false),
             size: Cell::new(DEFAULT_INPUT_SIZE),
@@ -145,12 +145,12 @@ impl LayoutHTMLInputElementHelpers for JS<HTMLInputElement> {
         }
 
         match (*self.unsafe_get()).input_type.get() {
-            InputCheckbox | InputRadio => "".to_string(),
-            InputFile | InputImage => "".to_string(),
-            InputButton => get_raw_attr_value(self).unwrap_or_else(|| "".to_string()),
-            InputSubmit => get_raw_attr_value(self).unwrap_or_else(|| DEFAULT_SUBMIT_VALUE.to_string()),
-            InputReset => get_raw_attr_value(self).unwrap_or_else(|| DEFAULT_RESET_VALUE.to_string()),
-            InputPassword => {
+            InputType::InputCheckbox | InputType::InputRadio => "".to_string(),
+            InputType::InputFile | InputType::InputImage => "".to_string(),
+            InputType::InputButton => get_raw_attr_value(self).unwrap_or_else(|| "".to_string()),
+            InputType::InputSubmit => get_raw_attr_value(self).unwrap_or_else(|| DEFAULT_SUBMIT_VALUE.to_string()),
+            InputType::InputReset => get_raw_attr_value(self).unwrap_or_else(|| DEFAULT_RESET_VALUE.to_string()),
+            InputType::InputPassword => {
                 let raw = get_raw_textinput_value(self);
                 String::from_char(raw.char_len(), '●')
             }
@@ -299,7 +299,7 @@ fn in_same_group<'a,'b>(other: JSRef<'a, HTMLInputElement>,
                         group: Option<&str>) -> bool {
     let other_owner = other.form_owner().root();
     let other_owner = other_owner.root_ref();
-    other.input_type.get() == InputRadio &&
+    other.input_type.get() == InputType::InputRadio &&
     // TODO Both a and b are in the same home subtree.
     other_owner.equals(owner) &&
     // TODO should be a unicode compatibility caseless match
@@ -333,7 +333,7 @@ impl<'a> HTMLInputElementHelpers for JSRef<'a, HTMLInputElement> {
 
     fn update_checked_state(self, checked: bool) {
         self.checked.set(checked);
-        if self.input_type.get() == InputRadio && checked {
+        if self.input_type.get() == InputType::InputRadio && checked {
             broadcast_radio_checked(self,
                                     self.get_radio_group_name()
                                         .as_ref()
@@ -379,16 +379,16 @@ impl<'a> VirtualMethods for JSRef<'a, HTMLInputElement> {
             &atom!("type") => {
                 let value = attr.value();
                 self.input_type.set(match value.as_slice() {
-                    "button" => InputButton,
-                    "submit" => InputSubmit,
-                    "reset" => InputReset,
-                    "file" => InputFile,
-                    "radio" => InputRadio,
-                    "checkbox" => InputCheckbox,
-                    "password" => InputPassword,
-                    _ => InputText,
+                    "button" => InputType::InputButton,
+                    "submit" => InputType::InputSubmit,
+                    "reset" => InputType::InputReset,
+                    "file" => InputType::InputFile,
+                    "radio" => InputType::InputRadio,
+                    "checkbox" => InputType::InputCheckbox,
+                    "password" => InputType::InputPassword,
+                    _ => InputType::InputText,
                 });
-                if self.input_type.get() == InputRadio {
+                if self.input_type.get() == InputType::InputRadio {
                     self.radio_group_updated(self.get_radio_group_name()
                                                  .as_ref()
                                                  .map(|group| group.as_slice()));
@@ -400,7 +400,7 @@ impl<'a> VirtualMethods for JSRef<'a, HTMLInputElement> {
                 self.force_relayout();
             }
             &atom!("name") => {
-                if self.input_type.get() == InputRadio {
+                if self.input_type.get() == InputType::InputRadio {
                     let value = attr.value();
                     self.radio_group_updated(Some(value.as_slice()));
                 }
@@ -430,13 +430,13 @@ impl<'a> VirtualMethods for JSRef<'a, HTMLInputElement> {
                 self.force_relayout();
             }
             &atom!("type") => {
-                if self.input_type.get() == InputRadio {
+                if self.input_type.get() == InputType::InputRadio {
                     broadcast_radio_checked(*self,
                                             self.get_radio_group_name()
                                                 .as_ref()
                                                 .map(|group| group.as_slice()));
                 }
-                self.input_type.set(InputText);
+                self.input_type.set(InputType::InputText);
                 self.force_relayout();
             }
             &atom!("value") => {
@@ -444,7 +444,7 @@ impl<'a> VirtualMethods for JSRef<'a, HTMLInputElement> {
                 self.force_relayout();
             }
             &atom!("name") => {
-                if self.input_type.get() == InputRadio {
+                if self.input_type.get() == InputType::InputRadio {
                     self.radio_group_updated(None);
                 }
             }
@@ -493,7 +493,7 @@ impl<'a> VirtualMethods for JSRef<'a, HTMLInputElement> {
 
         if "click" == event.Type().as_slice() && !event.DefaultPrevented() {
             match self.input_type.get() {
-                InputRadio => self.SetChecked(true),
+                InputType::InputRadio => self.SetChecked(true),
                 _ => {}
             }
 
@@ -505,7 +505,8 @@ impl<'a> VirtualMethods for JSRef<'a, HTMLInputElement> {
             let doc = document_from_node(*self).root();
             doc.request_focus(ElementCast::from_ref(*self));
         } else if "keydown" == event.Type().as_slice() && !event.DefaultPrevented() &&
-            (self.input_type.get() == InputText || self.input_type.get() == InputPassword) {
+            (self.input_type.get() == InputType::InputText ||
+             self.input_type.get() == InputType::InputPassword) {
                 let keyevent: Option<JSRef<KeyboardEvent>> = KeyboardEventCast::to_ref(event);
                 keyevent.map(|keyevent| {
                     match self.textinput.borrow_mut().handle_keydown(keyevent) {
@@ -579,8 +580,8 @@ impl<'a> Activatable for JSRef<'a, HTMLInputElement> {
         if cache.was_mutable {
             match ty {
                 // https://html.spec.whatwg.org/multipage/forms.html#submit-button-state-(type=submit):activation-behavior
-                // InputSubmit => (), // No behavior defined
-                InputCheckbox => {
+                // InputType::InputSubmit => (), // No behavior defined
+                InputType::InputCheckbox => {
                     // https://html.spec.whatwg.org/multipage/forms.html#checkbox-state-(type=checkbox):pre-click-activation-steps
                     // cache current values of `checked` and `indeterminate`
                     // we may need to restore them later
@@ -590,7 +591,7 @@ impl<'a> Activatable for JSRef<'a, HTMLInputElement> {
                     self.SetChecked(!cache.checked);
                 },
                 // https://html.spec.whatwg.org/multipage/forms.html#radio-button-state-(type=radio):pre-click-activation-steps
-                InputRadio => {
+                InputType::InputRadio => {
                     //TODO: if not in document, use root ancestor instead of document
                     let owner = self.form_owner().root();
                     let doc = document_from_node(*self).root();
@@ -624,9 +625,9 @@ impl<'a> Activatable for JSRef<'a, HTMLInputElement> {
         }
         match ty {
             // https://html.spec.whatwg.org/multipage/forms.html#submit-button-state-(type=submit):activation-behavior
-            // InputSubmit => (), // No behavior defined
+            // InputType::InputSubmit => (), // No behavior defined
             // https://html.spec.whatwg.org/multipage/forms.html#checkbox-state-(type=checkbox):canceled-activation-steps
-            InputCheckbox => {
+            InputType::InputCheckbox => {
                 // We want to restore state only if the element had been changed in the first place
                 if cache.was_mutable {
                     self.SetIndeterminate(cache.indeterminate);
@@ -634,7 +635,7 @@ impl<'a> Activatable for JSRef<'a, HTMLInputElement> {
                 }
             },
             // https://html.spec.whatwg.org/multipage/forms.html#radio-button-state-(type=radio):canceled-activation-steps
-            InputRadio => {
+            InputType::InputRadio => {
                 // We want to restore state only if the element had been changed in the first place
                 if cache.was_mutable {
                     let old_checked: Option<Root<HTMLInputElement>> = cache.checked_radio.get().root();
@@ -646,7 +647,7 @@ impl<'a> Activatable for JSRef<'a, HTMLInputElement> {
                             if name == o.get_radio_group_name() && // TODO should be compatibility caseless
                                self.form_owner() == o.form_owner() &&
                                // TODO Both a and b are in the same home subtree
-                               o.input_type.get() == InputRadio {
+                               o.input_type.get() == InputType::InputRadio {
                                     o.SetChecked(true);
                             } else {
                                 self.SetChecked(false);
@@ -669,7 +670,7 @@ impl<'a> Activatable for JSRef<'a, HTMLInputElement> {
             return;
         }
         match ty {
-            InputSubmit => {
+            InputType::InputSubmit => {
                 // https://html.spec.whatwg.org/multipage/forms.html#submit-button-state-(type=submit):activation-behavior
                 // FIXME (Manishearth): support document owners (needs ability to get parent browsing context)
                 if self.mutable() /* and document owner is fully active */ {
@@ -679,7 +680,7 @@ impl<'a> Activatable for JSRef<'a, HTMLInputElement> {
                     });
                 }
             },
-            InputCheckbox | InputRadio => {
+            InputType::InputCheckbox | InputType::InputRadio => {
                 // https://html.spec.whatwg.org/multipage/forms.html#checkbox-state-(type=checkbox):activation-behavior
                 // https://html.spec.whatwg.org/multipage/forms.html#radio-button-state-(type=radio):activation-behavior
                 if self.mutable() {

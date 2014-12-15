@@ -75,7 +75,7 @@ impl Event {
             reflector_: Reflector::new(),
             current_target: Default::default(),
             target: Default::default(),
-            phase: Cell::new(PhaseNone),
+            phase: Cell::new(EventPhase::None),
             type_: DOMRefCell::new("".to_string()),
             canceled: Cell::new(false),
             cancelable: Cell::new(false),
@@ -100,15 +100,15 @@ impl Event {
                bubbles: EventBubbles,
                cancelable: EventCancelable) -> Temporary<Event> {
         let event = Event::new_uninitialized(global).root();
-        event.InitEvent(type_, bubbles == Bubbles, cancelable == Cancelable);
+        event.InitEvent(type_, bubbles == EventBubbles::Bubbles, cancelable == EventCancelable::Cancelable);
         Temporary::from_rooted(*event)
     }
 
     pub fn Constructor(global: &GlobalRef,
                        type_: DOMString,
                        init: &EventBinding::EventInit) -> Fallible<Temporary<Event>> {
-        let bubbles = if init.bubbles { Bubbles } else { DoesNotBubble };
-        let cancelable = if init.cancelable { Cancelable } else { NotCancelable };
+        let bubbles = if init.bubbles { EventBubbles::Bubbles } else { EventBubbles::DoesNotBubble };
+        let cancelable = if init.cancelable { EventCancelable::Cancelable } else { EventCancelable::NotCancelable };
         Ok(Event::new(*global, type_, bubbles, cancelable))
     }
 

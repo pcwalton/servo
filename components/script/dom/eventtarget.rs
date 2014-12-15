@@ -56,7 +56,8 @@ pub enum EventListenerType {
 impl EventListenerType {
     fn get_listener(&self) -> EventListener {
         match *self {
-            Additive(listener) | Inline(listener) => listener
+            EventListenerType::Additive(listener) |
+            EventListenerType::Inline(listener) => listener
         }
     }
 }
@@ -147,7 +148,7 @@ impl<'a> EventTargetHelpers for JSRef<'a, EventTarget> {
 
         let idx = entries.iter().position(|&entry| {
             match entry.listener {
-                Inline(_) => true,
+                EventListenerType::Inline(_) => true,
                 _ => false,
             }
         });
@@ -155,7 +156,7 @@ impl<'a> EventTargetHelpers for JSRef<'a, EventTarget> {
         match idx {
             Some(idx) => {
                 match listener {
-                    Some(listener) => entries[idx].listener = Inline(listener),
+                    Some(listener) => entries[idx].listener = EventListenerType::Inline(listener),
                     None => {
                         entries.remove(idx);
                     }
@@ -164,8 +165,8 @@ impl<'a> EventTargetHelpers for JSRef<'a, EventTarget> {
             None => {
                 if listener.is_some() {
                     entries.push(EventListenerEntry {
-                        phase: Bubbling,
-                        listener: Inline(listener.unwrap()),
+                        phase: ListenerPhase::Bubbling,
+                        listener: EventListenerType::Inline(listener.unwrap()),
                     });
                 }
             }
@@ -177,7 +178,7 @@ impl<'a> EventTargetHelpers for JSRef<'a, EventTarget> {
         let entries = handlers.get(&ty);
         entries.and_then(|entries| entries.iter().find(|entry| {
             match entry.listener {
-                Inline(_) => true,
+                EventListenerType::Inline(_) => true,
                 _ => false,
             }
         }).map(|entry| entry.listener.get_listener()))
@@ -253,10 +254,10 @@ impl<'a> EventTargetMethods for JSRef<'a, EventTarget> {
                     Vacant(entry) => entry.set(vec!()),
                 };
 
-                let phase = if capture { Capturing } else { Bubbling };
+                let phase = if capture { ListenerPhase::Capturing } else { ListenerPhase::Bubbling };
                 let new_entry = EventListenerEntry {
                     phase: phase,
-                    listener: Additive(listener)
+                    listener: EventListenerType::Additive(listener)
                 };
                 if entry.as_slice().position_elem(&new_entry).is_none() {
                     entry.push(new_entry);
@@ -275,10 +276,10 @@ impl<'a> EventTargetMethods for JSRef<'a, EventTarget> {
                 let mut handlers = self.handlers.borrow_mut();
                 let mut entry = handlers.get_mut(&ty);
                 for entry in entry.iter_mut() {
-                    let phase = if capture { Capturing } else { Bubbling };
+                    let phase = if capture { ListenerPhase::Capturing } else { ListenerPhase::Bubbling };
                     let old_entry = EventListenerEntry {
                         phase: phase,
-                        listener: Additive(listener)
+                        listener: EventListenerType::Additive(listener)
                     };
                     let position = entry.as_slice().position_elem(&old_entry);
                     for &position in position.iter() {
