@@ -425,7 +425,7 @@ def typeNeedsRooting(type, descriptorProvider):
 
 def union_native_type(t):
     name = t.unroll().name
-    return 'UnionTypes::%s::%s' % (name, name)
+    return 'UnionTypes::%s' % name
 
 
 def getJSToNativeConversionTemplate(type, descriptorProvider, failureCode=None,
