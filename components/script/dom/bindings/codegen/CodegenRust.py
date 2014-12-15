@@ -741,7 +741,7 @@ def getJSToNativeConversionTemplate(type, descriptorProvider, failureCode=None,
 
         if defaultValue is not None:
             assert(defaultValue.type.tag() == IDLType.Tags.domstring)
-            default = "%sValues::%s" % (enum, getEnumValueName(defaultValue.value))
+            default = "%s::%s" % (enum, getEnumValueName(defaultValue.value))
         else:
             default = None
 
