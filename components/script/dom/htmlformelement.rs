@@ -167,7 +167,7 @@ impl<'a> HTMLFormElementHelpers for JSRef<'a, HTMLFormElement> {
         // TODO: Handle browsing contexts, partially loaded documents (step 16-17)
 
         let parsed_data = match enctype {
-            UrlEncoded => serialize(form_data.iter().map(|d| (d.name.as_slice(), d.value.as_slice())), None),
+            FormEncType::UrlEncoded => serialize(form_data.iter().map(|d| (d.name.as_slice(), d.value.as_slice()))),
             _ => "".to_string() // TODO: Add serializers for the other encoding types
         };
 

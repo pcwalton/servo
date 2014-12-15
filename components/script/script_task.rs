@@ -582,7 +582,7 @@ impl ScriptTask {
                 self.trigger_fragment(id, url),
             FireTimerMsg(TimerSource::FromWindow(id), timer_id) =>
                 self.handle_fire_timer_msg(id, timer_id),
-            FireTimerMsg(FromWorker, _) =>
+            FireTimerMsg(TimerSource::FromWorker, _) =>
                 panic!("Worker timeouts must not be sent to script task"),
             NavigateMsg(direction) =>
                 self.handle_navigate_msg(direction),
@@ -1295,7 +1295,7 @@ impl HeaderFormat for LastModified {
     // for document.lastModified.
     fn fmt_header(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let LastModified(ref tm) = *self;
-        match tm.tm_gmtoff {
+        match tm.tm_utcoff {
             0 => tm.rfc822().fmt(f),
             _ => tm.to_utc().rfc822().fmt(f)
         }
@@ -1303,5 +1303,5 @@ impl HeaderFormat for LastModified {
 }
 
 fn dom_last_modified(tm: &Tm) -> String {
-    tm.to_local().strftime("%m/%d/%Y %H:%M:%S").unwrap()
+    format!("{}", tm.to_local().strftime("%m/%d/%Y %H:%M:%S").unwrap())
 }

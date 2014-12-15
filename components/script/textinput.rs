@@ -11,6 +11,7 @@ use servo_util::str::DOMString;
 
 use std::cmp::{min, max};
 use std::default::Default;
+use std::num::SignedInt;
 
 #[jstraceable]
 struct TextPoint {

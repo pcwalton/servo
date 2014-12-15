@@ -351,7 +351,7 @@ source = "git+https://github.com/servo/html5ever#976a4ba8c4576a187507a953b61901e
 [[package]]
 name = "hyper"
 version = "0.0.1"
-source = "git+https://github.com/servo/hyper?ref=servo#fd5b5b202b653ae72407b3fb081f635dd643c412"
+source = "git+https://github.com/servo/hyper?ref=servo#9c70c58e65ec80446fdb6e338f1060589b562f8c"
 dependencies = [
  "cookie 0.0.1 (git+https://github.com/servo/cookie-rs)",
  "mime 0.0.1 (git+https://github.com/hyperium/mime.rs)",

@@ -62,7 +62,6 @@ use std::default::Default;
 use std::io::Timer;
 use std::str::FromStr;
 use std::time::duration::Duration;
-use std::num::Zero;
 use time;
 use url::{Url, UrlParser};
 
@@ -860,7 +859,7 @@ impl<'a> PrivateXMLHttpRequestHelpers for JSRef<'a, XMLHttpRequest> {
                 // Substep 2
                 status.map(|RawStatus(code, reason)| {
                     self.status.set(code);
-                    *self.status_text.borrow_mut() = ByteString::new(reason.into_bytes());
+                    *self.status_text.borrow_mut() = ByteString::new(format!("{}", reason).into_bytes());
                 });
                 headers.as_ref().map(|h| *self.response_headers.borrow_mut() = h.clone());
 
@@ -996,7 +995,7 @@ impl<'a> PrivateXMLHttpRequestHelpers for JSRef<'a, XMLHttpRequest> {
 
     fn cancel_timeout(self) {
         // oneshot() closes the previous channel, canceling the timeout
-        self.timer.borrow_mut().oneshot(Zero::zero());
+        self.timer.borrow_mut().oneshot(Duration::zero());
     }
 
     fn text_response(self) -> DOMString {
