@@ -155,7 +155,7 @@ impl BSizeConstraintSolution {
                          total_margin_val.scale_by(0.5),
                          total_margin_val.scale_by(0.5))
                     }
-                    (MaybeAuto::Specified(margin_block_start), Auto) => {
+                    (MaybeAuto::Specified(margin_block_start), MaybeAuto::Auto) => {
                         let sum = block_start + block_end + block_size + margin_block_start;
                         (block_start, block_end, block_size, margin_block_start, available_block_size - sum)
                     }
@@ -180,13 +180,13 @@ impl BSizeConstraintSolution {
                 let sum = block_end + block_size + margin_block_start + margin_block_end;
                 (available_block_size - sum, block_end, block_size, margin_block_start, margin_block_end)
             }
-            (MaybeAuto::Specified(block_start), Auto, MaybeAuto::Specified(block_size)) => {
+            (MaybeAuto::Specified(block_start), MaybeAuto::Auto, MaybeAuto::Specified(block_size)) => {
                 let margin_block_start = block_start_margin.specified_or_zero();
                 let margin_block_end = block_end_margin.specified_or_zero();
                 let sum = block_start + block_size + margin_block_start + margin_block_end;
                 (block_start, available_block_size - sum, block_size, margin_block_start, margin_block_end)
             }
-            (MaybeAuto::Specified(block_start), MaybeAuto::Specified(block_end), Auto) => {
+            (MaybeAuto::Specified(block_start), MaybeAuto::Specified(block_end), MaybeAuto::Auto) => {
                 let margin_block_start = block_start_margin.specified_or_zero();
                 let margin_block_end = block_end_margin.specified_or_zero();
                 let sum = block_start + block_end + margin_block_start + margin_block_end;
@@ -202,7 +202,7 @@ impl BSizeConstraintSolution {
                 let sum = block_start + block_size + margin_block_start + margin_block_end;
                 (block_start, available_block_size - sum, block_size, margin_block_start, margin_block_end)
             }
-            (Auto, MaybeAuto::Specified(block_end), MaybeAuto::Auto) => {
+            (MaybeAuto::Auto, MaybeAuto::Specified(block_end), MaybeAuto::Auto) => {
                 let margin_block_start = block_start_margin.specified_or_zero();
                 let margin_block_end = block_end_margin.specified_or_zero();
                 let block_size = content_block_size;
@@ -262,11 +262,11 @@ impl BSizeConstraintSolution {
                          total_margin_val.scale_by(0.5),
                          total_margin_val.scale_by(0.5))
                     }
-                    (MaybeAuto::Specified(margin_block_start), Auto) => {
+                    (MaybeAuto::Specified(margin_block_start), MaybeAuto::Auto) => {
                         let sum = block_start + block_end + block_size + margin_block_start;
                         (block_start, block_end, block_size, margin_block_start, available_block_size - sum)
                     }
-                    (Auto, MaybeAuto::Specified(margin_block_end)) => {
+                    (MaybeAuto::Auto, MaybeAuto::Specified(margin_block_end)) => {
                         let sum = block_start + block_end + block_size + margin_block_end;
                         (block_start, block_end, block_size, available_block_size - sum, margin_block_end)
                     }
@@ -279,13 +279,13 @@ impl BSizeConstraintSolution {
             }
 
             // If only one is Auto, solve for it
-            (Auto, MaybeAuto::Specified(block_end)) => {
+            (MaybeAuto::Auto, MaybeAuto::Specified(block_end)) => {
                 let margin_block_start = block_start_margin.specified_or_zero();
                 let margin_block_end = block_end_margin.specified_or_zero();
                 let sum = block_end + block_size + margin_block_start + margin_block_end;
                 (available_block_size - sum, block_end, block_size, margin_block_start, margin_block_end)
             }
-            (MaybeAuto::Specified(block_start), Auto) => {
+            (MaybeAuto::Specified(block_start), MaybeAuto::Auto) => {
                 let margin_block_start = block_start_margin.specified_or_zero();
                 let margin_block_end = block_end_margin.specified_or_zero();
                 let sum = block_start + block_size + margin_block_start + margin_block_end;
@@ -1013,7 +1013,7 @@ impl BlockFlow {
                     Some(candidate_block_size) => {
                         candidate_block_size_iterator.candidate_value =
                             match candidate_block_size {
-                                Auto => block_size,
+                                MaybeAuto::Auto => block_size,
                                 MaybeAuto::Specified(value) => value
                             }
                     }
@@ -2139,7 +2139,7 @@ pub trait ISizeAndMarginsComputer {
         // If inline-size is not 'auto', and inline-size + margins > available_inline-size, all
         // 'auto' margins are treated as 0.
         let (inline_start_margin, inline_end_margin) = match computed_inline_size {
-            Auto => (inline_start_margin, inline_end_margin),
+            MaybeAuto::Auto => (inline_start_margin, inline_end_margin),
             MaybeAuto::Specified(inline_size) => {
                 let inline_start = inline_start_margin.specified_or_zero();
                 let inline_end = inline_end_margin.specified_or_zero();
@@ -2165,10 +2165,10 @@ pub trait ISizeAndMarginsComputer {
                 // If exactly one value is 'auto', solve for it
                 (MaybeAuto::Auto, MaybeAuto::Specified(inline_size), MaybeAuto::Specified(margin_end)) =>
                     (available_inline_size - (inline_size + margin_end), inline_size, margin_end),
-                (MaybeAuto::Specified(margin_start), Auto, MaybeAuto::Specified(margin_end)) =>
+                (MaybeAuto::Specified(margin_start), MaybeAuto::Auto, MaybeAuto::Specified(margin_end)) =>
                     (margin_start, available_inline_size - (margin_start + margin_end),
                      margin_end),
-                (MaybeAuto::Specified(margin_start), MaybeAuto::Specified(inline_size), Auto) =>
+                (MaybeAuto::Specified(margin_start), MaybeAuto::Specified(inline_size), MaybeAuto::Auto) =>
                     (margin_start, inline_size, available_inline_size -
                      (margin_start + inline_size)),
 
@@ -2265,7 +2265,7 @@ impl ISizeAndMarginsComputer for AbsoluteNonReplaced {
                              total_margin_val.scale_by(0.5))
                         }
                     }
-                    (MaybeAuto::Specified(margin_start), Auto) => {
+                    (MaybeAuto::Specified(margin_start), MaybeAuto::Auto) => {
                         let sum = inline_start + inline_end + inline_size + margin_start;
                         (inline_start, inline_end, inline_size, margin_start, available_inline_size - sum)
                     }
@@ -2285,19 +2285,19 @@ impl ISizeAndMarginsComputer for AbsoluteNonReplaced {
             // For the rest of the cases, auto values for margin are set to 0
 
             // If only one is Auto, solve for it
-            (Auto, MaybeAuto::Specified(inline_end), MaybeAuto::Specified(inline_size)) => {
+            (MaybeAuto::Auto, MaybeAuto::Specified(inline_end), MaybeAuto::Specified(inline_size)) => {
                 let margin_start = inline_start_margin.specified_or_zero();
                 let margin_end = inline_end_margin.specified_or_zero();
                 let sum = inline_end + inline_size + margin_start + margin_end;
                 (available_inline_size - sum, inline_end, inline_size, margin_start, margin_end)
             }
-            (MaybeAuto::Specified(inline_start), Auto, MaybeAuto::Specified(inline_size)) => {
+            (MaybeAuto::Specified(inline_start), MaybeAuto::Auto, MaybeAuto::Specified(inline_size)) => {
                 let margin_start = inline_start_margin.specified_or_zero();
                 let margin_end = inline_end_margin.specified_or_zero();
                 let sum = inline_start + inline_size + margin_start + margin_end;
                 (inline_start, available_inline_size - sum, inline_size, margin_start, margin_end)
             }
-            (MaybeAuto::Specified(inline_start), MaybeAuto::Specified(inline_end), Auto) => {
+            (MaybeAuto::Specified(inline_start), MaybeAuto::Specified(inline_end), MaybeAuto::Auto) => {
                 let margin_start = inline_start_margin.specified_or_zero();
                 let margin_end = inline_end_margin.specified_or_zero();
                 let sum = inline_start + inline_end + margin_start + margin_end;
@@ -2428,11 +2428,11 @@ impl ISizeAndMarginsComputer for AbsoluteReplaced {
                              total_margin_val.scale_by(0.5))
                         }
                     }
-                    (MaybeAuto::Specified(margin_start), Auto) => {
+                    (MaybeAuto::Specified(margin_start), MaybeAuto::Auto) => {
                         let sum = inline_start + inline_end + inline_size + margin_start;
                         (inline_start, inline_end, inline_size, margin_start, available_inline_size - sum)
                     }
-                    (Auto, MaybeAuto::Specified(margin_end)) => {
+                    (MaybeAuto::Auto, MaybeAuto::Specified(margin_end)) => {
                         let sum = inline_start + inline_end + inline_size + margin_end;
                         (inline_start, inline_end, inline_size, available_inline_size - sum, margin_end)
                     }
@@ -2494,7 +2494,7 @@ impl ISizeAndMarginsComputer for BlockReplaced {
                                      -> ISizeConstraintSolution {
         match input.computed_inline_size {
             MaybeAuto::Specified(_) => {},
-            Auto => panic!("BlockReplaced: inline_size should have been computed by now")
+            MaybeAuto::Auto => panic!("BlockReplaced: inline_size should have been computed by now")
         };
         self.solve_block_inline_size_constraints(block, input)
     }
@@ -2549,7 +2549,7 @@ impl ISizeAndMarginsComputer for FloatReplaced {
         let margin_inline_end = inline_end_margin.specified_or_zero();
         let inline_size = match computed_inline_size {
             MaybeAuto::Specified(w) => w,
-            Auto => panic!("FloatReplaced: inline_size should have been computed by now")
+            MaybeAuto::Auto => panic!("FloatReplaced: inline_size should have been computed by now")
         };
         debug!("assign_inline_sizes_float -- inline_size: {}", inline_size);
         ISizeConstraintSolution::new(inline_size, margin_inline_start, margin_inline_end)

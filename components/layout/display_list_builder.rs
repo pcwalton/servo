@@ -37,7 +37,7 @@ use servo_util::logical_geometry::{LogicalRect, WritingMode};
 use servo_util::opts;
 use std::default::Default;
 use std::num::FloatMath;
-use style::computed::{AngleOrCorner, LengthOrPercentage};
+use style::computed::{AngleOrCorner, LengthOrPercentage, HorizontalDirection, VerticalDirection};
 use style::computed::{Image, LinearGradient};
 use style::computed_values::{background_attachment, background_repeat, border_style, overflow};
 use style::computed_values::{visibility};
@@ -322,12 +322,12 @@ impl FragmentDisplayListBuilding for Fragment {
             }
             AngleOrCorner::Corner(horizontal, vertical) => {
                 let x_factor = match horizontal {
-                    Left => -1,
-                    Right => 1,
+                    HorizontalDirection::Left => -1,
+                    HorizontalDirection::Right => 1,
                 };
                 let y_factor = match vertical {
-                    Top => -1,
-                    Bottom => 1,
+                    VerticalDirection::Top => -1,
+                    VerticalDirection::Bottom => 1,
                 };
                 Point2D(Au(x_factor * absolute_bounds.size.width.to_i32().unwrap() / 2),
                         Au(y_factor * absolute_bounds.size.height.to_i32().unwrap() / 2))

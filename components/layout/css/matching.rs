@@ -13,6 +13,7 @@ use servo_util::bloom::BloomFilter;
 use servo_util::cache::{Cache, LRUCache, SimpleHashCache};
 use servo_util::smallvec::{SmallVec, SmallVec16};
 use servo_util::arc_ptr_eq;
+use script::dom::node::NodeTypeId;
 use std::mem;
 use std::hash::{Hash, sip};
 use std::slice::Items;
@@ -604,7 +605,7 @@ impl<'ln> MatchMethods for LayoutNode<'ln> {
             &None => panic!("no layout data"),
             &Some(ref mut layout_data) => {
                 match self.type_id() {
-                    Some(TextNodeTypeId) => {
+                    Some(NodeTypeId::Text) => {
                         // Text nodes get a copy of the parent style. This ensures
                         // that during fragment construction any non-inherited
                         // CSS properties (such as vertical-align) are correctly
