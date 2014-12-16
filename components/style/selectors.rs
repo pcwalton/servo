@@ -633,6 +633,8 @@ mod tests {
     use namespaces::NamespaceMap;
     use string_cache::Atom;
     use super::*;
+    use super::SimpleSelector::*;
+    use super::PseudoElement::*;
 
     fn parse(input: &str) -> Result<Vec<Selector>, ()> {
         parse_ns(input, &NamespaceMap::new())
