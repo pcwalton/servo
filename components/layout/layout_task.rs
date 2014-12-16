@@ -33,7 +33,7 @@ use layout_traits;
 use layout_traits::{LayoutControlMsg, LayoutTaskFactory};
 use log;
 use script::dom::bindings::js::JS;
-use script::dom::node::{LayoutDataRef, Node};
+use script::dom::node::{LayoutDataRef, Node, NodeTypeId};
 use script::dom::element::ElementTypeId;
 use script::layout_interface::{AddStylesheetMsg, ContentBoxResponse, ContentBoxesResponse};
 use script::layout_interface::{ContentBoxesQuery, ContentBoxQuery, ExitNowMsg, GetRPCMsg};
@@ -650,8 +650,8 @@ impl LayoutTask {
             // it with extreme prejudice.
             let mut color = color::rgba(1.0, 1.0, 1.0, 1.0);
             for child in node.traverse_preorder() {
-                if child.type_id() == Some(ElementTypeId::HTMLHtmlElement) ||
-                        child.type_id() == Some(ElementTypeId::HTMLBodyElement) {
+                if child.type_id() == Some(NodeTypeId::Element(ElementTypeId::HTMLHtmlElement)) ||
+                        child.type_id() == Some(NodeTypeId::Element(ElementTypeId::HTMLBodyElement)) {
                     let element_bg_color = {
                         let thread_safe_child = ThreadSafeLayoutNode::new(&child);
                         thread_safe_child.style()

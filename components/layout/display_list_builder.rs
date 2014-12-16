@@ -36,6 +36,7 @@ use servo_util::geometry::{mod, Au, ZERO_POINT, ZERO_RECT};
 use servo_util::logical_geometry::{LogicalRect, WritingMode};
 use servo_util::opts;
 use std::default::Default;
+use std::num::FloatMath;
 use style::computed::{AngleOrCorner, LengthOrPercentage};
 use style::computed::{Image, LinearGradient};
 use style::computed_values::{background_attachment, background_repeat, border_style, overflow};
