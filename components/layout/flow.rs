@@ -655,7 +655,7 @@ pub struct DescendantIter<'a> {
 
 impl<'a> Iterator<&'a mut Flow + 'a> for DescendantIter<'a> {
     fn next(&mut self) -> Option<&'a mut Flow + 'a> {
-        self.iter.next().map(|flow| Some(&mut **flow))
+        self.iter.next().map(|flow| &mut **flow)
     }
 }
 
