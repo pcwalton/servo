@@ -40,7 +40,7 @@ impl HTMLBodyElement {
             htmlelement: HTMLElement::new_inherited(ElementTypeId::HTMLBodyElement,
                                                     localName,
                                                     prefix,
-                                                    document)
+                                                    document),
             background_color: Cell::new(None),
         }
     }

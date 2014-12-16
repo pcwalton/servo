@@ -44,10 +44,10 @@ impl HTMLTableElement {
             htmlelement: HTMLElement::new_inherited(ElementTypeId::HTMLTableElement,
                                                     localName,
                                                     prefix,
-                                                    document)
+                                                    document),
             background_color: Cell::new(None),
             border: Cell::new(None),
-            width: Cell::new(AutoLpa),
+            width: Cell::new(LengthOrPercentageOrAuto::Auto),
         }
     }
 

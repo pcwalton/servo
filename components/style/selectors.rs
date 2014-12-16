@@ -9,7 +9,7 @@ use sync::Arc;
 use cssparser::ast::*;
 use cssparser::{tokenize, parse_nth};
 
-use selector_matching::{StylesheetOrigin, UserAgentOrigin};
+use selector_matching::StylesheetOrigin;
 use string_cache::{Atom, Namespace};
 
 use namespaces::NamespaceMap;
@@ -184,7 +184,8 @@ fn compute_specificity(mut selector: &CompoundSelector,
                 &SimpleSelector::NthOfType(..) |
                 &SimpleSelector::NthLastOfType(..) |
                 &SimpleSelector::FirstOfType | &SimpleSelector::LastOfType |
-                &SimpleSelector::OnlyOfType =>
+                &SimpleSelector::OnlyOfType |
+                &SimpleSelector::ServoNonzeroBorder =>
                     specificity.class_like_selectors += 1,
                 &SimpleSelector::NamespaceSelector(..) => (),
                 &SimpleSelector::Negation(ref negated) =>
@@ -417,11 +418,11 @@ fn parse_selector<I>(context: &ParserContext, iter: &mut Iter<I>, namespaces: &N
         let combinator = match iter.peek() {
             None => break,  // EOF
             Some(&Comma) => break,
-            Some(&Delim('>')) => { iter.next(); Child },
-            Some(&Delim('+')) => { iter.next(); NextSibling },
-            Some(&Delim('~')) => { iter.next(); LaterSibling },
+            Some(&Delim('>')) => { iter.next(); Combinator::Child },
+            Some(&Delim('+')) => { iter.next(); Combinator::NextSibling },
+            Some(&Delim('~')) => { iter.next(); Combinator::LaterSibling },
             Some(_) => {
-                if any_whitespace { Descendant }
+                if any_whitespace { Combinator::Descendant }
                 else { return Err(()) }
             }
         };
@@ -446,14 +447,14 @@ fn parse_negation(context: &ParserContext,
                   -> Result<SimpleSelector,()> {
     let iter = &mut arguments.into_iter().peekable();
     match try!(parse_type_selector(iter, namespaces)) {
-        Some(type_selector) => Ok(Negation(type_selector)),
+        Some(type_selector) => Ok(SimpleSelector::Negation(type_selector)),
         None => {
             match try!(parse_one_simple_selector(context,
                                                  iter,
                                                  namespaces,
                                                  /* inside_negation = */ true)) {
-                Some(SimpleSelectorResult(simple_selector)) => {
-                    Ok(Negation(vec![simple_selector]))
+                Some(SimpleSelectorParseResult::SimpleSelector(simple_selector)) => {
+                    Ok(SimpleSelector::Negation(vec![simple_selector]))
                 }
                 _ => Err(())
             }
@@ -484,8 +485,8 @@ fn parse_simple_selectors<I>(context: &ParserContext,
                                              namespaces,
                                              /* inside_negation = */ false)) {
             None => break,
-            Some(SimpleSelectorResult(s)) => { simple_selectors.push(s); empty = false },
-            Some(PseudoElementResult(p)) => { pseudo_element = Some(p); empty = false; break },
+            Some(SimpleSelectorParseResult::SimpleSelector(s)) => { simple_selectors.push(s); empty = false },
+            Some(SimpleSelectorParseResult::PseudoElement(p)) => { pseudo_element = Some(p); empty = false; break },
         }
     }
     if empty {
@@ -504,10 +505,10 @@ fn parse_functional_pseudo_class(context: &ParserContext,
                                  -> Result<SimpleSelector,()> {
     match name.as_slice().to_ascii_lower().as_slice() {
 //        "lang" => parse_lang(arguments),
-        "nth-child"        => parse_nth(arguments.as_slice()).map(|(a, b)| NthChild(a, b)),
-        "nth-last-child"   => parse_nth(arguments.as_slice()).map(|(a, b)| NthLastChild(a, b)),
-        "nth-of-type"      => parse_nth(arguments.as_slice()).map(|(a, b)| NthOfType(a, b)),
-        "nth-last-of-type" => parse_nth(arguments.as_slice()).map(|(a, b)| NthLastOfType(a, b)),
+        "nth-child"        => parse_nth(arguments.as_slice()).map(|(a, b)| SimpleSelector::NthChild(a, b)),
+        "nth-last-child"   => parse_nth(arguments.as_slice()).map(|(a, b)| SimpleSelector::NthLastChild(a, b)),
+        "nth-of-type"      => parse_nth(arguments.as_slice()).map(|(a, b)| SimpleSelector::NthOfType(a, b)),
+        "nth-last-of-type" => parse_nth(arguments.as_slice()).map(|(a, b)| SimpleSelector::NthLastOfType(a, b)),
         "not" => {
             if inside_negation {
                 Err(())
@@ -532,21 +533,21 @@ fn parse_one_simple_selector<I>(context: &ParserContext,
                                 where I: Iterator<ComponentValue> {
     match iter.peek() {
         Some(&IDHash(_)) => match iter.next() {
-            Some(IDHash(id)) => Ok(Some(SimpleSelectorResult(
-                IDSelector(Atom::from_slice(id.as_slice()))))),
+            Some(IDHash(id)) => Ok(Some(SimpleSelectorParseResult::SimpleSelector(
+                SimpleSelector::IDSelector(Atom::from_slice(id.as_slice()))))),
             _ => panic!("Implementation error, this should not happen."),
         },
         Some(&Delim('.')) => {
             iter.next();
             match iter.next() {
-                Some(Ident(class)) => Ok(Some(SimpleSelectorResult(
-                    ClassSelector(Atom::from_slice(class.as_slice()))))),
+                Some(Ident(class)) => Ok(Some(SimpleSelectorParseResult::SimpleSelector(
+                    SimpleSelector::ClassSelector(Atom::from_slice(class.as_slice()))))),
                 _ => Err(()),
             }
         }
         Some(&SquareBracketBlock(_)) => match iter.next() {
             Some(SquareBracketBlock(content))
-            => Ok(Some(SimpleSelectorResult(try!(parse_attribute_selector(content, namespaces))))),
+            => Ok(Some(SimpleSelectorParseResult::SimpleSelector(try!(parse_attribute_selector(content, namespaces))))),
             _ => panic!("Implementation error, this should not happen."),
         },
         Some(&Colon) => {
@@ -557,18 +558,18 @@ fn parse_one_simple_selector<I>(context: &ParserContext,
                         match name.as_slice().to_ascii_lower().as_slice() {
                             // Supported CSS 2.1 pseudo-elements only.
                             // ** Do not add to this list! **
-                            "before" => Ok(Some(PseudoElementResult(Before))),
-                            "after" => Ok(Some(PseudoElementResult(After))),
-//                            "first-line" => PseudoElementResult(FirstLine),
-//                            "first-letter" => PseudoElementResult(FirstLetter),
+                            "before" => Ok(Some(SimpleSelectorParseResult::PseudoElement(PseudoElement::Before))),
+                            "after" => Ok(Some(SimpleSelectorParseResult::PseudoElement(PseudoElement::After))),
+//                            "first-line" => SimpleSelectorParseResult::PseudoElement(FirstLine),
+//                            "first-letter" => SimpleSelectorParseResult::PseudoElement(FirstLetter),
                             _ => Err(())
                         }
                     },
-                    Ok(result) => Ok(Some(SimpleSelectorResult(result))),
+                    Ok(result) => Ok(Some(SimpleSelectorParseResult::SimpleSelector(result))),
                 },
                 Some(Function(name, arguments))
                 => {
-                    Ok(Some(SimpleSelectorResult(try!(parse_functional_pseudo_class(
+                    Ok(Some(SimpleSelectorParseResult::SimpleSelector(try!(parse_functional_pseudo_class(
                                         context,
                                         name,
                                         arguments,
@@ -578,7 +579,7 @@ fn parse_one_simple_selector<I>(context: &ParserContext,
                 Some(Colon) => {
                     match iter.next() {
                         Some(Ident(name))
-                        => Ok(Some(PseudoElementResult(try!(parse_pseudo_element(name))))),
+                        => Ok(Some(SimpleSelectorParseResult::PseudoElement(try!(parse_pseudo_element(name))))),
                         _ => Err(()),
                     }
                 }
@@ -589,7 +590,7 @@ fn parse_one_simple_selector<I>(context: &ParserContext,
     }
 }
 
-fn parse_simple_pseudo_class(context: &ParserContext, name: &str) -> Result<SimpleSelector,()> {
+fn parse_simple_pseudo_class(_context: &ParserContext, name: &str) -> Result<SimpleSelector,()> {
     match name.to_ascii_lower().as_slice() {
         "any-link" => Ok(SimpleSelector::AnyLink),
         "link" => Ok(SimpleSelector::Link),
@@ -610,20 +611,6 @@ fn parse_simple_pseudo_class(context: &ParserContext, name: &str) -> Result<Simp
     }
 }
 
-
-fn parse_functional_pseudo_class(name: String, arguments: Vec<ComponentValue>,
-                                 namespaces: &NamespaceMap, inside_negation: bool)
-                                 -> Result<SimpleSelector, ()> {
-    match name.as_slice().to_ascii_lower().as_slice() {
-//        "lang" => parse_lang(arguments),
-        "nth-child"        => parse_nth(arguments.as_slice()).map(|(a, b)| SimpleSelector::NthChild(a, b)),
-        "nth-last-child"   => parse_nth(arguments.as_slice()).map(|(a, b)| SimpleSelector::NthLastChild(a, b)),
-        "nth-of-type"      => parse_nth(arguments.as_slice()).map(|(a, b)| SimpleSelector::NthOfType(a, b)),
-        "nth-last-of-type" => parse_nth(arguments.as_slice()).map(|(a, b)| SimpleSelector::NthLastOfType(a, b)),
-        "not" => if inside_negation { Err(()) } else { parse_negation(arguments, namespaces) },
-        _ => Err(())
-    }
-}
 
 fn parse_pseudo_element(name: String) -> Result<PseudoElement, ()> {
     match name.as_slice().to_ascii_lower().as_slice() {

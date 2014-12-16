@@ -1432,14 +1432,14 @@ pub mod longhands {
                     offset_y: computed::compute_Au(value.offset_y, context),
                     blur_radius: computed::compute_Au(value.blur_radius, context),
                     spread_radius: computed::compute_Au(value.spread_radius, context),
-                    color: value.color.unwrap_or(cssparser::CurrentColor),
+                    color: value.color.unwrap_or(cssparser::Color::CurrentColor),
                     inset: value.inset,
                 }
             }).collect()
         }
 
         fn parse_one_box_shadow(iter: ParserIter) -> Result<SpecifiedBoxShadow,()> {
-            let mut lengths = [specified::Au_(Au(0)), ..4];
+            let mut lengths = [specified::Length::Au(Au(0)), ..4];
             let mut lengths_parsed = false;
             let mut color = None;
             let mut inset = false;
@@ -2014,14 +2014,14 @@ pub mod shorthands {
                 Ok(Longhands {
                     list_style_position: position,
                     list_style_image: Some(None),
-                    list_style_type: Some(list_style_type::none),
+                    list_style_type: Some(list_style_type::T::none),
                 })
             }
             (true, 1, None, Some(image)) => {
                 Ok(Longhands {
                     list_style_position: position,
                     list_style_image: Some(image),
-                    list_style_type: Some(list_style_type::none),
+                    list_style_type: Some(list_style_type::T::none),
                 })
             }
             (true, 1, Some(list_style_type), None) => {
@@ -2035,7 +2035,7 @@ pub mod shorthands {
                 Ok(Longhands {
                     list_style_position: position,
                     list_style_image: Some(None),
-                    list_style_type: Some(list_style_type::none),
+                    list_style_type: Some(list_style_type::T::none),
                 })
             }
             (true, 0, list_style_type, image) => {

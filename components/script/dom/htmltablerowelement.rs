@@ -37,7 +37,7 @@ impl HTMLTableRowElement {
             htmlelement: HTMLElement::new_inherited(ElementTypeId::HTMLTableRowElement,
                                                     localName,
                                                     prefix,
-                                                    document)
+                                                    document),
             background_color: Cell::new(None),
         }
     }

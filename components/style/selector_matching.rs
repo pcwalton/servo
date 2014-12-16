@@ -20,18 +20,8 @@ use legacy::PresentationalHintSynthesis;
 use media_queries::Device;
 use node::{TElement, TElementAttributes, TNode};
 use properties::{PropertyDeclaration, PropertyDeclarationBlock};
-use selectors::{After, AnyLink, AttrDashMatch, AttrEqual};
-use selectors::{AttrExists, AttrIncludes, AttrPrefixMatch};
-use selectors::{AttrSubstringMatch, AttrSuffixMatch, Before, CaseInsensitive, CaseSensitive};
-use selectors::{Checked, Child, ClassSelector};
-use selectors::{CompoundSelector, Descendant, Disabled, Enabled, FirstChild, FirstOfType};
-use selectors::{Hover, IDSelector, LastChild, LastOfType};
-use selectors::{LaterSibling, LocalName, LocalNameSelector};
-use selectors::{NamespaceSelector, Link, Negation};
-use selectors::{NextSibling, NthChild};
-use selectors::{NthLastChild, NthLastOfType};
-use selectors::{NthOfType, OnlyChild, OnlyOfType, PseudoElement, Root};
-use selectors::{SelectorList, ServoNonzeroBorder, SimpleSelector, Visited};
+use selectors::{CaseSensitivity, Combinator, CompoundSelector, LocalName};
+use selectors::{PseudoElement, SelectorList, SimpleSelector};
 use selectors::{get_selector_list_selectors};
 use stylesheets::{Stylesheet, iter_stylesheet_media_rules, iter_stylesheet_style_rules};
 
@@ -406,7 +396,7 @@ impl Stylist {
             Url::parse("chrome:///quirks-mode.css").unwrap(),
             None,
             None,
-            UserAgentOrigin))
+            StylesheetOrigin::UserAgent))
     }
 
     pub fn add_stylesheet(&mut self, stylesheet: Stylesheet) {

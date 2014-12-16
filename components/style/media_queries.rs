@@ -9,13 +9,12 @@ use cssparser::ast::*;
 use errors::{ErrorLoggerIterator, log_css_error};
 use geom::size::TypedSize2D;
 use selectors::ParserContext;
-use stylesheets::{CSSRule, CSSMediaRule};
+use stylesheets::{CSSRule, parse_style_rule, parse_nested_at_rule};
 use namespaces::NamespaceMap;
 use parsing_utils::{BufferedIter, ParserIter};
 use properties::common_types::*;
 use properties::longhands;
 use servo_util::geometry::ViewportPx;
-use stylesheets;
 use url::Url;
 
 pub struct MediaRule {

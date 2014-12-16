@@ -101,11 +101,7 @@ dependencies = [
 [[package]]
 name = "cssparser"
 version = "0.1.0"
-<<<<<<< HEAD
-source = "git+https://github.com/servo/rust-cssparser#46aa08015b76d46711b3d330c8934e7a14ac1d11"
-=======
-source = "git+https://github.com/servo/rust-cssparser#3f98f1308b769b5d61efc6c133ac520df2b074ac"
->>>>>>> origin/master
+source = "git+https://github.com/servo/rust-cssparser#97d8c3b20a240881573748d4eadcda610bfb888c"
 dependencies = [
  "encoding 0.2.3 (git+https://github.com/lifthrasiir/rust-encoding)",
 ]
@@ -363,6 +359,7 @@ dependencies = [
 name = "layout"
 version = "0.0.1"
 dependencies = [
+ "cssparser 0.1.0 (git+https://github.com/servo/rust-cssparser)",
  "encoding 0.2.3 (git+https://github.com/lifthrasiir/rust-encoding)",
  "geom 0.1.0 (git+https://github.com/servo/rust-geom)",
  "gfx 0.0.1",
@@ -630,6 +627,7 @@ source = "git+https://github.com/servo/rust-url#46458f80e48c542b2f175e36e5b7d307
 name = "util"
 version = "0.0.1"
 dependencies = [
+ "cssparser 0.1.0 (git+https://github.com/servo/rust-cssparser)",
  "geom 0.1.0 (git+https://github.com/servo/rust-geom)",
  "layers 0.1.0 (git+https://github.com/servo/rust-layers)",
  "string_cache 0.0.0 (git+https://github.com/servo/string-cache)",

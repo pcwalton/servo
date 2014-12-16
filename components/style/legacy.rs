@@ -5,16 +5,19 @@
 //! Legacy presentational attributes defined in the HTML5 specification: `<td width>`,
 //! `<input size>`, and so forth.
 
+use self::UnsignedIntegerAttribute::*;
+use self::SimpleColorAttribute::*;
+
 use node::{TElement, TElementAttributes, TNode};
-use properties::{BackgroundColorDeclaration, BorderBottomWidthDeclaration};
-use properties::{BorderLeftWidthDeclaration, BorderRightWidthDeclaration};
-use properties::{BorderTopWidthDeclaration, SpecifiedValue, WidthDeclaration, specified};
+use properties::DeclaredValue::SpecifiedValue;
+use properties::PropertyDeclaration::*;
+use properties::specified;
 use selector_matching::{DeclarationBlock, Stylist};
 
-use cssparser::RGBAColor;
+use cssparser::Color;
 use servo_util::geometry::Au;
 use servo_util::smallvec::VecLike;
-use servo_util::str::{AutoLpa, LengthLpa, PercentageLpa};
+use servo_util::str::LengthOrPercentageOrAuto;
 
 /// Legacy presentational attributes that take a length as defined in HTML5 § 2.4.4.4.
 pub enum LengthAttribute {
@@ -98,16 +101,16 @@ impl PresentationalHintSynthesis for Stylist {
         let element = node.as_element();
         match element.get_local_name() {
             name if *name == atom!("td") => {
-                match element.get_length_attribute(WidthLengthAttribute) {
-                    AutoLpa => {}
-                    PercentageLpa(percentage) => {
-                        let width_value = specified::LPA_Percentage(percentage);
+                match element.get_length_attribute(LengthAttribute::Width) {
+                    LengthOrPercentageOrAuto::Auto => {}
+                    LengthOrPercentageOrAuto::Percentage(percentage) => {
+                        let width_value = specified::LengthOrPercentageOrAuto::Percentage(percentage);
                         matching_rules_list.vec_push(DeclarationBlock::from_declaration(
                                 WidthDeclaration(SpecifiedValue(width_value))));
                         *shareable = false
                     }
-                    LengthLpa(length) => {
-                        let width_value = specified::LPA_Length(specified::Au_(length));
+                    LengthOrPercentageOrAuto::Length(length) => {
+                        let width_value = specified::LengthOrPercentageOrAuto::Length(specified::Length::Au(length));
                         matching_rules_list.vec_push(DeclarationBlock::from_declaration(
                                 WidthDeclaration(SpecifiedValue(width_value))));
                         *shareable = false
@@ -140,7 +143,7 @@ impl PresentationalHintSynthesis for Stylist {
                     shareable);
             }
             name if *name == atom!("input") => {
-                match element.get_integer_attribute(SizeIntegerAttribute) {
+                match element.get_integer_attribute(IntegerAttribute::Size) {
                     Some(value) if value != 0 => {
                         // Per HTML 4.01 § 17.4, this value is in characters if `type` is `text` or
                         // `password` and in pixels otherwise.
@@ -148,12 +151,12 @@ impl PresentationalHintSynthesis for Stylist {
                         // FIXME(pcwalton): More use of atoms, please!
                         let value = match element.get_attr(&ns!(""), &atom!("type")) {
                             Some("text") | Some("password") => {
-                                specified::ServoCharacterWidth(value)
+                                specified::Length::ServoCharacterWidth(value)
                             }
-                            _ => specified::Au_(Au::from_px(value as int)),
+                            _ => specified::Length::Au(Au::from_px(value as int)),
                         };
                         matching_rules_list.vec_push(DeclarationBlock::from_declaration(
-                                WidthDeclaration(SpecifiedValue(specified::LPA_Length(
+                                WidthDeclaration(SpecifiedValue(specified::LengthOrPercentageOrAuto::Length(
                                             value)))));
                         *shareable = false
                     }
@@ -179,7 +182,7 @@ impl PresentationalHintSynthesis for Stylist {
             None => {}
             Some(color) => {
                 matching_rules_list.vec_push(DeclarationBlock::from_declaration(
-                        BackgroundColorDeclaration(SpecifiedValue(RGBAColor(color)))));
+                        BackgroundColorDeclaration(SpecifiedValue(Color::RGBA(color)))));
                 *shareable = false
             }
         }
@@ -197,7 +200,7 @@ impl PresentationalHintSynthesis for Stylist {
         match element.get_unsigned_integer_attribute(BorderUnsignedIntegerAttribute) {
             None => {}
             Some(length) => {
-                let width_value = specified::Au_(Au::from_px(length as int));
+                let width_value = specified::Length::Au(Au::from_px(length as int));
                 matching_rules_list.vec_push(DeclarationBlock::from_declaration(
                         BorderTopWidthDeclaration(SpecifiedValue(width_value))));
                 matching_rules_list.vec_push(DeclarationBlock::from_declaration(

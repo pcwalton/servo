@@ -37,7 +37,7 @@ impl HTMLTableSectionElement {
             htmlelement: HTMLElement::new_inherited(ElementTypeId::HTMLTableSectionElement,
                                                     localName,
                                                     prefix,
-                                                    document)
+                                                    document),
             background_color: Cell::new(None),
         }
     }

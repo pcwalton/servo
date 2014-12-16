@@ -118,7 +118,7 @@ dependencies = [
 [[package]]
 name = "cssparser"
 version = "0.1.0"
-source = "git+https://github.com/servo/rust-cssparser#3f98f1308b769b5d61efc6c133ac520df2b074ac"
+source = "git+https://github.com/servo/rust-cssparser#97d8c3b20a240881573748d4eadcda610bfb888c"
 dependencies = [
  "encoding 0.2.3 (git+https://github.com/lifthrasiir/rust-encoding)",
 ]
@@ -404,12 +404,8 @@ dependencies = [
 name = "layout"
 version = "0.0.1"
 dependencies = [
-<<<<<<< HEAD
- "encoding 0.2.3 (git+https://github.com/lifthrasiir/rust-encoding)",
-=======
  "cssparser 0.1.0 (git+https://github.com/servo/rust-cssparser)",
- "encoding 0.2.0 (git+https://github.com/lifthrasiir/rust-encoding)",
->>>>>>> origin/master
+ "encoding 0.2.3 (git+https://github.com/lifthrasiir/rust-encoding)",
  "geom 0.1.0 (git+https://github.com/servo/rust-geom)",
  "gfx 0.0.1",
  "layout_traits 0.0.1",

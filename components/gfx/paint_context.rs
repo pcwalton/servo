@@ -16,7 +16,7 @@ use azure::azure_hl::{StrokeOptions};
 use azure::scaled_font::ScaledFont;
 use azure::{AZ_CAP_BUTT, AzFloat, struct__AzDrawOptions, struct__AzGlyph};
 use azure::{struct__AzGlyphBuffer, struct__AzPoint, AzDrawTargetFillGlyphs};
-use display_list::{TextDisplayItem, BorderRadii};
+use display_list::{BOX_SHADOW_INFLATION_FACTOR, TextDisplayItem, BorderRadii};
 use display_list::TextOrientation::{SidewaysLeft, SidewaysRight, Upright};
 use font_context::FontContext;
 use geom::matrix2d::Matrix2D;

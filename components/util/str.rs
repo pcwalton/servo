@@ -4,9 +4,8 @@
 
 use geometry::Au;
 
-use cssparser::{mod, RGBA, RGBAColor};
+use cssparser::{mod, RGBA, Color};
 use std::ascii::AsciiExt;
-use std::from_str::FromStr;
 use std::iter::Filter;
 use std::num::Int;
 use std::str::{CharEq, CharSplits, FromStr};
@@ -204,7 +203,7 @@ pub fn parse_legacy_color(mut input: &str) -> Result<RGBA,()> {
 
     // Step 5.
     match cssparser::parse_color_keyword(input) {
-        Ok(RGBAColor(rgba)) => return Ok(rgba),
+        Ok(Color::RGBA(rgba)) => return Ok(rgba),
         _ => {}
     }
 
