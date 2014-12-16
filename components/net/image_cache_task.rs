@@ -492,6 +492,7 @@ mod tests {
 
     use resource_task;
     use resource_task::{ResourceTask, Metadata, start_sending, ResponseSenders};
+    use resource_task::ProgressMsg::{Payload, Done};
     use sniffer_task;
     use image::base::test_image_bin;
     use servo_util::taskpool::TaskPool;
