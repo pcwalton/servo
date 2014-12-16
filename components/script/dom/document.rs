@@ -49,6 +49,8 @@ use dom::mouseevent::MouseEvent;
 use dom::keyboardevent::KeyboardEvent;
 use dom::messageevent::MessageEvent;
 use dom::node::{Node, NodeHelpers, NodeTypeId, CloneChildrenFlag};
+use dom::node::{Node, ElementNodeTypeId, DocumentNodeTypeId, NodeHelpers};
+use dom::node::{CloneChildren, DoNotCloneChildren, NodeDamage, OtherNodeDamage};
 use dom::nodelist::NodeList;
 use dom::text::Text;
 use dom::processinginstruction::ProcessingInstruction;
@@ -60,6 +62,7 @@ use servo_util::namespace;
 use servo_util::str::{DOMString, split_html_space_chars};
 
 use html5ever::tree_builder::{QuirksMode, NoQuirks, LimitedQuirks, Quirks};
+use layout_interface::{LayoutChan, SetQuirksModeMsg};
 use string_cache::{Atom, QualName};
 use url::Url;
 
@@ -175,10 +178,8 @@ pub trait DocumentHelpers<'a> {
     fn set_quirks_mode(self, mode: QuirksMode);
     fn set_last_modified(self, value: DOMString);
     fn set_encoding_name(self, name: DOMString);
-    fn content_changed(self, node: JSRef<Node>);
-    fn content_and_heritage_changed(self, node: JSRef<Node>);
-    fn reflow(self);
-    fn wait_until_safe_to_modify_dom(self);
+    fn content_changed(self, node: JSRef<Node>, damage: NodeDamage);
+    fn content_and_heritage_changed(self, node: JSRef<Node>, damage: NodeDamage);
     fn unregister_named_element(self, to_unregister: JSRef<Element>, id: Atom);
     fn register_named_element(self, element: JSRef<Element>, id: Atom);
     fn load_anchor_href(self, href: DOMString);
@@ -189,6 +190,7 @@ pub trait DocumentHelpers<'a> {
     fn request_focus(self, elem: JSRef<Element>);
     fn commit_focus_transaction(self);
     fn send_title_to_compositor(self);
+    fn dirty_all_nodes(self);
 }
 
 impl<'a> DocumentHelpers<'a> for JSRef<'a, Document> {
@@ -217,6 +219,15 @@ impl<'a> DocumentHelpers<'a> for JSRef<'a, Document> {
 
     fn set_quirks_mode(self, mode: QuirksMode) {
         self.quirks_mode.set(mode);
+
+        match mode {
+            Quirks => {
+                let window = self.window.root();
+                let LayoutChan(ref layout_chan) = window.page().layout_chan;
+                layout_chan.send(SetQuirksModeMsg);
+            }
+            NoQuirks | LimitedQuirks => {}
+        }
     }
 
     fn set_last_modified(self, value: DOMString) {
@@ -227,24 +238,14 @@ impl<'a> DocumentHelpers<'a> for JSRef<'a, Document> {
         *self.encoding_name.borrow_mut() = name;
     }
 
-    fn content_changed(self, node: JSRef<Node>) {
-        debug!("content_changed on {}", node.debug_str());
-        node.dirty();
-        self.reflow();
+    fn content_changed(self, node: JSRef<Node>, damage: NodeDamage) {
+        node.dirty(damage);
     }
 
-    fn content_and_heritage_changed(self, node: JSRef<Node>) {
+    fn content_and_heritage_changed(self, node: JSRef<Node>, damage: NodeDamage) {
         debug!("content_and_heritage_changed on {}", node.debug_str());
-        node.force_dirty_ancestors();
-        self.reflow();
-    }
-
-    fn reflow(self) {
-        self.window.root().reflow();
-    }
-
-    fn wait_until_safe_to_modify_dom(self) {
-        self.window.root().wait_until_safe_to_modify_dom();
+        node.force_dirty_ancestors(damage);
+        node.dirty(damage);
     }
 
     /// Remove any existing association between the provided id and any elements in this document.
@@ -375,6 +376,13 @@ impl<'a> DocumentHelpers<'a> for JSRef<'a, Document> {
     fn send_title_to_compositor(self) {
         let window = self.window().root();
         window.page().send_title_to_compositor();
+    }
+
+    fn dirty_all_nodes(self) {
+        let root: JSRef<Node> = NodeCast::from_ref(self);
+        for node in root.traverse_preorder() {
+            node.dirty(OtherNodeDamage)
+        }
     }
 }
 

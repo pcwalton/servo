@@ -12,22 +12,27 @@
 
 use block::BlockFlow;
 use context::LayoutContext;
-use flow::{mod, Flow, NEEDS_LAYER};
-use fragment::{Fragment, IframeFragmentInfo};
-use fragment::ImageFragmentInfo;
-use fragment::{ScannedTextFragmentInfo, SpecificFragmentInfo};
+use flow::{mod, Flow, IS_ABSOLUTELY_POSITIONED, NEEDS_LAYER};
+use fragment::{Fragment, GenericFragment, IframeFragment, IframeFragmentInfo, ImageFragment};
+use fragment::{ImageFragmentInfo, InlineAbsoluteHypotheticalFragment, InlineBlockFragment};
+use fragment::{ScannedTextFragment, ScannedTextFragmentInfo, TableFragment};
+use fragment::{TableCellFragment, TableColumnFragment, TableRowFragment, TableWrapperFragment};
+use fragment::{UnscannedTextFragment};
+use list_item::ListItemFlow;
 use model;
 use util::{OpaqueNodeMethods, ToGfxColor};
 
 use geom::approxeq::ApproxEq;
 use geom::{Point2D, Rect, Size2D, SideOffsets2D};
 use gfx::color;
-use gfx::display_list::{BaseDisplayItem, BorderDisplayItem, BorderDisplayItemClass, DisplayItem};
-use gfx::display_list::{DisplayList, GradientDisplayItem, GradientDisplayItemClass, GradientStop};
-use gfx::display_list::{ImageDisplayItem, ImageDisplayItemClass, LineDisplayItem, BorderRadii};
-use gfx::display_list::{LineDisplayItemClass, SidewaysLeft, SidewaysRight};
-use gfx::display_list::{SolidColorDisplayItem, SolidColorDisplayItemClass, StackingContext};
-use gfx::display_list::{TextDisplayItem, TextDisplayItemClass, Upright};
+use gfx::display_list::{BOX_SHADOW_INFLATION_FACTOR, BaseDisplayItem, BorderDisplayItem};
+use gfx::display_list::{BorderDisplayItemClass, BorderRadii, BoxShadowDisplayItem};
+use gfx::display_list::{BoxShadowDisplayItemClass, DisplayItem, DisplayList};
+use gfx::display_list::{GradientDisplayItem, GradientDisplayItemClass};
+use gfx::display_list::{GradientStop, ImageDisplayItem, ImageDisplayItemClass, LineDisplayItem};
+use gfx::display_list::{LineDisplayItemClass, SidewaysLeft};
+use gfx::display_list::{SidewaysRight, SolidColorDisplayItem, SolidColorDisplayItemClass};
+use gfx::display_list::{StackingContext, TextDisplayItem, TextDisplayItemClass, Upright};
 use gfx::paint_task::PaintLayer;
 use servo_msg::compositor_msg::{FixedPosition, Scrollable};
 use servo_msg::constellation_msg::{ConstellationChan, FrameRectMsg};
@@ -111,11 +116,23 @@ pub trait FragmentDisplayListBuilding {
                                                     level: StackingLevel,
                                                     clip_rect: &Rect<Au>);
 
+    /// Adds the display items necessary to paint the outline of this fragment to the display list
+    /// if necessary.
     fn build_display_list_for_outline_if_applicable(&self,
                                                     style: &ComputedValues,
                                                     display_list: &mut DisplayList,
                                                     bounds: &Rect<Au>,
                                                     clip_rect: &Rect<Au>);
+
+    /// Adds the display items necessary to paint the box shadow of this fragment to the display
+    /// list if necessary.
+    fn build_display_list_for_box_shadow_if_applicable(&self,
+                                                       style: &ComputedValues,
+                                                       list: &mut DisplayList,
+                                                       layout_context: &LayoutContext,
+                                                       level: StackingLevel,
+                                                       absolute_bounds: &Rect<Au>,
+                                                       clip_rect: &Rect<Au>);
 
     fn build_debug_borders_around_text_fragments(&self,
                                                  display_list: &mut DisplayList,
@@ -412,6 +429,32 @@ impl FragmentDisplayListBuilding for Fragment {
         display_list.push(gradient_display_item, level)
     }
 
+    fn build_display_list_for_box_shadow_if_applicable(&self,
+                                                       style: &ComputedValues,
+                                                       list: &mut DisplayList,
+                                                       _layout_context: &LayoutContext,
+                                                       level: StackingLevel,
+                                                       absolute_bounds: &Rect<Au>,
+                                                       clip_rect: &Rect<Au>) {
+        // NB: According to CSS-BACKGROUNDS, box shadows render in *reverse* order (front to back).
+        for box_shadow in style.get_effects().box_shadow.iter().rev() {
+            let inflation = box_shadow.spread_radius + box_shadow.blur_radius *
+                BOX_SHADOW_INFLATION_FACTOR;
+            let bounds =
+                absolute_bounds.translate(&Point2D(box_shadow.offset_x, box_shadow.offset_y))
+                               .inflate(inflation, inflation);
+            list.push(BoxShadowDisplayItemClass(box BoxShadowDisplayItem {
+                base: BaseDisplayItem::new(bounds, self.node, *clip_rect),
+                box_bounds: *absolute_bounds,
+                color: style.resolve_color(box_shadow.color).to_gfx_color(),
+                offset: Point2D(box_shadow.offset_x, box_shadow.offset_y),
+                blur_radius: box_shadow.blur_radius,
+                spread_radius: box_shadow.spread_radius,
+                inset: box_shadow.inset,
+            }), level);
+        }
+    }
+
     fn build_display_list_for_borders_if_applicable(&self,
                                                     style: &ComputedValues,
                                                     display_list: &mut DisplayList,
@@ -588,6 +631,34 @@ impl FragmentDisplayListBuilding for Fragment {
         if self.is_primary_fragment() {
             let level =
                 StackingLevel::from_background_and_border_level(background_and_border_level);
+
+            // Add a shadow to the list, if applicable.
+            match self.inline_context {
+                Some(ref inline_context) => {
+                    for style in inline_context.styles.iter().rev() {
+                        self.build_display_list_for_box_shadow_if_applicable(
+                            &**style,
+                            display_list,
+                            layout_context,
+                            level,
+                            &absolute_fragment_bounds,
+                            clip_rect);
+                    }
+                }
+                None => {}
+            }
+            match self.specific {
+                ScannedTextFragment(_) => {},
+                _ => {
+                    self.build_display_list_for_box_shadow_if_applicable(
+                        &*self.style,
+                        display_list,
+                        layout_context,
+                        level,
+                        &absolute_fragment_bounds,
+                        clip_rect);
+                }
+            }
 
             // Add the background to the list, if applicable.
             match self.inline_context {
@@ -845,12 +916,19 @@ pub trait BlockFlowDisplayListBuilding {
                                          display_list: &mut DisplayList,
                                          layout_context: &LayoutContext,
                                          background_border_level: BackgroundAndBorderLevel);
-    fn build_display_list_for_block(&mut self,
-                                    layout_context: &LayoutContext,
-                                    background_border_level: BackgroundAndBorderLevel);
+    fn build_display_list_for_static_block(&mut self,
+                                           display_list: Box<DisplayList>,
+                                           layout_context: &LayoutContext,
+                                           background_border_level: BackgroundAndBorderLevel);
     fn build_display_list_for_absolutely_positioned_block(&mut self,
+                                                          display_list: Box<DisplayList>,
                                                           layout_context: &LayoutContext);
-    fn build_display_list_for_floating_block(&mut self, layout_context: &LayoutContext);
+    fn build_display_list_for_floating_block(&mut self,
+                                             display_list: Box<DisplayList>,
+                                             layout_context: &LayoutContext);
+    fn build_display_list_for_block(&mut self,
+                                    display_list: Box<DisplayList>,
+                                    layout_context: &LayoutContext);
     fn create_stacking_context(&self,
                                display_list: Box<DisplayList>,
                                layer: Option<Arc<PaintLayer>>)
@@ -876,10 +954,10 @@ impl BlockFlowDisplayListBuilding for BlockFlow {
         }
     }
 
-    fn build_display_list_for_block(&mut self,
-                                    layout_context: &LayoutContext,
-                                    background_border_level: BackgroundAndBorderLevel) {
-        let mut display_list = box DisplayList::new();
+    fn build_display_list_for_static_block(&mut self,
+                                           mut display_list: Box<DisplayList>,
+                                           layout_context: &LayoutContext,
+                                           background_border_level: BackgroundAndBorderLevel) {
         self.build_display_list_for_block_base(&mut *display_list,
                                                layout_context,
                                                background_border_level);
@@ -892,8 +970,8 @@ impl BlockFlowDisplayListBuilding for BlockFlow {
     }
 
     fn build_display_list_for_absolutely_positioned_block(&mut self,
+                                                          mut display_list: Box<DisplayList>,
                                                           layout_context: &LayoutContext) {
-        let mut display_list = box DisplayList::new();
         self.build_display_list_for_block_base(&mut *display_list,
                                                layout_context,
                                                BackgroundAndBorderLevel::RootOfStackingContext);
@@ -922,8 +1000,9 @@ impl BlockFlowDisplayListBuilding for BlockFlow {
         self.base.display_list_building_result = DisplayListBuildingResult::StackingContext(stacking_context)
     }
 
-    fn build_display_list_for_floating_block(&mut self, layout_context: &LayoutContext) {
-        let mut display_list = box DisplayList::new();
+    fn build_display_list_for_floating_block(&mut self,
+                                             mut display_list: Box<DisplayList>,
+                                             layout_context: &LayoutContext) {
         self.build_display_list_for_block_base(&mut *display_list,
                                                layout_context,
                                                BackgroundAndBorderLevel::RootOfStackingContext);
@@ -936,6 +1015,20 @@ impl BlockFlowDisplayListBuilding for BlockFlow {
         }
     }
 
+    fn build_display_list_for_block(&mut self,
+                                    display_list: Box<DisplayList>,
+                                    layout_context: &LayoutContext) {
+        if self.base.flags.is_float() {
+            // TODO(#2009, pcwalton): This is a pseudo-stacking context. We need to merge `z-index:
+            // auto` kids into the parent stacking context, when that is supported.
+            self.build_display_list_for_floating_block(display_list, layout_context)
+        } else if self.base.flags.contains(IS_ABSOLUTELY_POSITIONED) {
+            self.build_display_list_for_absolutely_positioned_block(display_list, layout_context)
+        } else {
+            self.build_display_list_for_static_block(display_list, layout_context, BlockLevel)
+        }
+    }
+
     fn create_stacking_context(&self,
                                display_list: Box<DisplayList>,
                                layer: Option<Arc<PaintLayer>>)
@@ -945,6 +1038,35 @@ impl BlockFlowDisplayListBuilding for BlockFlow {
         let z_index = self.fragment.style().get_box().z_index.number_or_zero();
         let opacity = self.fragment.style().get_effects().opacity as f32;
         Arc::new(StackingContext::new(display_list, bounds, z_index, opacity, layer))
+    }
+}
+
+pub trait ListItemFlowDisplayListBuilding {
+    fn build_display_list_for_list_item(&mut self,
+                                        display_list: Box<DisplayList>,
+                                        layout_context: &LayoutContext);
+}
+
+impl ListItemFlowDisplayListBuilding for ListItemFlow {
+    fn build_display_list_for_list_item(&mut self,
+                                        mut display_list: Box<DisplayList>,
+                                        layout_context: &LayoutContext) {
+        // Draw the marker, if applicable.
+        match self.marker {
+            None => {}
+            Some(ref mut marker) => {
+                let stacking_relative_fragment_origin =
+                    self.block_flow.base.stacking_relative_position_of_child_fragment(marker);
+                marker.build_display_list(&mut *display_list,
+                                          layout_context,
+                                          stacking_relative_fragment_origin,
+                                          ContentLevel,
+                                          &self.block_flow.base.clip_rect);
+            }
+        }
+
+        // Draw the rest of the block.
+        self.block_flow.build_display_list_for_block(display_list, layout_context)
     }
 }
 

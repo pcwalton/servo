@@ -30,22 +30,29 @@ use dom::domrectlist::DOMRectList;
 use dom::document::{Document, DocumentHelpers, LayoutDocumentHelpers};
 use dom::domtokenlist::DOMTokenList;
 use dom::event::Event;
-use dom::eventtarget::{EventTarget, EventTargetTypeId, EventTargetHelpers};
+use dom::eventtarget::{EventTarget, EventTargetTypeId, NodeTargetTypeId, EventTargetHelpers};
+use dom::htmlbodyelement::{HTMLBodyElement, HTMLBodyElementHelpers};
 use dom::htmlcollection::HTMLCollection;
 use dom::htmlinputelement::{HTMLInputElement, RawLayoutHTMLInputElementHelpers};
 use dom::htmlserializer::serialize;
+use dom::htmltableelement::{HTMLTableElement, HTMLTableElementHelpers};
 use dom::htmltablecellelement::{HTMLTableCellElement, HTMLTableCellElementHelpers};
-use dom::node::{NodeTypeId, Node, NodeHelpers, NodeIterator, document_from_node, CLICK_IN_PROGRESS};
-use dom::node::{window_from_node, LayoutNodeHelpers};
+use dom::htmltablerowelement::{HTMLTableRowElement, HTMLTableRowElementHelpers};
+use dom::htmltablesectionelement::{HTMLTableSectionElement, HTMLTableSectionElementHelpers};
+use dom::node::{CLICK_IN_PROGRESS, ElementNodeTypeId, LayoutNodeHelpers, Node, NodeHelpers};
+use dom::node::{NodeIterator, NodeStyleDamaged, OtherNodeDamage, document_from_node};
+use dom::node::{window_from_node};
 use dom::nodelist::NodeList;
 use dom::virtualmethods::{VirtualMethods, vtable_for};
 use devtools_traits::AttrInfo;
-use style::{IntegerAttribute, LengthAttribute};
-use style::{matches, parse_selector_list_from_str};
-use style;
+use style::{mod, AuthorOrigin, BgColorSimpleColorAttribute, BorderUnsignedIntegerAttribute};
+use style::{ColSpanUnsignedIntegerAttribute, IntegerAttribute, LengthAttribute, ParserContext};
+use style::{SimpleColorAttribute, SizeIntegerAttribute, UnsignedIntegerAttribute};
+use style::{WidthLengthAttribute, matches};
 use servo_util::namespace;
 use servo_util::str::{DOMString, LengthOrPercentageOrAuto};
 
+use cssparser::RGBA;
 use std::ascii::AsciiExt;
 use std::cell::{Ref, RefMut};
 use std::default::Default;
@@ -202,6 +209,10 @@ pub trait RawLayoutElementHelpers {
     unsafe fn get_integer_attribute_for_layout(&self, integer_attribute: IntegerAttribute)
                                                -> Option<i32>;
     unsafe fn get_checked_state_for_layout(&self) -> bool;
+    unsafe fn get_unsigned_integer_attribute_for_layout(&self, attribute: UnsignedIntegerAttribute)
+                                                        -> Option<u32>;
+    unsafe fn get_simple_color_attribute_for_layout(&self, attribute: SimpleColorAttribute)
+                                                    -> Option<RGBA>;
     fn local_name<'a>(&'a self) -> &'a Atom;
     fn namespace<'a>(&'a self) -> &'a Namespace;
     fn style_attribute<'a>(&'a self) -> &'a DOMRefCell<Option<style::PropertyDeclarationBlock>>;
@@ -286,11 +297,15 @@ impl RawLayoutElementHelpers for Element {
                                               -> LengthOrPercentageOrAuto {
         match length_attribute {
             LengthAttribute::Width => {
-                if !self.is_htmltablecellelement() {
-                    panic!("I'm not a table cell!")
+                if self.is_htmltableelement() {
+                    let this: &HTMLTableElement = mem::transmute(self);
+                    this.get_width()
+                } else if self.is_htmltablecellelement() {
+                    let this: &HTMLTableCellElement = mem::transmute(self);
+                    this.get_width()
+                } else {
+                    panic!("I'm not a table or table cell!")
                 }
-                let this: &HTMLTableCellElement = mem::transmute(self);
-                this.get_width()
             }
         }
     }
@@ -318,6 +333,61 @@ impl RawLayoutElementHelpers for Element {
         }
         let this: &HTMLInputElement = mem::transmute(self);
         this.get_checked_state_for_layout()
+    }
+
+    unsafe fn get_unsigned_integer_attribute_for_layout(&self,
+                                                        attribute: UnsignedIntegerAttribute)
+                                                        -> Option<u32> {
+        match attribute {
+            BorderUnsignedIntegerAttribute => {
+                if self.is_htmltableelement() {
+                    let this: &HTMLTableElement = mem::transmute(self);
+                    this.get_border()
+                } else {
+                    // Don't panic since `:-servo-nonzero-border` can cause this to be called on
+                    // arbitrary elements.
+                    None
+                }
+            }
+            ColSpanUnsignedIntegerAttribute => {
+                if self.is_htmltablecellelement() {
+                    let this: &HTMLTableCellElement = mem::transmute(self);
+                    this.get_colspan()
+                } else {
+                    // Don't panic since `display` can cause this to be called on arbitrary
+                    // elements.
+                    None
+                }
+            }
+        }
+    }
+
+    #[inline]
+    #[allow(unrooted_must_root)]
+    unsafe fn get_simple_color_attribute_for_layout(&self, attribute: SimpleColorAttribute)
+                                                    -> Option<RGBA> {
+        match attribute {
+            BgColorSimpleColorAttribute => {
+                if self.is_htmlbodyelement() {
+                    let this: &HTMLBodyElement = mem::transmute(self);
+                    this.get_background_color()
+                } else if self.is_htmltableelement() {
+                    let this: &HTMLTableElement = mem::transmute(self);
+                    this.get_background_color()
+                } else if self.is_htmltablecellelement() {
+                    let this: &HTMLTableCellElement = mem::transmute(self);
+                    this.get_background_color()
+                } else if self.is_htmltablerowelement() {
+                    let this: &HTMLTableRowElement = mem::transmute(self);
+                    this.get_background_color()
+                } else if self.is_htmltablesectionelement() {
+                    let this: &HTMLTableSectionElement = mem::transmute(self);
+                    this.get_background_color()
+                } else {
+                    None
+                }
+            }
+        }
     }
 
     // Getters used in components/layout/wrapper.rs
@@ -443,7 +513,6 @@ pub trait AttributeHandlers {
                        value: DOMString) -> AttrValue;
 
     fn remove_attribute(self, namespace: Namespace, name: &str);
-    fn notify_content_changed(self);
     fn has_class(&self, name: &Atom) -> bool;
 
     fn set_atomic_attribute(self, name: &Atom, value: DOMString);
@@ -502,9 +571,6 @@ impl<'a> AttributeHandlers for JSRef<'a, Element> {
         assert!(name.as_slice() == name.as_slice().to_ascii_lower().as_slice());
         assert!(!name.as_slice().contains(":"));
 
-        let node: JSRef<Node> = NodeCast::from_ref(self);
-        node.wait_until_safe_to_modify_dom();
-
         self.do_set_attribute(name.clone(), value, name.clone(),
             ns!(""), None, |attr| *attr.local_name() == *name);
     }
@@ -550,26 +616,24 @@ impl<'a> AttributeHandlers for JSRef<'a, Element> {
         match idx {
             None => (),
             Some(idx) => {
-                let node: JSRef<Node> = NodeCast::from_ref(self);
-                node.wait_until_safe_to_modify_dom();
-
                 if namespace == ns!("") {
                     let attr = (*self.attrs.borrow())[idx].root();
                     vtable_for(&NodeCast::from_ref(self)).before_remove_attr(*attr);
                 }
 
                 self.attrs.borrow_mut().remove(idx);
-                self.notify_content_changed();
+
+                let node: JSRef<Node> = NodeCast::from_ref(self);
+                if node.is_in_doc() {
+                    let document = document_from_node(self).root();
+                    if local_name == atom!("style") {
+                        document.content_changed(node, NodeStyleDamaged);
+                    } else {
+                        document.content_changed(node, OtherNodeDamage);
+                    }
+                }
             }
         };
-    }
-
-    fn notify_content_changed(self) {
-        let node: JSRef<Node> = NodeCast::from_ref(self);
-        if node.is_in_doc() {
-            let document = document_from_node(self).root();
-            document.content_changed(node);
-        }
     }
 
     fn has_class(&self, name: &Atom) -> bool {
@@ -757,11 +821,6 @@ impl<'a> ElementMethods for JSRef<'a, Element> {
     fn SetAttribute(self,
                     name: DOMString,
                     value: DOMString) -> ErrorResult {
-        {
-            let node: JSRef<Node> = NodeCast::from_ref(self);
-            node.wait_until_safe_to_modify_dom();
-        }
-
         // Step 1.
         match xml_name_type(name.as_slice()) {
             InvalidXMLName => return Err(InvalidCharacter),
@@ -789,11 +848,6 @@ impl<'a> ElementMethods for JSRef<'a, Element> {
                       namespace_url: Option<DOMString>,
                       name: DOMString,
                       value: DOMString) -> ErrorResult {
-        {
-            let node: JSRef<Node> = NodeCast::from_ref(self);
-            node.wait_until_safe_to_modify_dom();
-        }
-
         // Step 1.
         let namespace = namespace::from_domstring(namespace_url);
 
@@ -964,7 +1018,10 @@ impl<'a> ElementMethods for JSRef<'a, Element> {
 
     // http://dom.spec.whatwg.org/#dom-element-matches
     fn Matches(self, selectors: DOMString) -> Fallible<bool> {
-        match parse_selector_list_from_str(selectors.as_slice()) {
+        let parser_context = ParserContext {
+            origin: AuthorOrigin,
+        };
+        match style::parse_selector_list_from_str(&parser_context, selectors.as_slice()) {
             Err(()) => Err(Syntax),
             Ok(ref selectors) => {
                 let root: JSRef<Node> = NodeCast::from_ref(self);
@@ -1001,25 +1058,48 @@ impl<'a> VirtualMethods for JSRef<'a, Element> {
 
         match attr.local_name() {
             &atom!("style") => {
+                // Modifying the `style` attribute might change style.
+                let node: JSRef<Node> = NodeCast::from_ref(*self);
                 let doc = document_from_node(*self).root();
                 let base_url = doc.url().clone();
                 let value = attr.value();
                 let style = Some(style::parse_style_attribute(value.as_slice(), &base_url));
                 *self.style_attribute.borrow_mut() = style;
-            }
-            &atom!("id") => {
-                let node: JSRef<Node> = NodeCast::from_ref(*self);
-                let value = attr.value();
-                if node.is_in_doc() && !value.as_slice().is_empty() {
-                    let doc = document_from_node(*self).root();
-                    let value = Atom::from_slice(value.as_slice());
-                    doc.register_named_element(*self, value);
+
+                if node.is_in_doc() {
+                    doc.content_changed(node, NodeStyleDamaged);
                 }
             }
-            _ => ()
+            &atom!("class") => {
+                // Modifying a class can change style.
+                let node: JSRef<Node> = NodeCast::from_ref(*self);
+                if node.is_in_doc() {
+                    let document = document_from_node(*self).root();
+                    document.content_changed(node, NodeStyleDamaged);
+                }
+            }
+            &atom!("id") => {
+                // Modifying an ID might change style.
+                let node: JSRef<Node> = NodeCast::from_ref(*self);
+                let value = attr.value();
+                if node.is_in_doc() {
+                    let doc = document_from_node(*self).root();
+                    if !value.as_slice().is_empty() {
+                        let value = Atom::from_slice(value.as_slice());
+                        doc.register_named_element(*self, value);
+                    }
+                    doc.content_changed(node, NodeStyleDamaged);
+                }
+            }
+            _ => {
+                // Modifying any other attribute might change arbitrary things.
+                let node: JSRef<Node> = NodeCast::from_ref(*self);
+                if node.is_in_doc() {
+                    let document = document_from_node(*self).root();
+                    document.content_changed(node, OtherNodeDamage);
+                }
+            }
         }
-
-        self.notify_content_changed();
     }
 
     fn before_remove_attr(&self, attr: JSRef<Attr>) {
@@ -1030,21 +1110,45 @@ impl<'a> VirtualMethods for JSRef<'a, Element> {
 
         match attr.local_name() {
             &atom!("style") => {
+                // Modifying the `style` attribute might change style.
                 *self.style_attribute.borrow_mut() = None;
-            }
-            &atom!("id") => {
+
                 let node: JSRef<Node> = NodeCast::from_ref(*self);
-                let value = attr.value();
-                if node.is_in_doc() && !value.as_slice().is_empty() {
+                if node.is_in_doc() {
                     let doc = document_from_node(*self).root();
-                    let value = Atom::from_slice(value.as_slice());
-                    doc.unregister_named_element(*self, value);
+                    doc.content_changed(node, NodeStyleDamaged);
                 }
             }
-            _ => ()
+            &atom!("id") => {
+                // Modifying an ID can change style.
+                let node: JSRef<Node> = NodeCast::from_ref(*self);
+                let value = attr.value();
+                if node.is_in_doc() {
+                    let doc = document_from_node(*self).root();
+                    if !value.as_slice().is_empty() {
+                        let value = Atom::from_slice(value.as_slice());
+                        doc.unregister_named_element(*self, value);
+                    }
+                    doc.content_changed(node, NodeStyleDamaged);
+                }
+            }
+            &atom!("class") => {
+                // Modifying a class can change style.
+                let node: JSRef<Node> = NodeCast::from_ref(*self);
+                if node.is_in_doc() {
+                    let document = document_from_node(*self).root();
+                    document.content_changed(node, NodeStyleDamaged);
+                }
+            }
+            _ => {
+                // Modifying any other attribute might change arbitrary things.
+                let node: JSRef<Node> = NodeCast::from_ref(*self);
+                if node.is_in_doc() {
+                    let doc = document_from_node(*self).root();
+                    doc.content_changed(node, OtherNodeDamage);
+                }
+            }
         }
-
-        self.notify_content_changed();
     }
 
     fn parse_plain_attribute(&self, name: &Atom, value: DOMString) -> AttrValue {
@@ -1192,6 +1296,17 @@ impl<'a> style::TElement<'a> for JSRef<'a, Element> {
             }
         }
     }
+    fn has_nonzero_border(self) -> bool {
+        match HTMLTableElementCast::to_ref(self) {
+            None => false,
+            Some(this) => {
+                match this.get_border() {
+                    None | Some(0) => false,
+                    Some(_) => true,
+                }
+            }
+        }
+    }
 }
 
 pub trait ActivationElementHelpers<'a> {
@@ -1264,7 +1379,7 @@ impl<'a> ActivationElementHelpers<'a> for JSRef<'a, Element> {
                 Some(elem) => {
                     // Step 5-6
                     elem.pre_click_activation();
-                    target.dispatch_event_with_target(None, event).ok();
+                    target.dispatch_event(event);
                     if !event.DefaultPrevented() {
                         // post click activation
                         elem.activation_behavior();
@@ -1273,10 +1388,10 @@ impl<'a> ActivationElementHelpers<'a> for JSRef<'a, Element> {
                     }
                 }
                 // Step 6
-                None => {target.dispatch_event_with_target(None, event).ok();}
+                None => {target.dispatch_event(event);}
             },
             // Step 6
-            None => {target.dispatch_event_with_target(None, event).ok();}
+            None => {target.dispatch_event(event);}
         }
         // Step 7
         self.set_click_in_progress(false);

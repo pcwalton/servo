@@ -21,7 +21,10 @@ use dom::bindings::codegen::InheritTypes::HTMLOptionElementCast;
 use dom::bindings::codegen::InheritTypes::HTMLScriptElementCast;
 use dom::bindings::codegen::InheritTypes::HTMLSelectElementCast;
 use dom::bindings::codegen::InheritTypes::HTMLStyleElementCast;
+use dom::bindings::codegen::InheritTypes::HTMLTableElementCast;
 use dom::bindings::codegen::InheritTypes::HTMLTableCellElementCast;
+use dom::bindings::codegen::InheritTypes::HTMLTableRowElementCast;
+use dom::bindings::codegen::InheritTypes::HTMLTableSectionElementCast;
 use dom::bindings::codegen::InheritTypes::HTMLTextAreaElementCast;
 use dom::bindings::codegen::InheritTypes::HTMLTitleElementCast;
 use dom::bindings::js::JSRef;
@@ -46,7 +49,10 @@ use dom::htmloptionelement::HTMLOptionElement;
 use dom::htmlscriptelement::HTMLScriptElement;
 use dom::htmlselectelement::HTMLSelectElement;
 use dom::htmlstyleelement::HTMLStyleElement;
+use dom::htmltableelement::HTMLTableElement;
 use dom::htmltablecellelement::HTMLTableCellElement;
+use dom::htmltablerowelement::HTMLTableRowElement;
+use dom::htmltablesectionelement::HTMLTableSectionElement;
 use dom::htmltextareaelement::HTMLTextAreaElement;
 use dom::htmltitleelement::HTMLTitleElement;
 use dom::node::{Node, NodeHelpers, NodeTypeId, CloneChildrenFlag};
@@ -205,9 +211,25 @@ pub fn vtable_for<'a>(node: &'a JSRef<'a, Node>) -> &'a VirtualMethods + 'a {
             let element: &'a JSRef<'a, HTMLStyleElement> = HTMLStyleElementCast::to_borrowed_ref(node).unwrap();
             element as &'a VirtualMethods + 'a
         }
+        NodeTypeId::Element(ElementTypeId::HTMLTableElement) => {
+            let element: &'a JSRef<'a, HTMLTableElement> =
+                HTMLTableElementCast::to_borrowed_ref(node).unwrap();
+            element as &'a VirtualMethods + 'a
+        }
         NodeTypeId::Element(ElementTypeId::HTMLTableDataCellElement) |
         NodeTypeId::Element(ElementTypeId::HTMLTableHeaderCellElement) => {
-            let element: &'a JSRef<'a, HTMLTableCellElement> = HTMLTableCellElementCast::to_borrowed_ref(node).unwrap();
+            let element: &'a JSRef<'a, HTMLTableCellElement> =
+                HTMLTableCellElementCast::to_borrowed_ref(node).unwrap();
+            element as &'a VirtualMethods + 'a
+        }
+        NodeTypeId::Element(ElementTypeId::HTMLTableRowElement) => {
+            let element: &'a JSRef<'a, HTMLTableRowElement> =
+                HTMLTableRowElementCast::to_borrowed_ref(node).unwrap();
+            element as &'a VirtualMethods + 'a
+        }
+        NodeTypeId::Element(ElementTypeId::HTMLTableSectionElement) => {
+            let element: &'a JSRef<'a, HTMLTableSectionElement> =
+                HTMLTableSectionElementCast::to_borrowed_ref(node).unwrap();
             element as &'a VirtualMethods + 'a
         }
         NodeTypeId::Element(ElementTypeId::HTMLTextAreaElement) => {

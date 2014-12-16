@@ -30,10 +30,10 @@
 use construct::FlowConstructor;
 use context::LayoutContext;
 use css::node_style::StyledNode;
-use display_list_builder::{BlockFlowDisplayListBuilding, BackgroundAndBorderLevel, FragmentDisplayListBuilding};
-use floats::{ClearType, FloatKind, Floats, PlacementInfo};
-use flow::{AbsolutePositionInfo, BaseFlow, ForceNonfloatedFlag, FlowClass, Flow};
-use flow::{ImmutableFlowUtils, MutableFlowUtils, PreorderFlowTraversal};
+use display_list_builder::{BlockFlowDisplayListBuilding, FragmentDisplayListBuilding};
+use floats::{ClearBoth, ClearLeft, ClearRight, FloatKind, FloatLeft, Floats, PlacementInfo};
+use flow::{AbsolutePositionInfo, BaseFlow, BlockFlowClass, FloatIfNecessary, FlowClass, Flow};
+use flow::{ForceNonfloated, ImmutableFlowUtils, MutableFlowUtils, PreorderFlowTraversal};
 use flow::{PostorderFlowTraversal, mut_base};
 use flow::{HAS_LEFT_FLOATED_DESCENDANTS, HAS_RIGHT_FLOATED_DESCENDANTS};
 use flow::{IMPACTED_BY_LEFT_FLOATS, IMPACTED_BY_RIGHT_FLOATS};
@@ -50,6 +50,7 @@ use table::ColumnComputedInlineSize;
 use wrapper::ThreadSafeLayoutNode;
 
 use geom::Size2D;
+use gfx::display_list::DisplayList;
 use serialize::{Encoder, Encodable};
 use servo_msg::compositor_msg::LayerId;
 use servo_util::geometry::{Au, MAX_AU, MAX_RECT, ZERO_POINT};
@@ -1853,16 +1854,7 @@ impl Flow for BlockFlow {
     }
 
     fn build_display_list(&mut self, layout_context: &LayoutContext) {
-        if self.base.flags.is_float() {
-            // TODO(#2009, pcwalton): This is a pseudo-stacking context. We need to merge `z-index:
-            // auto` kids into the parent stacking context, when that is supported.
-            self.build_display_list_for_floating_block(layout_context)
-        } else if self.base.flags.contains(IS_ABSOLUTELY_POSITIONED) {
-            self.build_display_list_for_absolutely_positioned_block(layout_context)
-        } else {
-            self.build_display_list_for_block(layout_context, BackgroundAndBorderLevel::Block)
-        }
-
+        self.build_display_list_for_block(box DisplayList::new(), layout_context);
         if opts::get().validate_display_list_geometry {
             self.base.validate_display_list_geometry();
         }

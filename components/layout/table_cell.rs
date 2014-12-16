@@ -17,21 +17,25 @@ use wrapper::ThreadSafeLayoutNode;
 
 use servo_util::geometry::Au;
 use std::fmt;
-use style::ComputedValues;
+use style::{ColSpanUnsignedIntegerAttribute, ComputedValues};
 use sync::Arc;
 
 /// A table formatting context.
 #[deriving(Encodable)]
 pub struct TableCellFlow {
-    /// Data common to all flows.
+    /// Data common to all block flows.
     pub block_flow: BlockFlow,
+    /// The column span of this cell.
+    pub column_span: u32,
 }
 
 impl TableCellFlow {
     pub fn from_node_and_fragment(node: &ThreadSafeLayoutNode, fragment: Fragment)
                                   -> TableCellFlow {
         TableCellFlow {
-            block_flow: BlockFlow::from_node_and_fragment(node, fragment)
+            block_flow: BlockFlow::from_node_and_fragment(node, fragment),
+            column_span: node.get_unsigned_integer_attribute(ColSpanUnsignedIntegerAttribute)
+                             .unwrap_or(1),
         }
     }
 

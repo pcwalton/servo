@@ -398,7 +398,7 @@ pub mod longhands {
 
     ${new_style_struct("Box", is_inherited=False)}
 
-    // TODO: don't parse values we don't support
+    // TODO(SimonSapin): don't parse `inline-table`, since we don't support it
     <%self:single_keyword_computed name="display"
             values="inline block inline-block
             table inline-table table-row-group table-header-group table-footer-group
@@ -699,6 +699,45 @@ pub mod longhands {
                 Ok(T::Content(content))
             }
     </%self:longhand>
+
+    ${new_style_struct("List", is_inherited=True)}
+
+    ${single_keyword("list-style-position", "outside inside")}
+
+    // TODO(pcwalton): Implement the full set of counter styles per CSS-COUNTER-STYLES [1] 6.1:
+    //
+    //     decimal, decimal-leading-zero, arabic-indic, armenian, upper-armenian, lower-armenian,
+    //     bengali, cambodian, khmer, cjk-decimal, devanagiri, georgian, gujarati, gurmukhi,
+    //     hebrew, kannada, lao, malayalam, mongolian, myanmar, oriya, persian, lower-roman,
+    //     upper-roman, telugu, thai, tibetan
+    //
+    // [1]: http://dev.w3.org/csswg/css-counter-styles/
+    ${single_keyword("list-style-type",
+                     "disc none circle square disclosure-open disclosure-closed")}
+
+    <%self:single_component_value name="list-style-image">
+        pub use super::computed_as_specified as to_computed_value;
+        #[deriving(Clone)]
+        pub type SpecifiedValue = Option<Url>;
+        pub mod computed_value {
+            use url::Url;
+            #[deriving(Clone, PartialEq)]
+            pub type T = Option<Url>;
+        }
+        pub fn from_component_value(input: &ComponentValue, base_url: &Url)
+                                    -> Result<SpecifiedValue,()> {
+            match *input {
+                URL(ref url) => Ok(Some(super::parse_url(url.as_slice(), base_url))),
+                Ident(ref value) if value.as_slice().eq_ignore_ascii_case("none") => Ok(None),
+                _ => Err(()),
+            }
+        }
+        #[inline]
+        pub fn get_initial_value() -> computed_value::T {
+            None
+        }
+    </%self:single_component_value>
+
     // CSS 2.1, Section 13 - Paged media
 
     // CSS 2.1, Section 14 - Colors and Backgrounds
@@ -1306,6 +1345,7 @@ pub mod longhands {
 
     ${single_keyword("box-sizing", "content-box border-box")}
 
+    // Box-shadow, etc.
     ${new_style_struct("Effects", is_inherited=False)}
 
     <%self:single_component_value name="opacity">
@@ -1336,6 +1376,148 @@ pub mod longhands {
             }
         }
     </%self:single_component_value>
+
+    <%self:longhand name="box-shadow">
+        use cssparser;
+
+        pub type SpecifiedValue = Vec<SpecifiedBoxShadow>;
+
+        #[deriving(Clone)]
+        pub struct SpecifiedBoxShadow {
+            pub offset_x: specified::Length,
+            pub offset_y: specified::Length,
+            pub blur_radius: specified::Length,
+            pub spread_radius: specified::Length,
+            pub color: Option<specified::CSSColor>,
+            pub inset: bool,
+        }
+
+        pub mod computed_value {
+            use super::super::Au;
+            use super::super::super::computed;
+
+            pub type T = Vec<BoxShadow>;
+
+            #[deriving(Clone, PartialEq)]
+            pub struct BoxShadow {
+                pub offset_x: Au,
+                pub offset_y: Au,
+                pub blur_radius: Au,
+                pub spread_radius: Au,
+                pub color: computed::CSSColor,
+                pub inset: bool,
+            }
+        }
+
+        #[inline]
+        pub fn get_initial_value() -> computed_value::T {
+            Vec::new()
+        }
+
+        pub fn parse(input: &[ComponentValue], _: &Url) -> Result<SpecifiedValue,()> {
+            match one_component_value(input) {
+                Ok(&Ident(ref value)) if value.as_slice().eq_ignore_ascii_case("none") => {
+                    return Ok(Vec::new())
+                }
+                _ => {}
+            }
+            parse_slice_comma_separated(input, parse_one_box_shadow)
+        }
+
+        pub fn to_computed_value(value: SpecifiedValue, context: &computed::Context)
+                                 -> computed_value::T {
+            value.into_iter().map(|value| {
+                computed_value::BoxShadow {
+                    offset_x: computed::compute_Au(value.offset_x, context),
+                    offset_y: computed::compute_Au(value.offset_y, context),
+                    blur_radius: computed::compute_Au(value.blur_radius, context),
+                    spread_radius: computed::compute_Au(value.spread_radius, context),
+                    color: value.color.unwrap_or(cssparser::CurrentColor),
+                    inset: value.inset,
+                }
+            }).collect()
+        }
+
+        fn parse_one_box_shadow(iter: ParserIter) -> Result<SpecifiedBoxShadow,()> {
+            let mut lengths = [specified::Au_(Au(0)), ..4];
+            let mut lengths_parsed = false;
+            let mut color = None;
+            let mut inset = false;
+
+            loop {
+                match iter.next() {
+                    Some(&Ident(ref value)) if value.eq_ignore_ascii_case("inset") && !inset => {
+                        inset = true;
+                        continue
+                    }
+                    Some(value) => {
+                        // Try to parse a length.
+                        match specified::Length::parse(value) {
+                            Ok(the_length) if !lengths_parsed => {
+                                lengths[0] = the_length;
+                                let mut length_parsed_count = 1;
+                                while length_parsed_count < 4 {
+                                    match iter.next() {
+                                        Some(value) => {
+                                            match specified::Length::parse(value) {
+                                                Ok(the_length) => {
+                                                    lengths[length_parsed_count] = the_length;
+                                                }
+                                                Err(_) => {
+                                                    iter.push_back(value);
+                                                    break
+                                                }
+                                            }
+                                        }
+                                        None => break,
+                                    }
+                                    length_parsed_count += 1;
+                                }
+
+                                // The first two lengths must be specified.
+                                if length_parsed_count < 2 {
+                                    return Err(())
+                                }
+
+                                lengths_parsed = true;
+                                continue
+                            }
+                            Ok(_) => return Err(()),
+                            Err(()) => {}
+                        }
+
+                        // Try to parse a color.
+                        match specified::CSSColor::parse(value) {
+                            Ok(the_color) if color.is_none() => {
+                                color = Some(the_color);
+                                continue
+                            }
+                            Ok(_) => return Err(()),
+                            Err(()) => {}
+                        }
+
+                        iter.push_back(value);
+                        break
+                    }
+                    None => break,
+                }
+            }
+
+            // Lengths must be specified.
+            if !lengths_parsed {
+                return Err(())
+            }
+
+            Ok(SpecifiedBoxShadow {
+                offset_x: lengths[0],
+                offset_y: lengths[1],
+                blur_radius: lengths[2],
+                spread_radius: lengths[3],
+                color: color,
+                inset: inset,
+            })
+        }
+    </%self:longhand>
 }
 
 
@@ -1769,6 +1951,102 @@ pub mod shorthands {
                 overflow_wrap: Some(specified_value),
             }
         })
+    </%self:shorthand>
+
+    <%self:shorthand name="list-style"
+                     sub_properties="list-style-image list-style-position list-style-type">
+        // `none` is ambiguous until we've finished parsing the shorthands, so we count the number
+        // of times we see it.
+        let mut nones = 0u8;
+        let (mut image, mut position, mut list_style_type, mut any) = (None, None, None, false);
+        for component_value in input.skip_whitespace() {
+            match component_value {
+                &Ident(ref value) if value.eq_ignore_ascii_case("none") => {
+                    nones = nones + 1;
+                    if nones > 2 {
+                        return Err(())
+                    }
+                    any = true;
+                    continue
+                }
+                _ => {}
+            }
+
+            if list_style_type.is_none() {
+                match list_style_type::from_component_value(component_value, base_url) {
+                    Ok(v) => {
+                        list_style_type = Some(v);
+                        any = true;
+                        continue
+                    },
+                    Err(()) => ()
+                }
+            }
+
+            if image.is_none() {
+                match list_style_image::from_component_value(component_value, base_url) {
+                    Ok(v) => {
+                        image = Some(v);
+                        any = true;
+                        continue
+                    },
+                    Err(()) => (),
+                }
+            }
+
+            if position.is_none() {
+                match list_style_position::from_component_value(component_value, base_url) {
+                    Ok(v) => {
+                        position = Some(v);
+                        any = true;
+                        continue
+                    },
+                    Err(()) => ()
+                }
+            }
+        }
+
+        // If there are two `none`s, then we can't have a type or image; if there is one `none`,
+        // then we can't have both a type *and* an image; if there is no `none` then we're fine as
+        // long as we parsed something.
+        match (any, nones, list_style_type, image) {
+            (true, 2, None, None) => {
+                Ok(Longhands {
+                    list_style_position: position,
+                    list_style_image: Some(None),
+                    list_style_type: Some(list_style_type::none),
+                })
+            }
+            (true, 1, None, Some(image)) => {
+                Ok(Longhands {
+                    list_style_position: position,
+                    list_style_image: Some(image),
+                    list_style_type: Some(list_style_type::none),
+                })
+            }
+            (true, 1, Some(list_style_type), None) => {
+                Ok(Longhands {
+                    list_style_position: position,
+                    list_style_image: Some(None),
+                    list_style_type: Some(list_style_type),
+                })
+            }
+            (true, 1, None, None) => {
+                Ok(Longhands {
+                    list_style_position: position,
+                    list_style_image: Some(None),
+                    list_style_type: Some(list_style_type::none),
+                })
+            }
+            (true, 0, list_style_type, image) => {
+                Ok(Longhands {
+                    list_style_position: position,
+                    list_style_image: image,
+                    list_style_type: list_style_type,
+                })
+            }
+            _ => Err(()),
+        }
     </%self:shorthand>
 }
 

@@ -30,7 +30,7 @@ use style::{ComputedValues, CSSFloat};
 use style::computed_values::table_layout;
 use sync::Arc;
 
-#[deriving(Encodable)]
+#[deriving(Encodable, Show)]
 pub enum TableLayout {
     Fixed,
     Auto

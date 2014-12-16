@@ -26,8 +26,10 @@ use dom::event::{Event, EventBubbles, EventCancelable, EventHelpers};
 use dom::eventtarget::{EventTarget, EventTargetTypeId};
 use dom::htmlelement::HTMLElement;
 use dom::keyboardevent::KeyboardEvent;
-use dom::htmlformelement::{FormSubmitter, FormControl, HTMLFormElement, HTMLFormElementHelpers, SubmittedFrom};
-use dom::node::{DisabledStateHelpers, Node, NodeHelpers, NodeTypeId, document_from_node, window_from_node};
+use dom::htmlformelement::{InputElement, FormControl, HTMLFormElement, HTMLFormElementHelpers};
+use dom::htmlformelement::{NotFromFormSubmitMethod};
+use dom::node::{DisabledStateHelpers, Node, NodeHelpers, ElementNodeTypeId, OtherNodeDamage};
+use dom::node::{document_from_node, window_from_node};
 use dom::virtualmethods::VirtualMethods;
 use textinput::TextInput;
 use textinput::KeyReaction::{TriggerDefaultAction, DispatchInput, Nothing};
@@ -314,7 +316,7 @@ impl<'a> HTMLInputElementHelpers for JSRef<'a, HTMLInputElement> {
     fn force_relayout(self) {
         let doc = document_from_node(self).root();
         let node: JSRef<Node> = NodeCast::from_ref(self);
-        doc.content_changed(node)
+        doc.content_changed(node, OtherNodeDamage)
     }
 
     fn radio_group_updated(self, group: Option<&str>) {

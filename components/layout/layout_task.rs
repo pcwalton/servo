@@ -40,7 +40,7 @@ use script::layout_interface::{ContentBoxesQuery, ContentBoxQuery, ExitNowMsg, G
 use script::layout_interface::{HitTestResponse, LayoutChan, LayoutRPC, LoadStylesheetMsg};
 use script::layout_interface::{MouseOverResponse, Msg, NoQuery, PrepareToExitMsg};
 use script::layout_interface::{ReapLayoutDataMsg, Reflow, ReflowForDisplay, ReflowMsg};
-use script::layout_interface::{ScriptLayoutChan, TrustedNodeAddress};
+use script::layout_interface::{ScriptLayoutChan, SetQuirksModeMsg, TrustedNodeAddress};
 use script_traits::{SendEventMsg, ReflowEvent, ReflowCompleteMsg, OpaqueScriptLayoutChannel};
 use script_traits::{ScriptControlChan, UntrustedNodeAddress};
 use servo_msg::compositor_msg::Scrollable;
@@ -390,6 +390,7 @@ impl LayoutTask {
         match request {
             AddStylesheetMsg(sheet) => self.handle_add_stylesheet(sheet, possibly_locked_rw_data),
             LoadStylesheetMsg(url) => self.handle_load_stylesheet(url, possibly_locked_rw_data),
+            SetQuirksModeMsg => self.handle_set_quirks_mode(possibly_locked_rw_data),
             GetRPCMsg(response_chan) => {
                 response_chan.send(box LayoutRPCImpl(self.rw_data.clone()) as
                                    Box<LayoutRPC + Send>);
@@ -500,6 +501,15 @@ impl LayoutTask {
         LayoutTask::return_rw_data(possibly_locked_rw_data, rw_data);
     }
 
+    /// Sets quirks mode for the document, causing the quirks mode stylesheet to be loaded.
+    fn handle_set_quirks_mode<'a>(&'a self,
+                                  possibly_locked_rw_data:
+                                    &mut Option<MutexGuard<'a, LayoutTaskData>>) {
+        let mut rw_data = self.lock_rw_data(possibly_locked_rw_data);
+        rw_data.stylist.add_quirks_mode_stylesheet();
+        LayoutTask::return_rw_data(possibly_locked_rw_data, rw_data);
+    }
+
     /// Retrieves the flow tree root from the root node.
     fn try_get_layout_root(&self, node: LayoutNode) -> Option<FlowRef> {
         let mut layout_data_ref = node.mutate_layout_data();
@@ -590,6 +600,8 @@ impl LayoutTask {
                                        requested_node: TrustedNodeAddress,
                                        layout_root: &mut FlowRef,
                                        rw_data: &mut RWGuard<'a>) {
+        // FIXME(pcwalton): This has not been updated to handle the stacking context relative
+        // stuff. So the position is wrong in most cases.
         let requested_node: OpaqueNode = OpaqueNodeMethods::from_script_node(requested_node);
         let mut iterator = UnioningFragmentBoundsIterator::new(requested_node);
         sequential::iterate_through_flow_tree_fragment_bounds(layout_root, &mut iterator);
@@ -600,6 +612,8 @@ impl LayoutTask {
                                          requested_node: TrustedNodeAddress,
                                          layout_root: &mut FlowRef,
                                          rw_data: &mut RWGuard<'a>) {
+        // FIXME(pcwalton): This has not been updated to handle the stacking context relative
+        // stuff. So the position is wrong in most cases.
         let requested_node: OpaqueNode = OpaqueNodeMethods::from_script_node(requested_node);
         let mut iterator = CollectingFragmentBoundsIterator::new(requested_node);
         sequential::iterate_through_flow_tree_fragment_bounds(layout_root, &mut iterator);
@@ -626,7 +640,7 @@ impl LayoutTask {
                 LogicalPoint::zero(writing_mode).to_physical(writing_mode,
                                                              rw_data.screen_size);
 
-            flow::mut_base(layout_root.deref_mut()).clip_rect = data.page_clip_rect;
+            flow::mut_base(&mut **layout_root).clip_rect = data.page_clip_rect;
 
             let rw_data = rw_data.deref_mut();
             match rw_data.parallel_traversal {

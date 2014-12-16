@@ -15,7 +15,7 @@ dependencies = [
 [[package]]
 name = "azure"
 version = "0.1.0"
-source = "git+https://github.com/servo/rust-azure#fe95551ca22f2a75b0dd690a72841df39b33885d"
+source = "git+https://github.com/servo/rust-azure#bfae54620eaca34df0ae43d2c1082298131c1aad"
 dependencies = [
  "core_foundation 0.1.0 (git+https://github.com/servo/rust-core-foundation)",
  "core_graphics 0.1.0 (git+https://github.com/servo/rust-core-graphics)",
@@ -101,7 +101,11 @@ dependencies = [
 [[package]]
 name = "cssparser"
 version = "0.1.0"
+<<<<<<< HEAD
 source = "git+https://github.com/servo/rust-cssparser#46aa08015b76d46711b3d330c8934e7a14ac1d11"
+=======
+source = "git+https://github.com/servo/rust-cssparser#3f98f1308b769b5d61efc6c133ac520df2b074ac"
+>>>>>>> origin/master
 dependencies = [
  "encoding 0.2.3 (git+https://github.com/lifthrasiir/rust-encoding)",
 ]
