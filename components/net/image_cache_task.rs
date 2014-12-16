@@ -485,6 +485,10 @@ pub fn spawn_listener<A: Send>(f: proc(Receiver<A>):Send) -> Sender<A> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::AfterPrefetch::*;
+    use super::ImageResponseMsg::*;
+    use super::ImageState::*;
+    use super::Msg::*;
 
     use resource_task;
     use resource_task::{ResourceTask, Metadata, start_sending, ResponseSenders};
