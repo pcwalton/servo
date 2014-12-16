@@ -10,12 +10,12 @@ use block::BlockFlow;
 use block::ISizeAndMarginsComputer;
 use construct::FlowConstructor;
 use context::LayoutContext;
-use flow::{TableRowFlowClass, FlowClass, Flow, ImmutableFlowUtils};
+use flow::{FlowClass, Flow, ImmutableFlowUtils};
 use flow;
 use fragment::{Fragment, FragmentBoundsIterator};
 use layout_debug;
 use table::{ColumnComputedInlineSize, ColumnIntrinsicInlineSize, InternalTable};
-use model::{MaybeAuto, Specified, Auto};
+use model::MaybeAuto;
 use wrapper::ThreadSafeLayoutNode;
 
 use servo_util::geometry::Au;
@@ -111,8 +111,8 @@ impl TableRowFlow {
                                                      .style()
                                                      .content_block_size(),
                                                  Au(0)) {
-            Auto => block_size,
-            Specified(value) => max(value, block_size)
+            MaybeAuto::Auto => block_size,
+            MaybeAuto::Specified(value) => max(value, block_size)
         };
         // cur_y = cur_y + block-size;
 
@@ -140,7 +140,7 @@ impl TableRowFlow {
 
 impl Flow for TableRowFlow {
     fn class(&self) -> FlowClass {
-        TableRowFlowClass
+        FlowClass::TableRow
     }
 
     fn as_table_row<'a>(&'a mut self) -> &'a mut TableRowFlow {

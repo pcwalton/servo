@@ -9,7 +9,6 @@ use incremental::{mod, RestyleDamage};
 use util::{LayoutDataAccess, LayoutDataWrapper};
 use wrapper::{LayoutElement, LayoutNode, TLayoutNode};
 
-use script::dom::node::{TextNodeTypeId};
 use servo_util::bloom::BloomFilter;
 use servo_util::cache::{Cache, LRUCache, SimpleHashCache};
 use servo_util::smallvec::{SmallVec, SmallVec16};
@@ -18,7 +17,7 @@ use std::mem;
 use std::hash::{Hash, sip};
 use std::slice::Items;
 use string_cache::{Atom, Namespace};
-use style::{mod, After, Before, ComputedValues, DeclarationBlock, Stylist, TElement, TNode};
+use style::{mod, PseudoElement, ComputedValues, DeclarationBlock, Stylist, TElement, TNode};
 use style::{CommonStyleAffectingAttributeMode, CommonStyleAffectingAttributes, cascade};
 use sync::Arc;
 
@@ -492,12 +491,12 @@ impl<'ln> MatchMethods for LayoutNode<'ln> {
         stylist.push_applicable_declarations(self,
                                              parent_bf,
                                              None,
-                                             Some(Before),
+                                             Some(PseudoElement::Before),
                                              &mut applicable_declarations.before);
         stylist.push_applicable_declarations(self,
                                              parent_bf,
                                              None,
-                                             Some(After),
+                                             Some(PseudoElement::After),
                                              &mut applicable_declarations.after);
 
         *shareable = applicable_declarations.normal_shareable &&
@@ -511,7 +510,7 @@ impl<'ln> MatchMethods for LayoutNode<'ln> {
                                       parent: Option<LayoutNode>)
                                       -> StyleSharingResult {
         if !self.is_element() {
-            return CannotShare(false)
+            return StyleSharingResult::CannotShare(false)
         }
         let ok = {
             let element = self.as_element();
@@ -519,7 +518,7 @@ impl<'ln> MatchMethods for LayoutNode<'ln> {
                 element.get_attr(&ns!(""), &atom!("id")).is_none()
         };
         if !ok {
-            return CannotShare(false)
+            return StyleSharingResult::CannotShare(false)
         }
 
         for (i, &(ref candidate, ())) in style_sharing_candidate_cache.iter().enumerate() {
@@ -531,13 +530,13 @@ impl<'ln> MatchMethods for LayoutNode<'ln> {
                     let style = &mut shared_data.style;
                     let damage = incremental::compute_damage(style, &*shared_style);
                     *style = Some(shared_style);
-                    return StyleWasShared(i, damage)
+                    return StyleSharingResult::StyleWasShared(i, damage)
                 }
                 None => {}
             }
         }
 
-        CannotShare(true)
+        StyleSharingResult::CannotShare(true)
     }
 
     // The below two functions are copy+paste because I can't figure out how to
