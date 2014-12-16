@@ -48,7 +48,7 @@ use devtools_traits::NodeInfo;
 use script_traits::UntrustedNodeAddress;
 use servo_util::geometry::Au;
 use servo_util::str::{DOMString, null_str_as_empty};
-use style::{matches, AuthorOrigin, ParserContext, SelectorList};
+use style::{matches, ParserContext, SelectorList, StylesheetOrigin};
 
 use js::jsapi::{JSContext, JSObject, JSTracer, JSRuntime};
 use js::jsfriendapi;
@@ -284,7 +284,7 @@ impl<'a> PrivateNodeHelpers for JSRef<'a, Node> {
 
         let parent = self.parent_node().root();
         parent.map(|parent| vtable_for(&*parent).child_inserted(self));
-        document.content_and_heritage_changed(self, OtherNodeDamage);
+        document.content_and_heritage_changed(self, NodeDamage::Other);
     }
 
     // http://dom.spec.whatwg.org/#node-is-removed
@@ -652,8 +652,8 @@ impl<'a> NodeHelpers<'a> for JSRef<'a, Node> {
     fn dirty_impl(self, damage: NodeDamage, force_ancestors: bool) {
         // 1. Dirty self.
         match damage {
-            NodeStyleDamaged => {}
-            OtherNodeDamage => self.set_has_changed(true),
+            NodeDamage::Style => {}
+            NodeDamage::Other => self.set_has_changed(true),
         }
 
         if self.get_is_dirty() && !force_ancestors {
@@ -739,7 +739,7 @@ impl<'a> NodeHelpers<'a> for JSRef<'a, Node> {
     fn query_selector(self, selectors: DOMString) -> Fallible<Option<Temporary<Element>>> {
         // Step 1.
         let parser_context = ParserContext {
-            origin: AuthorOrigin,
+            origin: StylesheetOrigin::Author,
         };
         match style::parse_selector_list_from_str(&parser_context, selectors.as_slice()) {
             // Step 2.
@@ -764,7 +764,7 @@ impl<'a> NodeHelpers<'a> for JSRef<'a, Node> {
         let nodes;
         let root = self.ancestors().last().unwrap_or(self.clone());
         let parser_context = ParserContext {
-            origin: AuthorOrigin,
+            origin: StylesheetOrigin::Author,
         };
         match style::parse_selector_list_from_str(&parser_context, selectors.as_slice()) {
             // Step 2.
@@ -1823,7 +1823,7 @@ impl<'a> NodeMethods for JSRef<'a, Node> {
 
                 // Notify the document that the content of this node is different
                 let document = self.owner_doc().root();
-                document.content_changed(self, OtherNodeDamage);
+                document.content_changed(self, NodeDamage::Other);
             }
             NodeTypeId::DocumentType |
             NodeTypeId::Document => {}
@@ -2365,8 +2365,8 @@ impl<'a> DisabledStateHelpers for JSRef<'a, Node> {
 #[deriving(Clone, PartialEq)]
 pub enum NodeDamage {
     /// The node's `style` attribute changed.
-    NodeStyleDamaged,
+    Style,
     /// Other parts of a node changed; attributes, text content, etc.
-    OtherNodeDamage,
+    Other,
 }
 

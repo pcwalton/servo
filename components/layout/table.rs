@@ -11,10 +11,12 @@ use block::{ISizeConstraintInput, ISizeConstraintSolution};
 use construct::FlowConstructor;
 use context::LayoutContext;
 use floats::FloatKind;
-use flow::{Flow, FlowClass, IMPACTED_BY_LEFT_FLOATS, IMPACTED_BY_RIGHT_FLOATS, ImmutableFlowUtils};
+use flow::{mod, Flow, FlowClass, IMPACTED_BY_LEFT_FLOATS, IMPACTED_BY_RIGHT_FLOATS};
+use flow::{ImmutableFlowUtils};
 use fragment::{Fragment, FragmentBoundsIterator};
 use layout_debug;
 use model::{IntrinsicISizes, IntrinsicISizesContribution};
+use table_row::CellIntrinsicInlineSize;
 use table_wrapper::TableLayout;
 use wrapper::ThreadSafeLayoutNode;
 
@@ -179,7 +181,7 @@ impl TableFlow {
         debug_assert!(child.is_table_row());
         let row = child.as_table_row();
         match table_layout {
-            FixedLayout => {
+            TableLayout::Fixed => {
                 // Fixed table layout only looks at the first row.
                 //
                 // FIXME(pcwalton): This is really inefficient. We should stop after the first row!
@@ -190,7 +192,7 @@ impl TableFlow {
                     }
                 }
             }
-            AutoLayout => {
+            TableLayout::Auto => {
                 computation.union_block(&TableFlow::update_automatic_column_inline_sizes(
                     column_inline_sizes,
                     row.cell_intrinsic_inline_sizes.as_slice()))

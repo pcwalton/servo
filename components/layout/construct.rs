@@ -545,19 +545,19 @@ impl<'a> FlowConstructor<'a> {
     /// `<textarea>`.
     fn build_flow_for_block(&mut self, flow: FlowRef, node: &ThreadSafeLayoutNode)
                             -> ConstructionResult {
-        let initial_fragment = if node.get_pseudo_element_type() != Normal ||
-           node.type_id() == Some(ElementNodeTypeId(HTMLInputElementTypeId)) ||
-           node.type_id() == Some(ElementNodeTypeId(HTMLTextAreaElementTypeId)) {
+        let initial_fragment = if node.get_pseudo_element_type() != PseudoElementType::Normal ||
+           node.type_id() == Some(NodeTypeId::Element(ElementTypeId::HTMLInputElement)) ||
+           node.type_id() == Some(NodeTypeId::Element(ElementTypeId::HTMLTextAreaElement)) {
             // A TextArea's text contents are displayed through the input text
             // box, so don't construct them.
-            if node.type_id() == Some(ElementNodeTypeId(HTMLTextAreaElementTypeId)) {
+            if node.type_id() == Some(NodeTypeId::Element(ElementTypeId::HTMLTextAreaElement)) {
                 for kid in node.children() {
-                    kid.set_flow_construction_result(NoConstructionResult)
+                    kid.set_flow_construction_result(ConstructionResult::None)
                 }
             }
             Some(Fragment::new_from_specific_info(
                     node,
-                    UnscannedTextFragment(UnscannedTextFragmentInfo::new(node))))
+                    SpecificFragmentInfo::UnscannedText(UnscannedTextFragmentInfo::new(node))))
         } else {
             None
         };
@@ -937,7 +937,8 @@ impl<'a> FlowConstructor<'a> {
                         let mut unscanned_marker_fragments = DList::new();
                         unscanned_marker_fragments.push_back(Fragment::new_from_specific_info(
                             node,
-                            UnscannedTextFragment(UnscannedTextFragmentInfo::from_text(text))));
+                            SpecificFragmentInfo::UnscannedText(
+                                UnscannedTextFragmentInfo::from_text(text))));
                         let marker_fragments = TextRunScanner::new().scan_for_runs(
                             self.layout_context.font_context(),
                             unscanned_marker_fragments);

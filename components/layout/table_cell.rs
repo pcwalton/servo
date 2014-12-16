@@ -17,7 +17,7 @@ use wrapper::ThreadSafeLayoutNode;
 
 use servo_util::geometry::Au;
 use std::fmt;
-use style::{ColSpanUnsignedIntegerAttribute, ComputedValues};
+use style::{ComputedValues, UnsignedIntegerAttribute};
 use sync::Arc;
 
 /// A table formatting context.
@@ -34,7 +34,7 @@ impl TableCellFlow {
                                   -> TableCellFlow {
         TableCellFlow {
             block_flow: BlockFlow::from_node_and_fragment(node, fragment),
-            column_span: node.get_unsigned_integer_attribute(ColSpanUnsignedIntegerAttribute)
+            column_span: node.get_unsigned_integer_attribute(UnsignedIntegerAttribute::ColSpan)
                              .unwrap_or(1),
         }
     }

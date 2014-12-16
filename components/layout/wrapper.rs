@@ -59,9 +59,9 @@ use std::kinds::marker::ContravariantLifetime;
 use std::mem;
 use string_cache::{Atom, Namespace};
 use style::computed_values::{content, display, white_space};
-use style::{AnyNamespace, AttrSelector, BorderUnsignedIntegerAttribute, IntegerAttribute};
-use style::{LengthAttribute, PropertyDeclarationBlock, SimpleColorAttribute, SpecificNamespace};
-use style::{TElement, TElementAttributes, TNode, UnsignedIntegerAttribute};
+use style::{AttrSelector, IntegerAttribute, LengthAttribute, NamespaceConstraint};
+use style::{PropertyDeclarationBlock, SimpleColorAttribute, TElement, TElementAttributes, TNode};
+use style::{UnsignedIntegerAttribute};
 use url::Url;
 
 use std::cell::{Ref, RefMut};
@@ -586,8 +586,8 @@ impl<'le> TElement<'le> for LayoutElement<'le> {
     #[inline]
     fn has_nonzero_border(self) -> bool {
         unsafe {
-            match self.element
-                      .get_unsigned_integer_attribute_for_layout(BorderUnsignedIntegerAttribute) {
+            match self.element.get_unsigned_integer_attribute_for_layout(
+                    UnsignedIntegerAttribute::Border) {
                 None | Some(0) => false,
                 _ => true,
             }

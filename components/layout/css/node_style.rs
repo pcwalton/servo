@@ -4,7 +4,8 @@
 
 //! Style retrieval from DOM elements.
 
-use wrapper::{After, Before, Normal, ThreadSafeLayoutNode};
+use wrapper::PseudoElementType::{After, Before, Normal};
+use wrapper::ThreadSafeLayoutNode;
 
 use std::mem;
 use style::ComputedValues;

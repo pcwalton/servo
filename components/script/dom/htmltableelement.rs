@@ -17,10 +17,9 @@ use dom::htmlelement::HTMLElement;
 use dom::htmltablecaptionelement::HTMLTableCaptionElement;
 use dom::node::{Node, NodeHelpers, NodeTypeId};
 use dom::virtualmethods::VirtualMethods;
-use servo_util::str::DOMString;
 
 use cssparser::RGBA;
-use servo_util::str::{mod, AutoLpa, DOMString, LengthOrPercentageOrAuto};
+use servo_util::str::{mod, DOMString, LengthOrPercentageOrAuto};
 use std::cell::Cell;
 
 #[dom_struct]
@@ -152,7 +151,7 @@ impl<'a> VirtualMethods for JSRef<'a, HTMLTableElement> {
         match attr.local_name() {
             &atom!("bgcolor") => self.background_color.set(None),
             &atom!("border") => self.border.set(None),
-            &atom!("width") => self.width.set(AutoLpa),
+            &atom!("width") => self.width.set(LengthOrPercentageOrAuto::Auto),
             _ => ()
         }
     }

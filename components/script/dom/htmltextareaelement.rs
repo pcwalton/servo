@@ -20,10 +20,12 @@ use dom::event::Event;
 use dom::eventtarget::{EventTarget, EventTargetTypeId};
 use dom::htmlelement::HTMLElement;
 use dom::keyboardevent::KeyboardEvent;
-use dom::node::{DisabledStateHelpers, Node, NodeHelpers, OtherNodeDamage, ElementNodeTypeId};
+use dom::node::{DisabledStateHelpers, Node, NodeDamage, NodeHelpers, NodeTypeId};
 use dom::node::{document_from_node};
-use textinput::{Multiple, TextInput, TriggerDefaultAction, DispatchInput, Nothing};
 use dom::virtualmethods::VirtualMethods;
+use textinput::KeyReaction::{DispatchInput, Nothing, TriggerDefaultAction};
+use textinput::Lines::Multiple;
+use textinput::TextInput;
 
 use servo_util::str::DOMString;
 use string_cache::Atom;
@@ -164,7 +166,7 @@ impl<'a> PrivateHTMLTextAreaElementHelpers for JSRef<'a, HTMLTextAreaElement> {
     fn force_relayout(self) {
         let doc = document_from_node(self).root();
         let node: JSRef<Node> = NodeCast::from_ref(self);
-        doc.content_changed(node, OtherNodeDamage)
+        doc.content_changed(node, NodeDamage::Other)
     }
 }
 

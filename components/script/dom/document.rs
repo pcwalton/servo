@@ -48,9 +48,7 @@ use dom::location::Location;
 use dom::mouseevent::MouseEvent;
 use dom::keyboardevent::KeyboardEvent;
 use dom::messageevent::MessageEvent;
-use dom::node::{Node, NodeHelpers, NodeTypeId, CloneChildrenFlag};
-use dom::node::{Node, ElementNodeTypeId, DocumentNodeTypeId, NodeHelpers};
-use dom::node::{CloneChildren, DoNotCloneChildren, NodeDamage, OtherNodeDamage};
+use dom::node::{Node, NodeDamage, NodeHelpers, NodeTypeId, CloneChildrenFlag};
 use dom::nodelist::NodeList;
 use dom::text::Text;
 use dom::processinginstruction::ProcessingInstruction;
@@ -381,7 +379,7 @@ impl<'a> DocumentHelpers<'a> for JSRef<'a, Document> {
     fn dirty_all_nodes(self) {
         let root: JSRef<Node> = NodeCast::from_ref(self);
         for node in root.traverse_preorder() {
-            node.dirty(OtherNodeDamage)
+            node.dirty(NodeDamage::Other)
         }
     }
 }

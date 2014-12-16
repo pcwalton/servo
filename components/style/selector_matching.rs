@@ -1171,13 +1171,13 @@ mod tests {
     fn get_mock_rules(css_selectors: &[&str]) -> Vec<Vec<Rule>> {
         use namespaces::NamespaceMap;
         use selectors::{ParserContext, parse_selector_list};
-        use selector_matching::AuthorOrigin;
+        use selector_matching::StylesheetOrigin;
         use cssparser::tokenize;
 
         let namespaces = NamespaceMap::new();
         css_selectors.iter().enumerate().map(|(i, selectors)| {
             let context = ParserContext {
-                origin: AuthorOrigin,
+                origin: StylesheetOrigin::Author,
             };
             parse_selector_list(&context, tokenize(*selectors).map(|(c, _)| c), &namespaces)
             .unwrap().into_iter().map(|s| {

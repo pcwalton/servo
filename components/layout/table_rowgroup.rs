@@ -9,7 +9,7 @@
 use block::{BlockFlow, ISizeAndMarginsComputer, MarginsMayCollapseFlag};
 use construct::FlowConstructor;
 use context::LayoutContext;
-use flow::{FlowClass, Flow, ImmutableFlowUtils};
+use flow::{FlowClass, Flow};
 use fragment::{Fragment, FragmentBoundsIterator};
 use layout_debug;
 use table::{ColumnComputedInlineSize, ColumnIntrinsicInlineSize, InternalTable};

@@ -13,11 +13,8 @@
 use block::BlockFlow;
 use context::LayoutContext;
 use flow::{mod, Flow, IS_ABSOLUTELY_POSITIONED, NEEDS_LAYER};
-use fragment::{Fragment, GenericFragment, IframeFragment, IframeFragmentInfo, ImageFragment};
-use fragment::{ImageFragmentInfo, InlineAbsoluteHypotheticalFragment, InlineBlockFragment};
-use fragment::{ScannedTextFragment, ScannedTextFragmentInfo, TableFragment};
-use fragment::{TableCellFragment, TableColumnFragment, TableRowFragment, TableWrapperFragment};
-use fragment::{UnscannedTextFragment};
+use fragment::{Fragment, IframeFragmentInfo, ImageFragmentInfo, ScannedTextFragmentInfo};
+use fragment::{SpecificFragmentInfo};
 use list_item::ListItemFlow;
 use model;
 use util::{OpaqueNodeMethods, ToGfxColor};
@@ -648,7 +645,7 @@ impl FragmentDisplayListBuilding for Fragment {
                 None => {}
             }
             match self.specific {
-                ScannedTextFragment(_) => {},
+                SpecificFragmentInfo::ScannedText(_) => {},
                 _ => {
                     self.build_display_list_for_box_shadow_if_applicable(
                         &*self.style,
@@ -1025,7 +1022,9 @@ impl BlockFlowDisplayListBuilding for BlockFlow {
         } else if self.base.flags.contains(IS_ABSOLUTELY_POSITIONED) {
             self.build_display_list_for_absolutely_positioned_block(display_list, layout_context)
         } else {
-            self.build_display_list_for_static_block(display_list, layout_context, BlockLevel)
+            self.build_display_list_for_static_block(display_list,
+                                                     layout_context,
+                                                     BackgroundAndBorderLevel::Block)
         }
     }
 
@@ -1060,7 +1059,7 @@ impl ListItemFlowDisplayListBuilding for ListItemFlow {
                 marker.build_display_list(&mut *display_list,
                                           layout_context,
                                           stacking_relative_fragment_origin,
-                                          ContentLevel,
+                                          BackgroundAndBorderLevel::Content,
                                           &self.block_flow.base.clip_rect);
             }
         }

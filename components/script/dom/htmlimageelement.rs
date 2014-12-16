@@ -15,7 +15,7 @@ use dom::element::{Element, ElementTypeId};
 use dom::element::AttributeHandlers;
 use dom::eventtarget::{EventTarget, EventTargetTypeId};
 use dom::htmlelement::HTMLElement;
-use dom::node::{Node, NodeTypeId, NodeHelpers, OtherNodeDamage, window_from_node};
+use dom::node::{Node, NodeDamage, NodeTypeId, NodeHelpers, window_from_node};
 use dom::virtualmethods::VirtualMethods;
 use servo_net::image_cache_task;
 use servo_util::geometry::to_px;
@@ -118,7 +118,7 @@ impl<'a> HTMLImageElementMethods for JSRef<'a, HTMLImageElement> {
         // recreate the flow (picking up image changes on the way). The image cache task needs a
         // rewrite to modern Rust.
         let node: JSRef<Node> = NodeCast::from_ref(self);
-        node.dirty(OtherNodeDamage);
+        node.dirty(NodeDamage::Other);
 
         let rect = node.get_bounding_content_box();
         to_px(rect.size.width) as u32
@@ -136,7 +136,7 @@ impl<'a> HTMLImageElementMethods for JSRef<'a, HTMLImageElement> {
         // recreate the flow (picking up image changes on the way). The image cache task needs a
         // rewrite to modern Rust.
         let node: JSRef<Node> = NodeCast::from_ref(self);
-        node.dirty(OtherNodeDamage);
+        node.dirty(NodeDamage::Other);
 
         let rect = node.get_bounding_content_box();
         to_px(rect.size.height) as u32

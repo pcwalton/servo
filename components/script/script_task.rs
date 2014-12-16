@@ -25,7 +25,7 @@ use dom::event::{Event, EventHelpers, EventBubbles, EventCancelable};
 use dom::uievent::UIEvent;
 use dom::eventtarget::{EventTarget, EventTargetHelpers};
 use dom::keyboardevent::KeyboardEvent;
-use dom::node::{mod, ElementNodeTypeId, Node, NodeHelpers, OtherNodeDamage};
+use dom::node::{mod, Node, NodeDamage, NodeHelpers, NodeTypeId};
 use dom::window::{Window, WindowHelpers};
 use dom::worker::{Worker, TrustedWorkerAddress};
 use dom::xmlhttprequest::{TrustedXHRAddress, XMLHttpRequest, XHRProgress};
@@ -823,7 +823,7 @@ impl ScriptTask {
         {
             let document_js_ref = (&*document).clone();
             let document_as_node = NodeCast::from_ref(document_js_ref);
-            document.content_changed(document_as_node, OtherNodeDamage);
+            document.content_changed(document_as_node, NodeDamage::Other);
         }
         window.flush_layout(ReflowForDisplay, NoQuery);
 
@@ -919,7 +919,7 @@ impl ScriptTask {
                     let page = get_page(&*self.page.borrow(), pipeline_id);
                     let frame = page.frame();
                     let document = frame.as_ref().unwrap().document.root();
-                    document.content_changed(*node_to_dirty, OtherNodeDamage);
+                    document.content_changed(*node_to_dirty, NodeDamage::Other);
                 }
 
                 self.handle_reflow_event(pipeline_id);

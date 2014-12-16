@@ -11,7 +11,7 @@ use dom::document::Document;
 use dom::element::ElementTypeId;
 use dom::eventtarget::{EventTarget, EventTargetTypeId};
 use dom::htmlelement::HTMLElement;
-use dom::node::{Node, ElementNodeTypeId};
+use dom::node::{Node, NodeTypeId};
 use dom::virtualmethods::VirtualMethods;
 
 use cssparser::RGBA;

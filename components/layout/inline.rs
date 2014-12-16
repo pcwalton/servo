@@ -345,8 +345,8 @@ impl LineBreaker {
             };
 
             let need_to_merge = match (&mut result.specific, &candidate.specific) {
-                (&ScannedTextFragment(ref mut result_info),
-                 &ScannedTextFragment(ref candidate_info))
+                (&SpecificFragmentInfo::ScannedText(ref mut result_info),
+                 &SpecificFragmentInfo::ScannedText(ref candidate_info))
                     if arc_ptr_eq(&result_info.run, &candidate_info.run) &&
                         result_info.range.end() + CharIndex(1) == candidate_info.range.begin() => {
                     // We found a previously-broken fragment. Merge it up.

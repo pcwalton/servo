@@ -15,8 +15,12 @@ use dom::bindings::codegen::Bindings::ElementBinding::ElementMethods;
 use dom::bindings::codegen::Bindings::EventBinding::EventMethods;
 use dom::bindings::codegen::Bindings::HTMLInputElementBinding::HTMLInputElementMethods;
 use dom::bindings::codegen::Bindings::NamedNodeMapBinding::NamedNodeMapMethods;
-use dom::bindings::codegen::InheritTypes::{ElementDerived, HTMLInputElementDerived, HTMLTableCellElementDerived};
-use dom::bindings::codegen::InheritTypes::{HTMLInputElementCast, NodeCast, EventTargetCast, ElementCast};
+use dom::bindings::codegen::InheritTypes::{ElementCast, ElementDerived, EventTargetCast};
+use dom::bindings::codegen::InheritTypes::{HTMLBodyElementDerived, HTMLInputElementCast};
+use dom::bindings::codegen::InheritTypes::{HTMLInputElementDerived, HTMLTableCellElementDerived};
+use dom::bindings::codegen::InheritTypes::{HTMLTableElementCast, HTMLTableElementDerived};
+use dom::bindings::codegen::InheritTypes::{HTMLTableRowElementDerived};
+use dom::bindings::codegen::InheritTypes::{HTMLTableSectionElementDerived, NodeCast};
 use dom::bindings::error::{ErrorResult, Fallible};
 use dom::bindings::error::Error::{NamespaceError, InvalidCharacter, Syntax};
 use dom::bindings::js::{MutNullableJS, JS, JSRef, Temporary, TemporaryPushable};
@@ -30,7 +34,7 @@ use dom::domrectlist::DOMRectList;
 use dom::document::{Document, DocumentHelpers, LayoutDocumentHelpers};
 use dom::domtokenlist::DOMTokenList;
 use dom::event::Event;
-use dom::eventtarget::{EventTarget, EventTargetTypeId, NodeTargetTypeId, EventTargetHelpers};
+use dom::eventtarget::{EventTarget, EventTargetTypeId, EventTargetHelpers};
 use dom::htmlbodyelement::{HTMLBodyElement, HTMLBodyElementHelpers};
 use dom::htmlcollection::HTMLCollection;
 use dom::htmlinputelement::{HTMLInputElement, RawLayoutHTMLInputElementHelpers};
@@ -39,16 +43,13 @@ use dom::htmltableelement::{HTMLTableElement, HTMLTableElementHelpers};
 use dom::htmltablecellelement::{HTMLTableCellElement, HTMLTableCellElementHelpers};
 use dom::htmltablerowelement::{HTMLTableRowElement, HTMLTableRowElementHelpers};
 use dom::htmltablesectionelement::{HTMLTableSectionElement, HTMLTableSectionElementHelpers};
-use dom::node::{CLICK_IN_PROGRESS, ElementNodeTypeId, LayoutNodeHelpers, Node, NodeHelpers};
-use dom::node::{NodeIterator, NodeStyleDamaged, OtherNodeDamage, document_from_node};
-use dom::node::{window_from_node};
+use dom::node::{CLICK_IN_PROGRESS, LayoutNodeHelpers, Node, NodeDamage, NodeHelpers, NodeIterator};
+use dom::node::{NodeTypeId, document_from_node, window_from_node};
 use dom::nodelist::NodeList;
 use dom::virtualmethods::{VirtualMethods, vtable_for};
 use devtools_traits::AttrInfo;
-use style::{mod, AuthorOrigin, BgColorSimpleColorAttribute, BorderUnsignedIntegerAttribute};
-use style::{ColSpanUnsignedIntegerAttribute, IntegerAttribute, LengthAttribute, ParserContext};
-use style::{SimpleColorAttribute, SizeIntegerAttribute, UnsignedIntegerAttribute};
-use style::{WidthLengthAttribute, matches};
+use style::{mod, IntegerAttribute, LengthAttribute, ParserContext, SimpleColorAttribute};
+use style::{StylesheetOrigin, UnsignedIntegerAttribute, matches};
 use servo_util::namespace;
 use servo_util::str::{DOMString, LengthOrPercentageOrAuto};
 
@@ -339,7 +340,7 @@ impl RawLayoutElementHelpers for Element {
                                                         attribute: UnsignedIntegerAttribute)
                                                         -> Option<u32> {
         match attribute {
-            BorderUnsignedIntegerAttribute => {
+            UnsignedIntegerAttribute::Border => {
                 if self.is_htmltableelement() {
                     let this: &HTMLTableElement = mem::transmute(self);
                     this.get_border()
@@ -349,7 +350,7 @@ impl RawLayoutElementHelpers for Element {
                     None
                 }
             }
-            ColSpanUnsignedIntegerAttribute => {
+            UnsignedIntegerAttribute::ColSpan => {
                 if self.is_htmltablecellelement() {
                     let this: &HTMLTableCellElement = mem::transmute(self);
                     this.get_colspan()
@@ -367,7 +368,7 @@ impl RawLayoutElementHelpers for Element {
     unsafe fn get_simple_color_attribute_for_layout(&self, attribute: SimpleColorAttribute)
                                                     -> Option<RGBA> {
         match attribute {
-            BgColorSimpleColorAttribute => {
+            SimpleColorAttribute::BgColor => {
                 if self.is_htmlbodyelement() {
                     let this: &HTMLBodyElement = mem::transmute(self);
                     this.get_background_color()
@@ -627,9 +628,9 @@ impl<'a> AttributeHandlers for JSRef<'a, Element> {
                 if node.is_in_doc() {
                     let document = document_from_node(self).root();
                     if local_name == atom!("style") {
-                        document.content_changed(node, NodeStyleDamaged);
+                        document.content_changed(node, NodeDamage::Style);
                     } else {
-                        document.content_changed(node, OtherNodeDamage);
+                        document.content_changed(node, NodeDamage::Other);
                     }
                 }
             }
@@ -1019,7 +1020,7 @@ impl<'a> ElementMethods for JSRef<'a, Element> {
     // http://dom.spec.whatwg.org/#dom-element-matches
     fn Matches(self, selectors: DOMString) -> Fallible<bool> {
         let parser_context = ParserContext {
-            origin: AuthorOrigin,
+            origin: StylesheetOrigin::Author,
         };
         match style::parse_selector_list_from_str(&parser_context, selectors.as_slice()) {
             Err(()) => Err(Syntax),
@@ -1067,7 +1068,7 @@ impl<'a> VirtualMethods for JSRef<'a, Element> {
                 *self.style_attribute.borrow_mut() = style;
 
                 if node.is_in_doc() {
-                    doc.content_changed(node, NodeStyleDamaged);
+                    doc.content_changed(node, NodeDamage::Style);
                 }
             }
             &atom!("class") => {
@@ -1075,7 +1076,7 @@ impl<'a> VirtualMethods for JSRef<'a, Element> {
                 let node: JSRef<Node> = NodeCast::from_ref(*self);
                 if node.is_in_doc() {
                     let document = document_from_node(*self).root();
-                    document.content_changed(node, NodeStyleDamaged);
+                    document.content_changed(node, NodeDamage::Style);
                 }
             }
             &atom!("id") => {
@@ -1088,7 +1089,7 @@ impl<'a> VirtualMethods for JSRef<'a, Element> {
                         let value = Atom::from_slice(value.as_slice());
                         doc.register_named_element(*self, value);
                     }
-                    doc.content_changed(node, NodeStyleDamaged);
+                    doc.content_changed(node, NodeDamage::Style);
                 }
             }
             _ => {
@@ -1096,7 +1097,7 @@ impl<'a> VirtualMethods for JSRef<'a, Element> {
                 let node: JSRef<Node> = NodeCast::from_ref(*self);
                 if node.is_in_doc() {
                     let document = document_from_node(*self).root();
-                    document.content_changed(node, OtherNodeDamage);
+                    document.content_changed(node, NodeDamage::Other);
                 }
             }
         }
@@ -1116,7 +1117,7 @@ impl<'a> VirtualMethods for JSRef<'a, Element> {
                 let node: JSRef<Node> = NodeCast::from_ref(*self);
                 if node.is_in_doc() {
                     let doc = document_from_node(*self).root();
-                    doc.content_changed(node, NodeStyleDamaged);
+                    doc.content_changed(node, NodeDamage::Style);
                 }
             }
             &atom!("id") => {
@@ -1129,7 +1130,7 @@ impl<'a> VirtualMethods for JSRef<'a, Element> {
                         let value = Atom::from_slice(value.as_slice());
                         doc.unregister_named_element(*self, value);
                     }
-                    doc.content_changed(node, NodeStyleDamaged);
+                    doc.content_changed(node, NodeDamage::Style);
                 }
             }
             &atom!("class") => {
@@ -1137,7 +1138,7 @@ impl<'a> VirtualMethods for JSRef<'a, Element> {
                 let node: JSRef<Node> = NodeCast::from_ref(*self);
                 if node.is_in_doc() {
                     let document = document_from_node(*self).root();
-                    document.content_changed(node, NodeStyleDamaged);
+                    document.content_changed(node, NodeDamage::Style);
                 }
             }
             _ => {
@@ -1145,7 +1146,7 @@ impl<'a> VirtualMethods for JSRef<'a, Element> {
                 let node: JSRef<Node> = NodeCast::from_ref(*self);
                 if node.is_in_doc() {
                     let doc = document_from_node(*self).root();
-                    doc.content_changed(node, OtherNodeDamage);
+                    doc.content_changed(node, NodeDamage::Other);
                 }
             }
         }
