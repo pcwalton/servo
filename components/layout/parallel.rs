@@ -429,7 +429,7 @@ pub fn traverse_dom_preorder(root: LayoutNode,
 }
 
 pub fn traverse_flow_tree_preorder(root: &mut FlowRef,
-                                   profiler_metadata: ProfilerMetadata,
+                                   profiler_metadata: &ProfilerMetadata,
                                    time_profiler_chan: TimeProfilerChan,
                                    shared_layout_context: &SharedLayoutContext,
                                    queue: &mut WorkQueue<SharedLayoutContextWrapper,UnsafeFlow>) {
@@ -441,8 +441,10 @@ pub fn traverse_flow_tree_preorder(root: &mut FlowRef,
 
     queue.data = SharedLayoutContextWrapper(shared_layout_context as *const _);
 
-    profile(TimeProfilerCategory::LayoutParallelWarmup, profiler_metadata,
-            time_profiler_chan, || {
+    profile(TimeProfilerCategory::LayoutParallelWarmup,
+            *profiler_metadata,
+            time_profiler_chan,
+            || {
         queue.push(WorkUnit {
             fun: assign_inline_sizes,
             data: mut_owned_flow_to_unsafe_flow(root),
@@ -455,13 +457,14 @@ pub fn traverse_flow_tree_preorder(root: &mut FlowRef,
 }
 
 pub fn build_display_list_for_subtree(root: &mut FlowRef,
-                                      profiler_metadata: ProfilerMetadata,
+                                      profiler_metadata: &ProfilerMetadata,
                                       time_profiler_chan: TimeProfilerChan,
                                       shared_layout_context: &SharedLayoutContext,
                                       queue: &mut WorkQueue<SharedLayoutContextWrapper,UnsafeFlow>) {
     queue.data = SharedLayoutContextWrapper(shared_layout_context as *const _);
 
-    profile(TimeProfilerCategory::LayoutParallelWarmup, profiler_metadata,
+    profile(TimeProfilerCategory::LayoutParallelWarmup,
+            *profiler_metadata,
             time_profiler_chan, || {
         queue.push(WorkUnit {
             fun: compute_absolute_positions,

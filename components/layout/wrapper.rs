@@ -334,7 +334,7 @@ impl<'ln> LayoutNode<'ln> {
     /// concerned. This method returns `None` at the reflow root.
     pub fn layout_parent_node(self, shared: &SharedLayoutContext) -> Option<LayoutNode<'ln>> {
         let opaque_node: OpaqueNode = OpaqueNodeMethods::from_layout_node(&self);
-        if opaque_node == shared.reflow_root {
+        if opaque_node == shared.reflow_root.unwrap() {
             None
         } else {
             self.parent_node()

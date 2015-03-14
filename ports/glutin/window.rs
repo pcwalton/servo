@@ -152,13 +152,13 @@ impl Window {
                         (_, VirtualKeyCode::RAlt) => self.toggle_modifier(RIGHT_ALT),
                         (ElementState::Pressed, VirtualKeyCode::Escape) => return true,
                         (ElementState::Pressed, key_code) => {
-                            match Window::glutin_key_to_script_key(key_code) {
-                                Ok(key) => {
-                                    let state = KeyState::Pressed;
-                                    let modifiers = Window::glutin_mods_to_script_mods(self.key_modifiers.get());
-                                    self.event_queue.borrow_mut().push(WindowEvent::KeyEvent(key, state, modifiers));
-                                }
-                                _ => {}
+                            if let Ok(key) = Window::glutin_key_to_script_key(key_code) {
+                                let state = KeyState::Pressed;
+                                let modifiers =
+                                    Window::glutin_mods_to_script_mods(self.key_modifiers.get());
+                                self.event_queue
+                                    .borrow_mut()
+                                    .push(WindowEvent::KeyEvent(key, state, modifiers));
                             }
                         }
                         (_, _) => {}
@@ -166,14 +166,14 @@ impl Window {
                 }
             }
             Event::Resized(width, height) => {
-                self.event_queue.borrow_mut().push(WindowEvent::Resize(TypedSize2D(width, height)));
+                self.event_queue.borrow_mut().push(WindowEvent::Resize(TypedSize2D(width,
+                                                                                   height)));
             }
             Event::MouseInput(element_state, mouse_button) => {
-                if mouse_button == MouseButton::Left ||
-                                    mouse_button == MouseButton::Right {
-                        let mouse_pos = self.mouse_pos.get();
-                        self.handle_mouse(mouse_button, element_state, mouse_pos.x, mouse_pos.y);
-                   }
+                if mouse_button == MouseButton::Left || mouse_button == MouseButton::Right {
+                    let mouse_pos = self.mouse_pos.get();
+                    self.handle_mouse(mouse_button, element_state, mouse_pos.x, mouse_pos.y);
+                }
             }
             Event::MouseMoved((x, y)) => {
                 self.mouse_pos.set(Point2D(x, y));
@@ -187,6 +187,12 @@ impl Window {
                         self.event_queue.borrow_mut().push(WindowEvent::PinchZoom(1.0/1.1));
                     } else if delta > 0 {
                         self.event_queue.borrow_mut().push(WindowEvent::PinchZoom(1.1));
+                    }
+                } else if self.alt_pressed() {
+                    if delta < 0 {
+                        self.event_queue.borrow_mut().push(WindowEvent::ZoomTextOnly(1.0/1.1));
+                    } else if delta > 0 {
+                        self.event_queue.borrow_mut().push(WindowEvent::ZoomTextOnly(1.1));
                     }
                 } else {
                     let dx = 0.0;
@@ -203,6 +209,11 @@ impl Window {
     #[inline]
     fn ctrl_pressed(&self) -> bool {
         self.key_modifiers.get().intersects(LEFT_CONTROL | RIGHT_CONTROL)
+    }
+
+    #[inline]
+    fn alt_pressed(&self) -> bool {
+        self.key_modifiers.get().intersects(LEFT_ALT | RIGHT_ALT)
     }
 
     fn toggle_modifier(&self, modifier: KeyModifiers) {

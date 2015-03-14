@@ -11,7 +11,7 @@ use geom::rect::{Rect, TypedRect};
 use geom::scale_factor::ScaleFactor;
 use gfx::font_cache_task::FontCacheTask;
 use layers::geometry::DevicePixel;
-use layout_traits::LayoutTaskFactory;
+use layout_traits::{LayoutControlMsg, LayoutTaskFactory};
 use libc;
 use script_traits::{CompositorEvent, ConstellationControlMsg};
 use script_traits::{ScriptControlChan, ScriptTaskFactory};
@@ -445,7 +445,11 @@ impl<LTF: LayoutTaskFactory, STF: ScriptTaskFactory> Constellation<LTF, STF> {
                 debug!("constellation got frame rect message");
                 self.handle_frame_rect_msg(pipeline_id, subpage_id, Rect::from_untyped(&rect));
             }
-            ConstellationMsg::ScriptLoadedURLInIFrame(url, source_pipeline_id, new_subpage_id, old_subpage_id, sandbox) => {
+            ConstellationMsg::ScriptLoadedURLInIFrame(url,
+                                                      source_pipeline_id,
+                                                      new_subpage_id,
+                                                      old_subpage_id,
+                                                      sandbox) => {
                 debug!("constellation got iframe URL load message");
                 self.handle_script_loaded_url_in_iframe_msg(url,
                                                             source_pipeline_id,
@@ -488,6 +492,10 @@ impl<LTF: LayoutTaskFactory, STF: ScriptTaskFactory> Constellation<LTF, STF> {
             ConstellationMsg::GetPipelineTitle(pipeline_id) => {
                 debug!("constellation got get-pipeline-title message");
                 self.handle_get_pipeline_title_msg(pipeline_id);
+            }
+            ConstellationMsg::SetFontScale(font_scale) => {
+                debug!("constellation got set-font-scale message");
+                self.handle_set_font_scale_msg(font_scale);
             }
         }
         true
@@ -979,7 +987,7 @@ impl<LTF: LayoutTaskFactory, STF: ScriptTaskFactory> Constellation<LTF, STF> {
         let mut already_seen = HashSet::new();
         for frame_tree in self.current_frame().iter() {
             debug!("constellation sending resize message to active frame");
-            let pipeline = &*frame_tree.pipeline.borrow();;
+            let pipeline = &*frame_tree.pipeline.borrow();
             let ScriptControlChan(ref chan) = pipeline.script_chan;
             let _ = chan.send(ConstellationControlMsg::Resize(pipeline.id, new_size));
             already_seen.insert(pipeline.id);
@@ -1011,13 +1019,23 @@ impl<LTF: LayoutTaskFactory, STF: ScriptTaskFactory> Constellation<LTF, STF> {
         self.window_size = new_size;
     }
 
+    /// Called when the font scale changes.
+    fn handle_set_font_scale_msg(&mut self, new_font_scale: f32) {
+        for frame_tree in self.current_frame().iter() {
+            let pipeline = &*frame_tree.pipeline.borrow();
+            pipeline.layout_chan.0.send(LayoutControlMsg::SetFontScale(new_font_scale));
+        }
+    }
+
     // Close all pipelines at and beneath a given frame
     fn close_pipelines(&mut self, frame_tree: Rc<FrameTree>) {
         // TODO(tkuehn): should only exit once per unique script task,
         // and then that script task will handle sub-exits
         for frame_tree in frame_tree.iter() {
             frame_tree.pipeline.borrow().exit(PipelineExitType::PipelineOnly);
-            self.compositor_proxy.send(CompositorMsg::PaintTaskExited(frame_tree.pipeline.borrow().id));
+            self.compositor_proxy.send(CompositorMsg::PaintTaskExited(frame_tree.pipeline
+                                                                                .borrow()
+                                                                                .id));
             self.pipelines.remove(&frame_tree.pipeline.borrow().id);
         }
     }

@@ -106,6 +106,9 @@ pub struct IOCompositor<Window: WindowMethods> {
     /// The time of the last zoom action has started.
     zoom_time: f64,
 
+    /// The current zoom level applied to text.
+    font_scale: f32,
+
     /// Whether the page being rendered has loaded completely.
     /// Differs from ReadyState because we can finish loading (ready)
     /// many times for a single page.
@@ -209,6 +212,7 @@ impl<Window: WindowMethods> IOCompositor<Window> {
             viewport_zoom: ScaleFactor(1.0),
             zoom_action: false,
             zoom_time: 0f64,
+            font_scale: 1.0,
             got_load_complete_message: false,
             got_set_frame_tree_message: false,
             constellation_chan: constellation_chan,
@@ -831,6 +835,10 @@ impl<Window: WindowMethods> IOCompositor<Window> {
                 self.on_pinch_zoom_window_event(magnification);
             }
 
+            WindowEvent::ZoomTextOnly(magnification) => {
+                self.on_zoom_text_only_window_event(magnification);
+            }
+
             WindowEvent::Navigation(direction) => {
                 self.on_navigation_window_event(direction);
             }
@@ -991,6 +999,13 @@ impl<Window: WindowMethods> IOCompositor<Window> {
 
         self.send_viewport_rects_for_all_layers();
         self.composite_if_necessary();
+    }
+
+    fn on_zoom_text_only_window_event(&mut self, magnification: f32) {
+        self.font_scale = self.font_scale * magnification;
+
+        let ConstellationChan(ref chan) = self.constellation_chan;
+        chan.send(ConstellationMsg::SetFontScale(self.font_scale)).unwrap()
     }
 
     fn on_navigation_window_event(&self, direction: WindowNavigateMsg) {

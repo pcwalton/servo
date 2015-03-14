@@ -207,9 +207,14 @@ pub enum Msg {
     PainterReady(PipelineId),
     ResizedWindow(WindowSizeData),
     KeyEvent(Key, KeyState, KeyModifiers),
+
+    /// The text zoom level has changed.
+    SetFontScale(f32),
+
     /// Requests that the constellation inform the compositor of the title of the pipeline
     /// immediately.
     GetPipelineTitle(PipelineId),
+
     /// Requests that the constellation inform the compositor of the a cursor change.
     SetCursor(Cursor),
 }

@@ -63,6 +63,8 @@ pub enum WindowEvent {
     Zoom(f32),
     /// Simulated "pinch zoom" gesture for non-touch platforms (e.g. ctrl-scrollwheel).
     PinchZoom(f32),
+    /// Sent when the user zooms text only.
+    ZoomTextOnly(f32),
     /// Sent when the user uses chrome navigation (i.e. backspace or shift-backspace).
     Navigation(WindowNavigateMsg),
     /// Sent when the user quits the application
@@ -85,6 +87,7 @@ impl Debug for WindowEvent {
             WindowEvent::Scroll(..) => write!(f, "Scroll"),
             WindowEvent::Zoom(..) => write!(f, "Zoom"),
             WindowEvent::PinchZoom(..) => write!(f, "PinchZoom"),
+            WindowEvent::ZoomTextOnly(..) => write!(f, "ZoomTextOnly"),
             WindowEvent::Navigation(..) => write!(f, "Navigation"),
             WindowEvent::Quit => write!(f, "Quit"),
         }

@@ -74,8 +74,9 @@ pub struct SharedLayoutContext {
     /// FIXME(#2604): Make this no longer an unsafe pointer once we have fast `RWArc`s.
     pub stylist: *const Stylist,
 
-    /// The root node at which we're starting the layout.
-    pub reflow_root: OpaqueNode,
+    /// The root node at which we're starting the layout. May be `None` if this layout does not
+    /// access the DOM.
+    pub reflow_root: Option<OpaqueNode>,
 
     /// The URL.
     pub url: Url,
