@@ -427,7 +427,9 @@ fn render_text(layout_context: &LayoutContext,
                                                              style,
                                                              incremental::rebuild_and_reflow(),
                                                              info));
-    let fragments = TextRunScanner::new().scan_for_runs(layout_context.font_context(), fragments);
+    let fragments = TextRunScanner::new().scan_for_runs(layout_context.font_context(),
+                                                        layout_context.shared,
+                                                        fragments);
     debug_assert!(fragments.len() == 1);
     fragments.fragments.into_iter().next().unwrap().specific
 }

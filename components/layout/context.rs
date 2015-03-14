@@ -30,9 +30,11 @@ struct LocalLayoutContext {
     style_sharing_candidate_cache: StyleSharingCandidateCache,
 }
 
-thread_local!(static LOCAL_CONTEXT_KEY: Cell<*mut LocalLayoutContext> = Cell::new(ptr::null_mut()));
+thread_local!(static LOCAL_CONTEXT_KEY: Cell<*mut LocalLayoutContext> =
+              Cell::new(ptr::null_mut()));
 
-fn create_or_get_local_context(shared_layout_context: &SharedLayoutContext) -> *mut LocalLayoutContext {
+fn create_or_get_local_context(shared_layout_context: &SharedLayoutContext)
+                               -> *mut LocalLayoutContext {
     LOCAL_CONTEXT_KEY.with(|ref r| {
         if r.get().is_null() {
             let context = box LocalLayoutContext {
@@ -57,9 +59,6 @@ pub struct SharedLayoutContext {
 
     /// The current screen size.
     pub screen_size: Size2D<Au>,
-
-    /// Screen sized changed?
-    pub screen_size_changed: bool,
 
     /// A channel up to the constellation.
     pub constellation_chan: ConstellationChan,
@@ -87,6 +86,12 @@ pub struct SharedLayoutContext {
     /// Starts at zero, and increased by one every time a layout completes.
     /// This can be used to easily check for invalid stale data.
     pub generation: uint,
+
+    /// The font scale, used for "zoom text only".
+    pub font_scale: f32,
+
+    /// Did the screen size change?
+    pub screen_size_changed: bool,
 }
 
 pub struct SharedLayoutContextWrapper(pub *const SharedLayoutContext);

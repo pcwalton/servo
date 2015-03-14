@@ -93,6 +93,7 @@ pub struct LayoutTaskData {
     /// The root stacking context.
     pub stacking_context: Option<Arc<StackingContext>>,
 
+    /// Performs CSS selector matching.
     pub stylist: Box<Stylist>,
 
     /// The workers that we use for parallel operation.
@@ -100,6 +101,9 @@ pub struct LayoutTaskData {
 
     /// The dirty rect. Used during display list construction.
     pub dirty: Rect<Au>,
+
+    /// The font scale, used for the "zoom text only" feature.
+    pub font_scale: f32,
 
     /// Starts at zero, and increased by one every time a layout completes.
     /// This can be used to easily check for invalid stale data.
@@ -263,10 +267,13 @@ impl LayoutTask {
         let local_image_cache =
             Arc::new(Mutex::new(LocalImageCache::new(image_cache_task.clone())));
         let screen_size = Size2D(Au(0), Au(0));
-        let device = Device::new(MediaType::Screen, opts::get().initial_window_size.as_f32() * ScaleFactor(1.0));
+        let device = Device::new(MediaType::Screen,
+                                 opts::get().initial_window_size.as_f32() * ScaleFactor(1.0));
         let parallel_traversal = if opts::get().layout_threads != 1 {
-            Some(WorkQueue::new("LayoutWorker", task_state::LAYOUT,
-                                opts::get().layout_threads, SharedLayoutContextWrapper(ptr::null())))
+            Some(WorkQueue::new("LayoutWorker",
+                                task_state::LAYOUT,
+                                opts::get().layout_threads,
+                                SharedLayoutContextWrapper(ptr::null())))
         } else {
             None
         };
@@ -284,19 +291,19 @@ impl LayoutTask {
             image_cache_task: image_cache_task.clone(),
             font_cache_task: font_cache_task,
             first_reflow: Cell::new(true),
-            rw_data: Arc::new(Mutex::new(
-                LayoutTaskData {
-                    local_image_cache: local_image_cache,
-                    constellation_chan: constellation_chan,
-                    screen_size: screen_size,
-                    stacking_context: None,
-                    stylist: box Stylist::new(device),
-                    parallel_traversal: parallel_traversal,
-                    dirty: Rect::zero(),
-                    generation: 0,
-                    content_box_response: Rect::zero(),
-                    content_boxes_response: Vec::new(),
-              })),
+            rw_data: Arc::new(Mutex::new(LayoutTaskData {
+                local_image_cache: local_image_cache,
+                constellation_chan: constellation_chan,
+                screen_size: screen_size,
+                stacking_context: None,
+                stylist: box Stylist::new(device),
+                parallel_traversal: parallel_traversal,
+                dirty: Rect::zero(),
+                font_scale: 2.0,    // FIXME(pcwalton)
+                generation: 0,
+                content_box_response: Rect::zero(),
+                content_boxes_response: Vec::new(),
+          })),
         }
     }
 
@@ -323,6 +330,7 @@ impl LayoutTask {
             layout_chan: self.chan.clone(),
             font_cache_task: self.font_cache_task.clone(),
             stylist: &*rw_data.stylist,
+            font_scale: rw_data.font_scale,
             url: (*url).clone(),
             reflow_root: OpaqueNodeMethods::from_layout_node(reflow_root),
             dirty: Rect::zero(),
@@ -438,9 +446,9 @@ impl LayoutTask {
         true
     }
 
-    /// Enters a quiescent state in which no new messages except for `layout_interface::Msg::ReapLayoutData` will be
-    /// processed until an `ExitNowMsg` is received. A pong is immediately sent on the given
-    /// response channel.
+    /// Enters a quiescent state in which no new messages except for
+    /// `layout_interface::Msg::ReapLayoutData` will be processed until an `ExitNowMsg` is
+    /// received. A pong is immediately sent on the given response channel.
     fn prepare_to_exit<'a>(&'a self,
                            response_chan: Sender<()>,
                            possibly_locked_rw_data: &mut Option<MutexGuard<'a, LayoutTaskData>>) {

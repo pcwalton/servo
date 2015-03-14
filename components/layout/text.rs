@@ -6,6 +6,7 @@
 
 #![deny(unsafe_blocks)]
 
+use context::SharedLayoutContext;
 use fragment::{Fragment, SpecificFragmentInfo, ScannedTextFragmentInfo};
 use inline::InlineFragments;
 
@@ -40,7 +41,10 @@ impl TextRunScanner {
         }
     }
 
-    pub fn scan_for_runs(&mut self, font_context: &mut FontContext, mut fragments: DList<Fragment>)
+    pub fn scan_for_runs(&mut self,
+                         font_context: &mut FontContext,
+                         layout_context: &SharedLayoutContext,
+                         mut fragments: DList<Fragment>)
                          -> InlineFragments {
         debug!("TextRunScanner: scanning {} fragments for text runs...", fragments.len());
 
@@ -61,6 +65,7 @@ impl TextRunScanner {
 
             // Flush that clump to the list of fragments we're building up.
             last_whitespace = self.flush_clump_to_list(font_context,
+                                                       layout_context,
                                                        &mut new_fragments,
                                                        last_whitespace);
         }
@@ -79,6 +84,7 @@ impl TextRunScanner {
     /// be adjusted.
     fn flush_clump_to_list(&mut self,
                            font_context: &mut FontContext,
+                           layout_context: &SharedLayoutContext,
                            out_fragments: &mut Vec<Fragment>,
                            mut last_whitespace: bool)
                            -> bool {
@@ -114,7 +120,9 @@ impl TextRunScanner {
                 let in_fragment = self.clump.front().unwrap();
                 let font_style = in_fragment.style().get_font_arc();
                 let inherited_text_style = in_fragment.style().get_inheritedtext();
-                fontgroup = font_context.get_layout_font_group_for_style(font_style);
+                fontgroup =
+                    font_context.get_layout_font_group_for_style(font_style,
+                                                                 layout_context.font_scale);
                 compression = match in_fragment.white_space() {
                     white_space::T::normal | white_space::T::nowrap => {
                         CompressionMode::CompressWhitespaceNewline
@@ -301,9 +309,11 @@ fn bounding_box_for_run_metrics(metrics: &RunMetrics, writing_mode: WritingMode)
 ///
 /// `#[inline]` because often the caller only needs a few fields from the font metrics.
 #[inline]
-pub fn font_metrics_for_style(font_context: &mut FontContext, font_style: Arc<FontStyle>)
+pub fn font_metrics_for_style(font_context: &mut FontContext,
+                              font_scale: f32,
+                              font_style: Arc<FontStyle>)
                               -> FontMetrics {
-    let fontgroup = font_context.get_layout_font_group_for_style(font_style);
+    let fontgroup = font_context.get_layout_font_group_for_style(font_style, font_scale);
     fontgroup.fonts.get(0).borrow().metrics.clone()
 }
 

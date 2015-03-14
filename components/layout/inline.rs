@@ -1030,6 +1030,7 @@ impl InlineFlow {
     /// `style` is the style of the block.
     pub fn compute_minimum_ascent_and_descent(&self,
                                               font_context: &mut FontContext,
+                                              font_scale: f32,
                                               style: &ComputedValues)
                                               -> (Au, Au) {
         // As a special case, if this flow contains only hypothetical fragments, then the entire
@@ -1039,7 +1040,7 @@ impl InlineFlow {
         }
 
         let font_style = style.get_font_arc();
-        let font_metrics = text::font_metrics_for_style(font_context, font_style);
+        let font_metrics = text::font_metrics_for_style(font_context, font_scale, font_style);
         let line_height = text::line_height_from_style(style, &font_metrics);
         let inline_metrics = InlineMetrics::from_font_metrics(&font_metrics, line_height);
 
@@ -1053,7 +1054,8 @@ impl InlineFlow {
                 Some(ref inline_context) => {
                     for style in inline_context.styles.iter() {
                         let font_style = style.get_font_arc();
-                        let font_metrics = text::font_metrics_for_style(font_context, font_style);
+                        let font_metrics =
+                            text::font_metrics_for_style(font_context, font_scale, font_style);
                         let line_height = text::line_height_from_style(&**style, &font_metrics);
                         let inline_metrics = InlineMetrics::from_font_metrics(&font_metrics,
                                                                               line_height);

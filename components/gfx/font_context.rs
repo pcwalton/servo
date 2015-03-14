@@ -2,8 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use font::{Font, FontGroup};
-use font::SpecifiedFontStyle;
+use font::{Font, FontGroup, SpecifiedFontStyle};
 use platform::font_context::FontContextHandle;
 use style::computed_values::{font_style, font_variant};
 
@@ -127,11 +126,12 @@ impl FontContext {
         })
     }
 
-    /// Create a group of fonts for use in layout calculations. May return
-    /// a cached font if this font instance has already been used by
-    /// this context.
-    pub fn get_layout_font_group_for_style(&mut self, style: Arc<SpecifiedFontStyle>)
-                                            -> Rc<FontGroup> {
+    /// Create a group of fonts for use in layout calculations. May return a cached font if this
+    /// font instance has already been used by this context.
+    pub fn get_layout_font_group_for_style(&mut self,
+                                           style: Arc<SpecifiedFontStyle>,
+                                           font_scale: f32)
+                                           -> Rc<FontGroup> {
         let matches = match self.last_style {
             Some(ref last_style) => arc_ptr_eq(&style, last_style),
             None => false,
@@ -139,6 +139,9 @@ impl FontContext {
         if matches {
             return self.last_fontgroup.as_ref().unwrap().clone();
         }
+
+        // Calculate the real font size, taking the font scale into account.
+        let font_size = style.font_size.scale_by(font_scale as f64);
 
         // TODO: The font context holds a strong ref to the cached fonts
         // so they will never be released. Find out a good time to drop them.
@@ -162,7 +165,7 @@ impl FontContext {
                         Some(ref cached_font_ref) => {
                             let cached_font = cached_font_ref.borrow();
                             if cached_font.descriptor == desc &&
-                               cached_font.requested_pt_size == style.font_size &&
+                               cached_font.requested_pt_size == font_size &&
                                cached_font.variant == style.font_variant {
                                 fonts.push((*cached_font_ref).clone());
                                 cache_hit = true;
@@ -181,7 +184,7 @@ impl FontContext {
                     Some(font_template) => {
                         let layout_font = self.create_layout_font(font_template,
                                                                   desc.clone(),
-                                                                  style.font_size,
+                                                                  font_size,
                                                                   style.font_variant);
                         let font = match layout_font {
                             Ok(layout_font) => {
@@ -215,7 +218,7 @@ impl FontContext {
             for cached_font_entry in self.fallback_font_cache.iter() {
                 let cached_font = cached_font_entry.font.borrow();
                 if cached_font.descriptor == desc &&
-                            cached_font.requested_pt_size == style.font_size &&
+                            cached_font.requested_pt_size == font_size &&
                             cached_font.variant == style.font_variant {
                     fonts.push(cached_font_entry.font.clone());
                     cache_hit = true;
@@ -224,10 +227,11 @@ impl FontContext {
             }
 
             if !cache_hit {
-                let font_template = self.font_cache_task.get_last_resort_font_template(desc.clone());
+                let font_template = self.font_cache_task
+                                        .get_last_resort_font_template(desc.clone());
                 let layout_font = self.create_layout_font(font_template,
                                                           desc.clone(),
-                                                          style.font_size,
+                                                          font_size,
                                                           style.font_variant);
                 match layout_font {
                     Ok(layout_font) => {
