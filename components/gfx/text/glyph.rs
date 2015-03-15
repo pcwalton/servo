@@ -171,6 +171,12 @@ impl GlyphEntry {
         NumCast::from((self.value & GLYPH_ADVANCE_MASK) >> GLYPH_ADVANCE_SHIFT as uint).unwrap()
     }
 
+    #[inline(always)]
+    fn set_advance(&self, advance: Au) -> GlyphEntry {
+        GlyphEntry::new((self.value & !GLYPH_ADVANCE_MASK) |
+                        (advance.to_u32().unwrap() << GLYPH_ADVANCE_SHIFT))
+    }
+
     fn id(&self) -> GlyphId {
         self.value & GLYPH_ID_MASK
     }
@@ -613,7 +619,10 @@ impl<'a> GlyphStore {
     }
 
     // used when a character index has no associated glyph---for example, a ligature continuation.
-    pub fn add_nonglyph_for_char_index(&mut self, i: CharIndex, cluster_start: bool, ligature_start: bool) {
+    pub fn add_nonglyph_for_char_index(&mut self,
+                                       i: CharIndex,
+                                       cluster_start: bool,
+                                       ligature_start: bool) {
         assert!(i < self.char_len());
 
         let entry = GlyphEntry::complex(cluster_start, ligature_start, 0);
@@ -733,6 +742,22 @@ impl<'a> GlyphStore {
                     (advance << (GLYPH_ADVANCE_SHIFT as uint));
             }
         }
+    }
+
+    pub fn resize(&self, ratio: f64) -> GlyphStore {
+        let mut new_glyph_store = GlyphStore::new(self.char_len().to_int().unwrap(),
+                                                  self.is_whitespace);
+        for (i, glyph_entry) in self.entry_buffer.iter().enumerate() {
+            let mut glyph_entry = *glyph_entry;
+            if glyph_entry.is_simple() {
+                glyph_entry =
+                    glyph_entry.set_advance(Au::from_frac_px(glyph_entry.advance().to_subpx() *
+                                                             ratio))
+            }
+            new_glyph_store.entry_buffer[i] = glyph_entry
+        }
+        new_glyph_store.detail_store = self.detail_store.clone();
+        new_glyph_store
     }
 }
 

@@ -187,14 +187,24 @@ impl<'a> Iterator for LineIterator<'a> {
 impl<'a> TextRun {
     pub fn new(font: &mut Font, text: String, options: &ShapingOptions) -> TextRun {
         let glyphs = TextRun::break_and_shape(font, text.as_slice(), options);
-        let run = TextRun {
+        TextRun {
             text: Arc::new(text),
             font_metrics: font.metrics.clone(),
             font_template: font.handle.get_template(),
             actual_pt_size: font.actual_pt_size,
             glyphs: Arc::new(glyphs),
-        };
-        return run;
+        }
+    }
+
+    pub fn resize(&self, new_font: &mut Font) -> TextRun {
+        let ratio = new_font.actual_pt_size.to_subpx() / self.actual_pt_size.to_subpx();
+        TextRun {
+            text: self.text.clone(),
+            font_metrics: new_font.metrics.clone(),
+            font_template: new_font.handle.get_template(),
+            actual_pt_size: new_font.actual_pt_size,
+            glyphs: Arc::new(self.glyphs.iter().map(|glyph_run| glyph_run.resize(ratio)).collect())
+        }
     }
 
     pub fn break_and_shape(font: &mut Font, text: &str, options: &ShapingOptions)
@@ -373,3 +383,14 @@ impl<'a> TextRun {
         }
     }
 }
+
+impl GlyphRun {
+    fn resize(&self, ratio: f64) -> GlyphRun {
+        // TODO(pcwalton): Resize.
+        GlyphRun {
+            glyph_store: Arc::new(self.glyph_store.resize(ratio)),
+            range: self.range,
+        }
+    }
+}
+
