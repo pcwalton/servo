@@ -762,14 +762,14 @@ pub mod computed {
     #[allow(missing_copy_implementations)]  // It’s kinda big
     pub struct Context {
         pub inherited_font_weight: longhands::font_weight::computed_value::T,
-        pub inherited_font_size: longhands::font_size::computed_value::T,
+        pub inherited_font_size: Length,
         pub inherited_text_decorations_in_effect:
             longhands::_servo_text_decorations_in_effect::computed_value::T,
         pub inherited_height: longhands::height::computed_value::T,
         pub color: longhands::color::computed_value::T,
         pub text_decoration: longhands::text_decoration::computed_value::T,
-        pub font_size: longhands::font_size::computed_value::T,
-        pub root_font_size: longhands::font_size::computed_value::T,
+        pub font_size: Length,
+        pub root_font_size: Au,
         pub display: longhands::display::computed_value::T,
         pub overflow_x: longhands::overflow_x::computed_value::T,
         pub overflow_y: longhands::overflow_y::computed_value::T,
@@ -814,25 +814,42 @@ pub mod computed {
     impl ComputedValueAsSpecified for specified::BorderStyle {}
 
     impl ToComputedValue for specified::Length {
-        type ComputedValue = Au;
+        type ComputedValue = Length;
 
         #[inline]
-        fn to_computed_value(&self, context: &Context) -> Au {
+        fn to_computed_value(&self, context: &Context) -> Length {
             match self {
-                &specified::Length::Absolute(length) => length,
-                &specified::Length::FontRelative(length) =>
-                    length.to_computed_value(context.font_size, context.root_font_size),
-                &specified::Length::ViewportPercentage(length) =>
-                    length.to_computed_value(context.viewport_size),
-                &specified::Length::ServoCharacterWidth(length) =>
-                    length.to_computed_value(context.font_size)
+                &specified::Length::Absolute(length) => {
+                    Length {
+                        au: length,
+                        font_relative: false,
+                    }
+                }
+                &specified::Length::FontRelative(length) => {
+                    Length {
+                        au: length.to_computed_value(context.font_size.au, context.root_font_size),
+                        font_relative: true,
+                    }
+                }
+                &specified::Length::ViewportPercentage(length) => {
+                    Length {
+                        au: length.to_computed_value(context.viewport_size),
+                        font_relative: false,
+                    }
+                }
+                &specified::Length::ServoCharacterWidth(length) => {
+                    Length {
+                        au: length.to_computed_value(context.font_size.au),
+                        font_relative: true,
+                    }
+                }
             }
         }
     }
 
     #[derive(PartialEq, Clone, Copy)]
     pub enum LengthOrPercentage {
-        Length(Au),
+        Length(Length),
         Percentage(CSSFloat),
     }
     impl fmt::Debug for LengthOrPercentage {
@@ -861,7 +878,7 @@ pub mod computed {
 
     #[derive(PartialEq, Clone, Copy)]
     pub enum LengthOrPercentageOrAuto {
-        Length(Au),
+        Length(Length),
         Percentage(CSSFloat),
         Auto,
     }
@@ -896,7 +913,7 @@ pub mod computed {
 
     #[derive(PartialEq, Clone, Copy)]
     pub enum LengthOrPercentageOrNone {
-        Length(Au),
+        Length(Length),
         Percentage(CSSFloat),
         None,
     }
@@ -1025,5 +1042,20 @@ pub mod computed {
             }
         }
     }
-    pub type Length = Au;
+
+    #[derive(Copy, Clone, Debug, PartialEq, Eq, RustcEncodable)]
+    pub struct Length {
+        pub au: Au,
+        pub font_relative: bool,
+    }
+
+    impl Length {
+        #[inline]
+        pub fn from_au(au: Au) -> Length {
+            Length {
+                au: au,
+                font_relative: false,
+            }
+        }
+    }
 }

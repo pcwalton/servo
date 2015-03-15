@@ -27,16 +27,11 @@ use geom::{Point2D, Rect, Size2D};
 use gfx::display_list::{BLUR_INFLATION_FACTOR, OpaqueNode};
 use gfx::text::glyph::CharIndex;
 use gfx::text::text_run::{TextRun, TextRunSlice};
-use script_traits::UntrustedNodeAddress;
-use rustc_serialize::{Encodable, Encoder};
 use msg::constellation_msg::{ConstellationChan, Msg, PipelineId, SubpageId};
 use net::image::holder::ImageHolder;
 use net::local_image_cache::LocalImageCache;
-use util::geometry::{self, Au, ZERO_POINT};
-use util::logical_geometry::{LogicalRect, LogicalSize, LogicalMargin, WritingMode};
-use util::range::*;
-use util::smallvec::SmallVec;
-use util::str::is_whitespace;
+use rustc_serialize::{Encodable, Encoder};
+use script_traits::UntrustedNodeAddress;
 use std::borrow::ToOwned;
 use std::cmp::{max, min};
 use std::collections::DList;
@@ -52,10 +47,15 @@ use style::computed_values::{position, text_align, text_decoration, vertical_ali
 use style::computed_values::{word_break};
 use style::node::{TElement, TNode};
 use style::properties::{ComputedValues, cascade_anonymous, make_border};
-use style::values::computed::{LengthOrPercentage, LengthOrPercentageOrAuto};
+use style::values::computed::{Length, LengthOrPercentage, LengthOrPercentageOrAuto};
 use style::values::computed::{LengthOrPercentageOrNone};
 use text::TextRunScanner;
 use url::Url;
+use util::geometry::{self, Au, ZERO_POINT};
+use util::logical_geometry::{LogicalRect, LogicalSize, LogicalMargin, WritingMode};
+use util::range::*;
+use util::smallvec::SmallVec;
+use util::str::is_whitespace;
 
 /// Fragments (`struct Fragment`) are the leaves of the layout tree. They cannot position
 /// themselves. In general, fragments do not have a simple correspondence with CSS fragments in the
@@ -864,10 +864,10 @@ impl Fragment {
             // borders separating each other.
             let mut border_width = style.logical_border_width();
             if !last_frag {
-                border_width.set_right(style.writing_mode, Zero::zero());
+                border_width.set_right(style.writing_mode, Length::from_au(Au(0)));
             }
             if !first_frag {
-                border_width.set_left(style.writing_mode, Zero::zero());
+                border_width.set_left(style.writing_mode, Length::from_au(Au(0)));
             }
             Arc::new(make_border(&*style, border_width))
         };
@@ -988,14 +988,23 @@ impl Fragment {
     pub fn border_width(&self) -> LogicalMargin<Au> {
         let style_border_width = match self.specific {
             SpecificFragmentInfo::ScannedText(_) => LogicalMargin::zero(self.style.writing_mode),
-            _ => self.style().logical_border_width(),
+            _ => {
+                let border_width = self.style().logical_border_width();
+                LogicalMargin::new(self.style.writing_mode,
+                                   border_width.block_start.au,
+                                   border_width.inline_end.au,
+                                   border_width.block_end.au,
+                                   border_width.inline_start.au)
+            }
         };
 
         match self.inline_context {
             None => style_border_width,
             Some(ref inline_fragment_context) => {
-                inline_fragment_context.styles.iter().fold(style_border_width,
-                                            |acc, style| acc + style.logical_border_width())
+                inline_fragment_context.styles
+                                       .iter()
+                                       .fold(style_border_width,
+                                             |acc, style| acc + style.logical_au_border_width())
             }
         }
     }
@@ -1269,7 +1278,7 @@ impl Fragment {
                 None => {}
                 Some(ref context) => {
                     for style in context.styles.iter() {
-                        let border_width = style.logical_border_width().inline_start_end();
+                        let border_width = style.logical_au_border_width().inline_start_end();
                         let padding_inline_size =
                             model::padding_from_style(&**style, Au(0)).inline_start_end();
                         result.surrounding_size = result.surrounding_size + border_width +
@@ -2037,16 +2046,16 @@ impl Fragment {
 
         // Box shadows cause us to draw outside our border box.
         for box_shadow in self.style().get_effects().box_shadow.iter() {
-            let offset = Point2D(box_shadow.offset_x, box_shadow.offset_y);
-            let inflation = box_shadow.spread_radius + box_shadow.blur_radius *
+            let offset = Point2D(box_shadow.offset_x.au, box_shadow.offset_y.au);
+            let inflation = box_shadow.spread_radius.au + box_shadow.blur_radius.au *
                 BLUR_INFLATION_FACTOR;
             overflow = overflow.union(&border_box.translate(&offset).inflate(inflation, inflation))
         }
 
         // Outlines cause us to draw outside our border box.
         let outline_width = self.style.get_outline().outline_width;
-        if outline_width != Au(0) {
-            overflow = overflow.union(&border_box.inflate(outline_width, outline_width))
+        if outline_width.au != Au(0) {
+            overflow = overflow.union(&border_box.inflate(outline_width.au, outline_width.au))
         }
 
         // FIXME(pcwalton): Sometimes excessively fancy glyphs can make us draw outside our border

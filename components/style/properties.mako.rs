@@ -201,15 +201,18 @@ pub mod longhands {
     ${new_style_struct("Margin", is_inherited=False)}
 
     % for side in ["top", "right", "bottom", "left"]:
-        ${predefined_type("margin-" + side, "LengthOrPercentageOrAuto",
-                          "computed::LengthOrPercentageOrAuto::Length(Au(0))")}
+        ${predefined_type(
+                "margin-" + side,
+                "LengthOrPercentageOrAuto",
+                "computed::LengthOrPercentageOrAuto::Length(computed::Length::from_au(Au(0)))")}
     % endfor
 
     ${new_style_struct("Padding", is_inherited=False)}
 
     % for side in ["top", "right", "bottom", "left"]:
-        ${predefined_type("padding-" + side, "LengthOrPercentage",
-                          "computed::LengthOrPercentage::Length(Au(0))",
+        ${predefined_type("padding-" + side,
+                          "LengthOrPercentage",
+                          "computed::LengthOrPercentage::Length(computed::Length::from_au(Au(0)))",
                           "parse_non_negative")}
     % endfor
 
@@ -244,11 +247,11 @@ pub mod longhands {
             #[derive(Clone, PartialEq)]
             pub struct SpecifiedValue(pub specified::Length);
             pub mod computed_value {
-                use util::geometry::Au;
-                pub type T = Au;
+                use values::computed::Length;
+                pub type T = Length;
             }
             #[inline] pub fn get_initial_value() -> computed_value::T {
-                Au::from_px(3)  // medium
+                computed::Length::from_au(Au::from_px(3))  // medium
             }
 
             impl ToComputedValue for SpecifiedValue {
@@ -257,7 +260,7 @@ pub mod longhands {
                 #[inline]
                 fn to_computed_value(&self, context: &Context) -> computed_value::T {
                     if !context.border_${side}_present {
-                        Au(0)
+                        computed::Length::from_au(Au(0))
                     } else {
                         self.0.to_computed_value(context)
                     }
@@ -269,7 +272,7 @@ pub mod longhands {
     // FIXME(#4126): when gfx supports painting it, make this Size2D<LengthOrPercentage>
     % for corner in ["top-left", "top-right", "bottom-right", "bottom-left"]:
         ${predefined_type("border-" + corner + "-radius", "LengthOrPercentage",
-                          "computed::LengthOrPercentage::Length(Au(0))",
+                          "computed::LengthOrPercentage::Length(computed::Length::from_au(Au(0)))",
                           "parse_non_negative")}
     % endfor
 
@@ -296,14 +299,14 @@ pub mod longhands {
         pub use super::border_top_width::get_initial_value;
         pub type SpecifiedValue = specified::Length;
         pub mod computed_value {
-            pub use util::geometry::Au as T;
+            pub use values::computed::Length as T;
         }
         pub fn parse(_context: &ParserContext, input: &mut Parser) -> Result<SpecifiedValue, ()> {
             specified::parse_border_width(input)
         }
     </%self:longhand>
 
-    ${predefined_type("outline-offset", "Length", "Au(0)")}
+    ${predefined_type("outline-offset", "Length", "computed::Length::from_au(Au(0))")}
 
     ${new_style_struct("PositionOffsets", is_inherited=False)}
 
@@ -471,14 +474,14 @@ pub mod longhands {
     </%self:longhand>
 
     ${predefined_type("min-width", "LengthOrPercentage",
-                      "computed::LengthOrPercentage::Length(Au(0))",
+                      "computed::LengthOrPercentage::Length(computed::Length::from_au(Au(0)))",
                       "parse_non_negative")}
     ${predefined_type("max-width", "LengthOrPercentageOrNone",
                       "computed::LengthOrPercentageOrNone::None",
                       "parse_non_negative")}
 
     ${predefined_type("min-height", "LengthOrPercentage",
-                      "computed::LengthOrPercentage::Length(Au(0))",
+                      "computed::LengthOrPercentage::Length(computed::Length::from_au(Au(0)))",
                       "parse_non_negative")}
     ${predefined_type("max-height", "LengthOrPercentageOrNone",
                       "computed::LengthOrPercentageOrNone::None",
@@ -533,12 +536,13 @@ pub mod longhands {
         }
         pub mod computed_value {
             use values::CSSFloat;
+            use values::computed;
             use util::geometry::Au;
             use std::fmt;
             #[derive(PartialEq, Copy, Clone)]
             pub enum T {
                 Normal,
-                Length(Au),
+                Length(computed::Length),
                 Number(CSSFloat),
             }
             impl fmt::Debug for T {
@@ -623,6 +627,7 @@ pub mod longhands {
         }
         pub mod computed_value {
             use values::CSSFloat;
+            use values::computed;
             use util::geometry::Au;
             use std::fmt;
             #[allow(non_camel_case_types)]
@@ -631,7 +636,7 @@ pub mod longhands {
                 % for keyword in vertical_align_keywords:
                     ${to_rust_ident(keyword)},
                 % endfor
-                Length(Au),
+                Length(computed::Length),
                 Percentage(CSSFloat),
             }
             impl fmt::Debug for T {
@@ -1673,12 +1678,12 @@ pub mod longhands {
         #[derive(Clone, PartialEq)]
         pub struct SpecifiedValue(pub specified::Length);  // Percentages are the same as em.
         pub mod computed_value {
-            use util::geometry::Au;
-            pub type T = Au;
+            use values::computed;
+            pub type T = computed::Length;
         }
         const MEDIUM_PX: int = 16;
         #[inline] pub fn get_initial_value() -> computed_value::T {
-            Au::from_px(MEDIUM_PX)
+            computed::Length::from_au(Au::from_px(MEDIUM_PX))
         }
 
         impl ToComputedValue for SpecifiedValue {
@@ -1695,21 +1700,43 @@ pub mod longhands {
             input.try(specified::LengthOrPercentage::parse_non_negative)
             .map(|value| match value {
                 specified::LengthOrPercentage::Length(value) => value,
-                specified::LengthOrPercentage::Percentage(value) => specified::Length::FontRelative(specified::FontRelativeLength::Em(value))
+                specified::LengthOrPercentage::Percentage(value) => {
+                    specified::Length::FontRelative(specified::FontRelativeLength::Em(value))
+                }
             })
             .or_else(|()| {
                 match_ignore_ascii_case! { try!(input.expect_ident()),
-                    "xx-small" => Ok(specified::Length::Absolute(Au::from_px(MEDIUM_PX) * 3 / 5)),
-                    "x-small" => Ok(specified::Length::Absolute(Au::from_px(MEDIUM_PX) * 3 / 4)),
-                    "small" => Ok(specified::Length::Absolute(Au::from_px(MEDIUM_PX) * 8 / 9)),
-                    "medium" => Ok(specified::Length::Absolute(Au::from_px(MEDIUM_PX))),
-                    "large" => Ok(specified::Length::Absolute(Au::from_px(MEDIUM_PX) * 6 / 5)),
-                    "x-large" => Ok(specified::Length::Absolute(Au::from_px(MEDIUM_PX) * 3 / 2)),
-                    "xx-large" => Ok(specified::Length::Absolute(Au::from_px(MEDIUM_PX) * 2)),
+                    "xx-small" => {
+                        Ok(specified::Length::Absolute(Au::from_px(MEDIUM_PX) * 3 / 5))
+                    },
+                    "x-small" => {
+                        Ok(specified::Length::Absolute(Au::from_px(MEDIUM_PX) * 3 / 4))
+                    },
+                    "small" => {
+                        Ok(specified::Length::Absolute(Au::from_px(MEDIUM_PX) * 8 / 9))
+                    },
+                    "medium" => {
+                        Ok(specified::Length::Absolute(Au::from_px(MEDIUM_PX)))
+                    },
+                    "large" => {
+                        Ok(specified::Length::Absolute(Au::from_px(MEDIUM_PX) * 6 / 5))
+                    },
+                    "x-large" => {
+                        Ok(specified::Length::Absolute(Au::from_px(MEDIUM_PX) * 3 / 2))
+                    },
+                    "xx-large" => {
+                        Ok(specified::Length::Absolute(Au::from_px(MEDIUM_PX) * 2))
+                    },
 
                     // https://github.com/servo/servo/issues/3423#issuecomment-56321664
-                    "smaller" => Ok(specified::Length::FontRelative(specified::FontRelativeLength::Em(0.85))),
-                    "larger" => Ok(specified::Length::FontRelative(specified::FontRelativeLength::Em(1.2)))
+                    "smaller" => {
+                        Ok(specified::Length::FontRelative(specified::FontRelativeLength::Em(
+                                    0.85)))
+                    },
+                    "larger" => {
+                        Ok(specified::Length::FontRelative(specified::FontRelativeLength::Em(
+                                    1.2)))
+                    }
 
                     _ => Err(())
                 }
@@ -1749,8 +1776,8 @@ pub mod longhands {
         }
 
         pub mod computed_value {
-            use util::geometry::Au;
-            pub type T = Option<Au>;
+            use values::computed;
+            pub type T = Option<computed::Length>;
         }
 
         #[inline]
@@ -1800,8 +1827,8 @@ pub mod longhands {
         }
 
         pub mod computed_value {
-            use util::geometry::Au;
-            pub type T = Option<Au>;
+            use values::computed;
+            pub type T = Option<computed::Length>;
         }
 
         #[inline]
@@ -1830,7 +1857,9 @@ pub mod longhands {
         }
     </%self:longhand>
 
-    ${predefined_type("text-indent", "LengthOrPercentage", "computed::LengthOrPercentage::Length(Au(0))")}
+    ${predefined_type("text-indent",
+                      "LengthOrPercentage",
+                      "computed::LengthOrPercentage::Length(computed::Length::from_au(Au(0)))")}
 
     // Also known as "word-wrap" (which is more popular because of IE), but this is the preferred
     // name per CSS-TEXT 6.2.
@@ -2030,12 +2059,12 @@ pub mod longhands {
         use util::geometry::Au;
 
         pub mod computed_value {
-            use util::geometry::Au;
+            use values::computed;
 
             #[derive(Clone, Copy, Debug, PartialEq, RustcEncodable)]
             pub struct T {
-                pub horizontal: Au,
-                pub vertical: Au,
+                pub horizontal: computed::Length,
+                pub vertical: computed::Length,
             }
         }
 
@@ -2048,8 +2077,8 @@ pub mod longhands {
         #[inline]
         pub fn get_initial_value() -> computed_value::T {
             computed_value::T {
-                horizontal: Au(0),
-                vertical: Au(0),
+                horizontal: computed::Length::from_au(Au(0)),
+                vertical: computed::Length::from_au(Au(0)),
             }
         }
 
@@ -2274,7 +2303,6 @@ pub mod longhands {
         }
 
         pub mod computed_value {
-            use util::geometry::Au;
             use values::computed;
             use std::fmt;
 
@@ -2282,10 +2310,10 @@ pub mod longhands {
 
             #[derive(Clone, PartialEq, Copy)]
             pub struct BoxShadow {
-                pub offset_x: Au,
-                pub offset_y: Au,
-                pub blur_radius: Au,
-                pub spread_radius: Au,
+                pub offset_x: computed::Length,
+                pub offset_y: computed::Length,
+                pub blur_radius: computed::Length,
+                pub spread_radius: computed::Length,
                 pub color: computed::CSSColor,
                 pub inset: bool,
             }
@@ -2341,6 +2369,7 @@ pub mod longhands {
 
         pub fn parse_one_box_shadow(input: &mut Parser) -> Result<SpecifiedBoxShadow, ()> {
             use util::geometry::Au;
+
             let mut lengths = [specified::Length::Absolute(Au(0)); 4];
             let mut lengths_parsed = false;
             let mut color = None;
@@ -2409,14 +2438,14 @@ pub mod longhands {
         use values::computed::{ToComputedValue, Context};
 
         pub mod computed_value {
-            use util::geometry::Au;
+            use values::computed;
 
             #[derive(Clone, PartialEq, Eq, Copy, Debug)]
             pub struct ClipRect {
-                pub top: Au,
-                pub right: Option<Au>,
-                pub bottom: Option<Au>,
-                pub left: Au,
+                pub top: computed::Length,
+                pub right: Option<computed::Length>,
+                pub bottom: Option<computed::Length>,
+                pub left: computed::Length,
             }
 
             pub type T = Option<ClipRect>;
@@ -2556,16 +2585,16 @@ pub mod longhands {
 
         pub mod computed_value {
             use cssparser::Color;
-            use util::geometry::Au;
+            use values::computed;
 
             #[derive(Clone, PartialEq, Debug)]
             pub struct T(pub Vec<TextShadow>);
 
             #[derive(Clone, PartialEq, Debug)]
             pub struct TextShadow {
-                pub offset_x: Au,
-                pub offset_y: Au,
-                pub blur_radius: Au,
+                pub offset_x: computed::Length,
+                pub offset_y: computed::Length,
+                pub blur_radius: computed::Length,
                 pub color: Color,
             }
         }
@@ -2620,6 +2649,7 @@ pub mod longhands {
 
         fn parse_one_text_shadow(input: &mut Parser) -> Result<SpecifiedTextShadow,()> {
             use util::geometry::Au;
+
             let mut lengths = [specified::Length::Absolute(Au(0)); 3];
             let mut lengths_parsed = false;
             let mut color = None;
@@ -3805,13 +3835,24 @@ impl ComputedValues {
     }
 
     #[inline]
-    pub fn logical_border_width(&self) -> LogicalMargin<Au> {
+    pub fn logical_border_width(&self) -> LogicalMargin<computed::Length> {
         let border_style = self.get_border();
         LogicalMargin::from_physical(self.writing_mode, SideOffsets2D::new(
             border_style.border_top_width,
             border_style.border_right_width,
             border_style.border_bottom_width,
             border_style.border_left_width,
+        ))
+    }
+
+    #[inline]
+    pub fn logical_au_border_width(&self) -> LogicalMargin<Au> {
+        let border_style = self.get_border();
+        LogicalMargin::from_physical(self.writing_mode, SideOffsets2D::new(
+            border_style.border_top_width.au,
+            border_style.border_right_width.au,
+            border_style.border_bottom_width.au,
+            border_style.border_left_width.au,
         ))
     }
 
@@ -3900,7 +3941,7 @@ lazy_static! {
         % endfor
         shareable: true,
         writing_mode: WritingMode::empty(),
-        root_font_size: longhands::font_size::get_initial_value(),
+        root_font_size: longhands::font_size::get_initial_value().au,
     };
 }
 
@@ -4077,9 +4118,20 @@ pub fn cascade(viewport_size: Size2D<Au>,
                     context.font_size = match *value {
                         DeclaredValue::SpecifiedValue(ref specified_value) => {
                             match specified_value.0 {
-                                Length::FontRelative(value) => value.to_computed_value(context.inherited_font_size,
-                                                                                       context.root_font_size),
-                                Length::ServoCharacterWidth(value) => value.to_computed_value(context.inherited_font_size),
+                                Length::FontRelative(value) => {
+                                    computed::Length {
+                                        au: value.to_computed_value(context.inherited_font_size.au,
+                                                                    context.root_font_size),
+                                        font_relative: true,
+                                    }
+                                }
+                                Length::ServoCharacterWidth(value) => {
+                                    computed::Length {
+                                        au: value.to_computed_value(context.inherited_font_size
+                                                                           .au),
+                                        font_relative: true,
+                                    }
+                                }
                                 _ => specified_value.0.to_computed_value(&context)
                             }
                         }
@@ -4216,7 +4268,7 @@ pub fn cascade(viewport_size: Size2D<Au>,
         % for side in ["top", "right", "bottom", "left"]:
             // Like calling to_computed_value, which wouldn't type check.
             if !context.border_${side}_present {
-                border.border_${side}_width = Au(0);
+                border.border_${side}_width = computed::Length::from_au(Au(0));
             }
         % endfor
     }
@@ -4228,7 +4280,7 @@ pub fn cascade(viewport_size: Size2D<Au>,
     }
 
     if is_root_element {
-        context.root_font_size = context.font_size;
+        context.root_font_size = context.font_size.au
     }
 
     (ComputedValues {
@@ -4266,7 +4318,7 @@ pub fn cascade_anonymous(parent_style: &ComputedValues) -> ComputedValues {
         let border = result.border.make_unique();
         % for side in ["top", "right", "bottom", "left"]:
             // Like calling to_computed_value, which wouldn't type check.
-            border.border_${side}_width = Au(0);
+            border.border_${side}_width = computed::Length::from_au(Au(0));
         % endfor
     }
     // None of the teaks on 'display' apply here.
@@ -4285,12 +4337,13 @@ pub fn make_inline(style: &ComputedValues) -> ComputedValues {
 /// Sets `border_${side}_width` to the passed in values.
 /// If `border_${side}_width` == 0 also sets `border_${side}_style` = none.
 #[inline]
-pub fn make_border(style: &ComputedValues, border_width: LogicalMargin<Au>) -> ComputedValues {
+pub fn make_border(style: &ComputedValues, border_width: LogicalMargin<computed::Length>)
+                   -> ComputedValues {
     let mut style = (*style).clone();
     let physical_border = LogicalMargin::to_physical(&border_width, style.writing_mode);
     % for side in ["top", "right", "bottom", "left"]:
         style.border.make_unique().border_${side}_width = physical_border.${side};
-        if physical_border.${side} == Zero::zero() {
+        if physical_border.${side}.au == Zero::zero() {
             style.border.make_unique().border_${side}_style = BorderStyle::none;
         }
     % endfor

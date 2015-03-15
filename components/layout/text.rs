@@ -130,8 +130,11 @@ impl TextRunScanner {
                     white_space::T::pre => CompressionMode::CompressNone,
                 };
                 text_transform = inherited_text_style.text_transform;
-                letter_spacing = inherited_text_style.letter_spacing;
-                word_spacing = inherited_text_style.word_spacing.unwrap_or(Au(0));
+                letter_spacing = inherited_text_style.letter_spacing.map(|spacing| spacing.au);
+                word_spacing = match inherited_text_style.word_spacing {
+                    None => Au(0),
+                    Some(word_spacing) => word_spacing.au,
+                };
                 text_rendering = inherited_text_style.text_rendering;
             }
 
@@ -322,7 +325,7 @@ pub fn line_height_from_style(style: &ComputedValues, metrics: &FontMetrics) -> 
     let font_size = style.get_font().font_size;
     match style.get_inheritedbox().line_height {
         line_height::T::Normal => metrics.line_gap,
-        line_height::T::Number(l) => font_size.scale_by(l),
-        line_height::T::Length(l) => l
+        line_height::T::Number(l) => font_size.au.scale_by(l),
+        line_height::T::Length(l) => l.au,
     }
 }

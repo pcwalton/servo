@@ -20,11 +20,11 @@ use floats::FloatKind;
 use flow::{FlowClass, Flow, ImmutableFlowUtils};
 use flow::{IMPACTED_BY_LEFT_FLOATS, IMPACTED_BY_RIGHT_FLOATS};
 use fragment::{Fragment, FragmentBorderBoxIterator};
-use table::{ChildInlineSizeInfo, ColumnComputedInlineSize, ColumnIntrinsicInlineSize};
+use table::{BorderSpacing, ChildInlineSizeInfo, ColumnComputedInlineSize};
+use table::{ColumnIntrinsicInlineSize};
 use wrapper::ThreadSafeLayoutNode;
 
 use geom::{Point2D, Rect};
-use util::geometry::Au;
 use std::cmp::{max, min};
 use std::fmt;
 use std::ops::Add;
@@ -33,6 +33,7 @@ use style::computed_values::table_layout;
 use style::properties::ComputedValues;
 use style::values::CSSFloat;
 use style::values::computed::LengthOrPercentageOrAuto;
+use util::geometry::Au;
 
 #[derive(Copy, RustcEncodable, Debug)]
 pub enum TableLayout {
@@ -107,7 +108,8 @@ impl TableWrapperFlow {
                                                 .style()
                                                 .get_inheritedtable()
                                                 .border_spacing
-                                                .horizontal;
+                                                .horizontal
+                                                .au;
                 spacing = spacing_per_cell * (self.column_intrinsic_inline_sizes.len() as i32 + 1);
                 available_inline_size = self.block_flow.fragment.border_box.size.inline;
 
@@ -314,9 +316,17 @@ impl Flow for TableWrapperFlow {
                     None)
             }
             Some(ref assigned_column_inline_sizes) => {
+                let style_border_spacing = self.block_flow
+                                               .fragment
+                                               .style()
+                                               .get_inheritedtable()
+                                               .border_spacing;
                 let info = ChildInlineSizeInfo {
                     column_computed_inline_sizes: assigned_column_inline_sizes.as_slice(),
-                    spacing: self.block_flow.fragment.style().get_inheritedtable().border_spacing,
+                    spacing: BorderSpacing {
+                        horizontal: style_border_spacing.horizontal.au,
+                        vertical: style_border_spacing.vertical.au,
+                    },
                 };
                 self.block_flow
                     .propagate_assigned_inline_size_to_children(layout_context,
@@ -328,9 +338,11 @@ impl Flow for TableWrapperFlow {
 
     }
 
-    fn assign_block_size<'a>(&mut self, ctx: &'a LayoutContext<'a>) {
+    fn assign_block_size<'a>(&mut self, layout_context: &'a LayoutContext<'a>) {
         debug!("assign_block_size: assigning block_size for table_wrapper");
-        self.block_flow.assign_block_size_block_base(ctx, MarginsMayCollapseFlag::MarginsMayNotCollapse);
+        self.block_flow
+            .assign_block_size_block_base(layout_context,
+                                          MarginsMayCollapseFlag::MarginsMayNotCollapse);
     }
 
     fn compute_absolute_position(&mut self) {

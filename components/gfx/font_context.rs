@@ -141,7 +141,7 @@ impl FontContext {
         }
 
         // Calculate the real font size, taking the font scale into account.
-        let font_size = style.font_size.scale_by(font_scale as f64);
+        let font_size = style.font_size.au.scale_by(font_scale as f64);
 
         // TODO: The font context holds a strong ref to the cached fonts
         // so they will never be released. Find out a good time to drop them.

@@ -32,7 +32,7 @@ impl Range<specified::Length> {
                     // http://dev.w3.org/csswg/mediaqueries3/ - Section 6
                     // em units are relative to the initial font-size.
                     let initial_font_size = longhands::font_size::get_initial_value();
-                    value.to_computed_value(initial_font_size, initial_font_size)
+                    value.to_computed_value(initial_font_size.au, initial_font_size.au)
                 }
                 &specified::Length::ViewportPercentage(value) =>
                     value.to_computed_value(viewport_size),

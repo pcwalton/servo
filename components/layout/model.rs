@@ -9,12 +9,13 @@
 use fragment::Fragment;
 
 use geom::SideOffsets2D;
-use style::values::computed::{LengthOrPercentageOrAuto, LengthOrPercentageOrNone, LengthOrPercentage};
-use style::properties::ComputedValues;
-use util::geometry::Au;
-use util::logical_geometry::LogicalMargin;
 use std::cmp::{max, min};
 use std::fmt;
+use style::properties::ComputedValues;
+use style::values::computed::{Length, LengthOrPercentageOrAuto, LengthOrPercentageOrNone};
+use style::values::computed::{LengthOrPercentage};
+use util::geometry::Au;
+use util::logical_geometry::LogicalMargin;
 
 /// A collapsible margin. See CSS 2.1 § 8.3.1.
 #[derive(Copy)]
@@ -118,9 +119,18 @@ impl MarginCollapseInfo {
         let state = match self.state {
             MarginCollapseState::AccumulatingCollapsibleTopMargin => {
                 match fragment.style().content_block_size() {
-                    LengthOrPercentageOrAuto::Auto | LengthOrPercentageOrAuto::Length(Au(0)) | LengthOrPercentageOrAuto::Percentage(0.) => {
+                    LengthOrPercentageOrAuto::Auto |
+                    LengthOrPercentageOrAuto::Length(Length {
+                        au: Au(0),
+                        font_relative: _
+                    }) |
+                    LengthOrPercentageOrAuto::Percentage(0.) => {
                         match fragment.style().min_block_size() {
-                            LengthOrPercentage::Length(Au(0)) | LengthOrPercentage::Percentage(0.) => {
+                            LengthOrPercentage::Length(Length {
+                                au: Au(0),
+                                ..
+                            }) |
+                            LengthOrPercentage::Percentage(0.) => {
                                 FinalMarginState::MarginsCollapseThrough
                             },
                             _ => {
@@ -332,14 +342,13 @@ pub enum MaybeAuto {
 
 impl MaybeAuto {
     #[inline]
-    pub fn from_style(length: LengthOrPercentageOrAuto, containing_length: Au)
-                      -> MaybeAuto {
+    pub fn from_style(length: LengthOrPercentageOrAuto, containing_length: Au) -> MaybeAuto {
         match length {
             LengthOrPercentageOrAuto::Auto => MaybeAuto::Auto,
             LengthOrPercentageOrAuto::Percentage(percent) => {
                 MaybeAuto::Specified(containing_length.scale_by(percent))
             }
-            LengthOrPercentageOrAuto::Length(length) => MaybeAuto::Specified(length)
+            LengthOrPercentageOrAuto::Length(length) => MaybeAuto::Specified(length.au)
         }
     }
 
@@ -369,13 +378,13 @@ pub fn specified_or_none(length: LengthOrPercentageOrNone, containing_length: Au
     match length {
         LengthOrPercentageOrNone::None => None,
         LengthOrPercentageOrNone::Percentage(percent) => Some(containing_length.scale_by(percent)),
-        LengthOrPercentageOrNone::Length(length) => Some(length),
+        LengthOrPercentageOrNone::Length(length) => Some(length.au),
     }
 }
 
 pub fn specified(length: LengthOrPercentage, containing_length: Au) -> Au {
     match length {
-        LengthOrPercentage::Length(length) => length,
+        LengthOrPercentage::Length(length) => length.au,
         LengthOrPercentage::Percentage(p) => containing_length.scale_by(p)
     }
 }

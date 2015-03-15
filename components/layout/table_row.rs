@@ -12,8 +12,8 @@ use context::LayoutContext;
 use flow::{self, FlowClass, Flow, ImmutableFlowUtils};
 use fragment::{Fragment, FragmentBorderBoxIterator};
 use layout_debug;
-use table::{ChildInlineSizeInfo, ColumnComputedInlineSize, ColumnIntrinsicInlineSize};
-use table::{InternalTable};
+use table::{BorderSpacing, ChildInlineSizeInfo, ColumnComputedInlineSize};
+use table::{ColumnIntrinsicInlineSize, InternalTable};
 use model::MaybeAuto;
 use wrapper::ThreadSafeLayoutNode;
 
@@ -40,7 +40,7 @@ pub struct TableRowFlow {
 
     /// The spacing for this row, propagated down from the table during the inline-size assignment
     /// phase.
-    pub spacing: border_spacing::T,
+    pub spacing: BorderSpacing,
 }
 
 /// Information about the column inline size and span for each cell.
@@ -59,10 +59,7 @@ impl TableRowFlow {
             block_flow: BlockFlow::from_node_and_fragment(node, fragment),
             cell_intrinsic_inline_sizes: Vec::new(),
             column_computed_inline_sizes: Vec::new(),
-            spacing: border_spacing::T {
-                horizontal: Au(0),
-                vertical: Au(0),
-            },
+            spacing: BorderSpacing::zero(),
         }
     }
 
@@ -204,7 +201,7 @@ impl Flow for TableRowFlow {
                     LengthOrPercentageOrAuto::Auto | LengthOrPercentageOrAuto::Percentage(_) => {
                         child_base.intrinsic_inline_sizes.minimum_inline_size
                     }
-                    LengthOrPercentageOrAuto::Length(length) => length,
+                    LengthOrPercentageOrAuto::Length(length) => length.au,
                 },
                 percentage: match child_specified_inline_size {
                     LengthOrPercentageOrAuto::Auto | LengthOrPercentageOrAuto::Length(_) => 0.0,
@@ -213,7 +210,8 @@ impl Flow for TableRowFlow {
                 preferred: child_base.intrinsic_inline_sizes.preferred_inline_size,
                 constrained: match child_specified_inline_size {
                     LengthOrPercentageOrAuto::Length(_) => true,
-                    LengthOrPercentageOrAuto::Auto | LengthOrPercentageOrAuto::Percentage(_) => false,
+                    LengthOrPercentageOrAuto::Auto |
+                    LengthOrPercentageOrAuto::Percentage(_) => false,
                 },
             };
             min_inline_size = min_inline_size + child_column_inline_size.minimum_length;

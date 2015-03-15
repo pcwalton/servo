@@ -175,16 +175,17 @@ impl TableFlow {
     }
 
     /// Returns the effective spacing per cell, taking the value of `border-collapse` into account.
-    fn spacing(&self) -> border_spacing::T {
+    fn spacing(&self) -> BorderSpacing {
         let style = self.block_flow.fragment.style();
         match style.get_inheritedtable().border_collapse {
-            border_collapse::T::separate => style.get_inheritedtable().border_spacing,
-            border_collapse::T::collapse => {
-                border_spacing::T {
-                    horizontal: Au(0),
-                    vertical: Au(0),
+            border_collapse::T::separate => {
+                let border_spacing = style.get_inheritedtable().border_spacing;
+                BorderSpacing {
+                    horizontal: border_spacing.horizontal.au,
+                    vertical: border_spacing.vertical.au,
                 }
             }
+            border_collapse::T::collapse => BorderSpacing::zero(),
         }
     }
 }
@@ -232,11 +233,13 @@ impl Flow for TableFlow {
                 for specified_inline_size in kid.as_table_colgroup().inline_sizes.iter() {
                     self.column_intrinsic_inline_sizes.push(ColumnIntrinsicInlineSize {
                         minimum_length: match *specified_inline_size {
-                            LengthOrPercentageOrAuto::Auto | LengthOrPercentageOrAuto::Percentage(_) => Au(0),
-                            LengthOrPercentageOrAuto::Length(length) => length,
+                            LengthOrPercentageOrAuto::Auto |
+                            LengthOrPercentageOrAuto::Percentage(_) => Au(0),
+                            LengthOrPercentageOrAuto::Length(length) => length.au,
                         },
                         percentage: match *specified_inline_size {
-                            LengthOrPercentageOrAuto::Auto | LengthOrPercentageOrAuto::Length(_) => 0.0,
+                            LengthOrPercentageOrAuto::Auto |
+                            LengthOrPercentageOrAuto::Length(_) => 0.0,
                             LengthOrPercentageOrAuto::Percentage(percentage) => percentage,
                         },
                         preferred: Au(0),
@@ -267,7 +270,8 @@ impl Flow for TableFlow {
                           .style()
                           .get_inheritedtable()
                           .border_spacing
-                          .horizontal * (self.column_intrinsic_inline_sizes.len() as i32 + 1);
+                          .horizontal
+                          .au * (self.column_intrinsic_inline_sizes.len() as i32 + 1);
         computation.surrounding_size = computation.surrounding_size + spacing;
 
         self.block_flow.base.intrinsic_inline_sizes = computation.finish()
@@ -583,7 +587,7 @@ pub struct ColumnComputedInlineSize {
 /// Inline-size information that we need to push down to table children.
 pub struct ChildInlineSizeInfo<'a> {
     /// The spacing of the table.
-    pub spacing: border_spacing::T,
+    pub spacing: BorderSpacing,
     /// The computed inline sizes for each column.
     pub column_computed_inline_sizes: &'a [ColumnComputedInlineSize],
 }
@@ -636,6 +640,21 @@ impl<'a> ChildInlineSizeInfo<'a> {
         // Move over for the next table cell.
         if kid.is_table_cell() {
             *inline_start_margin_edge = *inline_start_margin_edge + inline_size
+        }
+    }
+}
+
+#[derive(Copy, Clone, RustcEncodable)]
+pub struct BorderSpacing {
+    pub horizontal: Au,
+    pub vertical: Au,
+}
+
+impl BorderSpacing {
+    pub fn zero() -> BorderSpacing {
+        BorderSpacing {
+            horizontal: Au(0),
+            vertical: Au(0),
         }
     }
 }

@@ -609,10 +609,11 @@ impl FragmentDisplayListBuilding for Fragment {
                                                        clip: &ClippingRegion) {
         // NB: According to CSS-BACKGROUNDS, box shadows render in *reverse* order (front to back).
         for box_shadow in style.get_effects().box_shadow.iter().rev() {
-            let bounds = shadow_bounds(&absolute_bounds.translate(&Point2D(box_shadow.offset_x,
-                                                                           box_shadow.offset_y)),
-                                       box_shadow.blur_radius,
-                                       box_shadow.spread_radius);
+            let bounds =
+                shadow_bounds(&absolute_bounds.translate(&Point2D(box_shadow.offset_x.au,
+                                                                  box_shadow.offset_y.au)),
+                              box_shadow.blur_radius.au,
+                              box_shadow.spread_radius.au);
             list.push(DisplayItem::BoxShadowClass(box BoxShadowDisplayItem {
                 base: BaseDisplayItem::new(bounds,
                                            DisplayItemMetadata::new(self.node,
@@ -621,9 +622,9 @@ impl FragmentDisplayListBuilding for Fragment {
                                            (*clip).clone()),
                 box_bounds: *absolute_bounds,
                 color: style.resolve_color(box_shadow.color).to_gfx_color(),
-                offset: Point2D(box_shadow.offset_x, box_shadow.offset_y),
-                blur_radius: box_shadow.blur_radius,
-                spread_radius: box_shadow.spread_radius,
+                offset: Point2D(box_shadow.offset_x.au, box_shadow.offset_y.au),
+                blur_radius: box_shadow.blur_radius.au,
+                spread_radius: box_shadow.spread_radius.au,
                 clip_mode: if box_shadow.inset {
                     BoxShadowClipMode::Inset
                 } else {
@@ -639,7 +640,7 @@ impl FragmentDisplayListBuilding for Fragment {
                                                     abs_bounds: &Rect<Au>,
                                                     level: StackingLevel,
                                                     clip: &ClippingRegion) {
-        let border = style.logical_border_width();
+        let border = style.logical_au_border_width();
         if border.is_zero() {
             return
         }
@@ -652,7 +653,9 @@ impl FragmentDisplayListBuilding for Fragment {
         // Append the border to the display list.
         display_list.push(DisplayItem::BorderClass(box BorderDisplayItem {
             base: BaseDisplayItem::new(*abs_bounds,
-                                       DisplayItemMetadata::new(self.node, style, Cursor::DefaultCursor),
+                                       DisplayItemMetadata::new(self.node,
+                                                                style,
+                                                                Cursor::DefaultCursor),
                                        (*clip).clone()),
             border_widths: border.to_physical(style.writing_mode),
             color: SideOffsets2D::new(top_color.to_gfx_color(),
@@ -672,7 +675,7 @@ impl FragmentDisplayListBuilding for Fragment {
                                                     display_list: &mut DisplayList,
                                                     bounds: &Rect<Au>,
                                                     clip: &ClippingRegion) {
-        let width = style.get_outline().outline_width;
+        let width = style.get_outline().outline_width.au;
         if width == Au(0) {
             return
         }
@@ -685,7 +688,7 @@ impl FragmentDisplayListBuilding for Fragment {
         // Outlines are not accounted for in the dimensions of the border box, so adjust the
         // absolute bounds.
         let mut bounds = *bounds;
-        let offset = width + style.get_outline().outline_offset;
+        let offset = width + style.get_outline().outline_offset.au;
         bounds.origin.x = bounds.origin.x - offset;
         bounds.origin.y = bounds.origin.y - offset;
         bounds.size.width = bounds.size.width + offset + offset;
@@ -695,7 +698,9 @@ impl FragmentDisplayListBuilding for Fragment {
         let color = style.resolve_color(style.get_outline().outline_color).to_gfx_color();
         display_list.outlines.push_back(DisplayItem::BorderClass(box BorderDisplayItem {
             base: BaseDisplayItem::new(bounds,
-                                       DisplayItemMetadata::new(self.node, style, Cursor::DefaultCursor),
+                                       DisplayItemMetadata::new(self.node,
+                                                                style,
+                                                                Cursor::DefaultCursor),
                                        (*clip).clone()),
             border_widths: SideOffsets2D::new_all_same(width),
             color: SideOffsets2D::new_all_same(color),
@@ -773,10 +778,16 @@ impl FragmentDisplayListBuilding for Fragment {
         };
 
         // FIXME(pcwalton, #2795): Get the real container size.
-        let clip_origin = Point2D(stacking_relative_border_box.origin.x + style_clip_rect.left,
-                                  stacking_relative_border_box.origin.y + style_clip_rect.top);
-        let right = style_clip_rect.right.unwrap_or(stacking_relative_border_box.size.width);
-        let bottom = style_clip_rect.bottom.unwrap_or(stacking_relative_border_box.size.height);
+        let clip_origin = Point2D(stacking_relative_border_box.origin.x + style_clip_rect.left.au,
+                                  stacking_relative_border_box.origin.y + style_clip_rect.top.au);
+        let right = match style_clip_rect.right {
+            None => stacking_relative_border_box.size.width,
+            Some(right) => right.au,
+        };
+        let bottom = match style_clip_rect.bottom {
+            None => stacking_relative_border_box.size.height,
+            Some(bottom) => bottom.au,
+        };
         let clip_size = Size2D(right - clip_origin.x, bottom - clip_origin.y);
         (*parent_clip).clone().intersect_rect(&Rect(clip_origin, clip_size))
     }
@@ -927,13 +938,13 @@ impl FragmentDisplayListBuilding for Fragment {
                 // to back).
                 let text_color = self.style().get_color().color;
                 for text_shadow in self.style.get_effects().text_shadow.0.iter().rev() {
-                    let offset = &Point2D(text_shadow.offset_x, text_shadow.offset_y);
+                    let offset = &Point2D(text_shadow.offset_x.au, text_shadow.offset_y.au);
                     let color = self.style().resolve_color(text_shadow.color);
                     self.build_display_list_for_text_fragment(display_list,
                                                               &**text_fragment,
                                                               color,
                                                               &stacking_relative_content_box,
-                                                              Some(text_shadow.blur_radius),
+                                                              Some(text_shadow.blur_radius.au),
                                                               offset,
                                                               clip);
                 }
@@ -1530,7 +1541,9 @@ fn fmin(a: f32, b: f32) -> f32 {
 
 fn position_to_offset(position: LengthOrPercentage, Au(total_length): Au) -> f32 {
     match position {
-        LengthOrPercentage::Length(Au(length)) => fmin(1.0, (length as f32) / (total_length as f32)),
+        LengthOrPercentage::Length(length) => {
+            fmin(1.0, length.au.to_f32().unwrap() / (total_length as f32))
+        }
         LengthOrPercentage::Percentage(percentage) => percentage as f32,
     }
 }

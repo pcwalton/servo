@@ -870,7 +870,7 @@ impl InlineFlow {
                 let offset_bottom = -(*depth_below_baseline + ascent);
                 (offset_bottom, true)
             },
-            vertical_align::T::Length(length) => (-(length + ascent), false),
+            vertical_align::T::Length(length) => (-(length.au + ascent), false),
             vertical_align::T::Percentage(p) => {
                 let line_height = fragment.calculate_line_height(layout_context);
                 let percent_offset = line_height.scale_by(p);

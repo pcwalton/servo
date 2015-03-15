@@ -12,8 +12,8 @@ use flow::{FlowClass, Flow};
 use fragment::{Fragment, FragmentBorderBoxIterator};
 use layout_debug;
 use style::computed_values::border_spacing;
-use table::{ChildInlineSizeInfo, ColumnComputedInlineSize, ColumnIntrinsicInlineSize};
-use table::{InternalTable, TableLikeFlow};
+use table::{BorderSpacing, ChildInlineSizeInfo, ColumnComputedInlineSize};
+use table::{ColumnIntrinsicInlineSize, InternalTable, TableLikeFlow};
 use wrapper::ThreadSafeLayoutNode;
 
 use geom::{Point2D, Rect};
@@ -36,7 +36,7 @@ pub struct TableRowGroupFlow {
     pub column_computed_inline_sizes: Vec<ColumnComputedInlineSize>,
 
     /// The spacing for this rowgroup.
-    pub spacing: border_spacing::T,
+    pub spacing: BorderSpacing,
 }
 
 impl TableRowGroupFlow {
@@ -46,10 +46,7 @@ impl TableRowGroupFlow {
             block_flow: BlockFlow::from_node_and_fragment(node, fragment),
             column_intrinsic_inline_sizes: Vec::new(),
             column_computed_inline_sizes: Vec::new(),
-            spacing: border_spacing::T {
-                horizontal: Au(0),
-                vertical: Au(0),
-            },
+            spacing: BorderSpacing::zero(),
         }
     }
 
