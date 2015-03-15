@@ -15,7 +15,7 @@ use flow_ref::FlowRef;
 use data::{LayoutDataAccess, LayoutDataWrapper};
 use traversal::{BubbleISizes, AssignISizes, AssignBSizesAndStoreOverflow};
 use traversal::{ComputeAbsolutePositions, BuildDisplayList};
-use traversal::{RecalcStyleForNode, ConstructFlows};
+use traversal::{RecalcStyleForNode, ConstructFlows, ResizeText, ResizeTextPreorderTraversal};
 use wrapper::{layout_node_to_unsafe_layout_node, layout_node_from_unsafe_layout_node, LayoutNode};
 use wrapper::{PostorderNodeMutTraversal, UnsafeLayoutNode};
 use wrapper::{PreorderDomTraversal, PostorderDomTraversal};
@@ -302,6 +302,20 @@ trait ParallelPreorderFlowTraversal : PreorderFlowTraversal {
     }
 }
 
+impl<'a> ParallelPreorderFlowTraversal for ResizeTextPreorderTraversal<'a> {
+    fn run_parallel(&self,
+                    unsafe_flow: UnsafeFlow,
+                    proxy: &mut WorkerProxy<SharedLayoutContextWrapper,UnsafeFlow>) {
+        self.run_parallel_helper(unsafe_flow, proxy, resize_text_preorder, resize_text)
+    }
+
+    fn should_record_thread_ids(&self) -> bool {
+        true
+    }
+}
+
+impl<'a> ParallelPostorderFlowTraversal for ResizeText<'a> {}
+
 impl<'a> ParallelPostorderFlowTraversal for BubbleISizes<'a> {}
 
 impl<'a> ParallelPreorderFlowTraversal for AssignISizes<'a> {
@@ -371,6 +385,22 @@ fn construct_flows(unsafe_node: UnsafeLayoutNode,
     construct_flows_traversal.run_parallel(unsafe_node, proxy)
 }
 
+fn resize_text_preorder(unsafe_flow: UnsafeFlow,
+                        proxy: &mut WorkerProxy<SharedLayoutContextWrapper,UnsafeFlow>) {
+    let resize_text_traversal = ResizeTextPreorderTraversal;
+    resize_text_traversal.run_parallel(unsafe_flow, proxy)
+}
+
+fn resize_text(unsafe_flow: UnsafeFlow,
+               proxy: &mut WorkerProxy<SharedLayoutContextWrapper,UnsafeFlow>) {
+    let shared_layout_context = unsafe { &*(proxy.user_data().0) };
+    let layout_context = LayoutContext::new(shared_layout_context);
+    let resize_text_traversal = ResizeText {
+        layout_context: &layout_context,
+    };
+    resize_text_traversal.run_parallel(unsafe_flow, proxy)
+}
+
 fn assign_inline_sizes(unsafe_flow: UnsafeFlow,
                        proxy: &mut WorkerProxy<SharedLayoutContextWrapper,UnsafeFlow>) {
     let shared_layout_context = unsafe { &*(proxy.user_data().0) };
@@ -382,7 +412,8 @@ fn assign_inline_sizes(unsafe_flow: UnsafeFlow,
 }
 
 fn assign_block_sizes_and_store_overflow(unsafe_flow: UnsafeFlow,
-                                         proxy: &mut WorkerProxy<SharedLayoutContextWrapper,UnsafeFlow>) {
+                                         proxy: &mut WorkerProxy<SharedLayoutContextWrapper,
+                                                                 UnsafeFlow>) {
     let shared_layout_context = unsafe { &*(proxy.user_data().0) };
     let layout_context = LayoutContext::new(shared_layout_context);
     let assign_block_sizes_traversal = AssignBSizesAndStoreOverflow {
@@ -428,11 +459,34 @@ pub fn traverse_dom_preorder(root: LayoutNode,
     queue.data = SharedLayoutContextWrapper(ptr::null());
 }
 
-pub fn traverse_flow_tree_preorder(root: &mut FlowRef,
-                                   profiler_metadata: &ProfilerMetadata,
-                                   time_profiler_chan: TimeProfilerChan,
-                                   shared_layout_context: &SharedLayoutContext,
-                                   queue: &mut WorkQueue<SharedLayoutContextWrapper,UnsafeFlow>) {
+pub fn perform_text_resize_traversal(root: &mut FlowRef,
+                                     profiler_metadata: &ProfilerMetadata,
+                                     time_profiler_chan: TimeProfilerChan,
+                                     shared_layout_context: &SharedLayoutContext,
+                                     queue: &mut WorkQueue<SharedLayoutContextWrapper,
+                                                           UnsafeFlow>) {
+    queue.data = SharedLayoutContextWrapper(shared_layout_context as *const _);
+
+    profile(TimeProfilerCategory::LayoutParallelWarmup,
+            *profiler_metadata,
+            time_profiler_chan,
+            || {
+        queue.push(WorkUnit {
+            fun: resize_text_preorder,
+            data: mut_owned_flow_to_unsafe_flow(root),
+        })
+    });
+
+    queue.run();
+
+    queue.data = SharedLayoutContextWrapper(ptr::null())
+}
+
+pub fn assign_inline_and_block_sizes(root: &mut FlowRef,
+                                     profiler_metadata: &ProfilerMetadata,
+                                     time_profiler_chan: TimeProfilerChan,
+                                     shared_layout_context: &SharedLayoutContext,
+                                     queue: &mut WorkQueue<SharedLayoutContextWrapper,UnsafeFlow>) {
     if opts::get().bubble_inline_sizes_separately {
         let layout_context = LayoutContext::new(shared_layout_context);
         let bubble_inline_sizes = BubbleISizes { layout_context: &layout_context };

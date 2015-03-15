@@ -82,6 +82,7 @@ pub enum TimeProfilerCategory {
     LayoutTreeBuilder,
     LayoutDamagePropagate,
     LayoutGeneratedContent,
+    LayoutResizeText,
     LayoutMain,
     LayoutParallelWarmup,
     LayoutShaping,
@@ -101,6 +102,7 @@ impl Formatable for TimeProfilerCategory {
             TimeProfilerCategory::LayoutRestyleDamagePropagation |
             TimeProfilerCategory::LayoutNonIncrementalReset |
             TimeProfilerCategory::LayoutGeneratedContent |
+            TimeProfilerCategory::LayoutResizeText |
             TimeProfilerCategory::LayoutMain |
             TimeProfilerCategory::LayoutDispListBuild |
             TimeProfilerCategory::LayoutShaping |
@@ -122,6 +124,7 @@ impl Formatable for TimeProfilerCategory {
             TimeProfilerCategory::LayoutTreeBuilder => "Tree Building",
             TimeProfilerCategory::LayoutDamagePropagate => "Damage Propagation",
             TimeProfilerCategory::LayoutGeneratedContent => "Generated Content Resolution",
+            TimeProfilerCategory::LayoutResizeText => "Text Resizing",
             TimeProfilerCategory::LayoutMain => "Primary Layout Pass",
             TimeProfilerCategory::LayoutParallelWarmup => "Parallel Warmup",
             TimeProfilerCategory::LayoutShaping => "Shaping",

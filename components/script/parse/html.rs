@@ -165,7 +165,7 @@ impl<'a> TreeSink for servohtmlparser::Sink {
     }
 
     fn reparent_children(&mut self, _node: JS<Node>, _new_parent: JS<Node>) {
-        panic!("unimplemented")
+        error!("reparent_children not implemented!")
     }
 }
 

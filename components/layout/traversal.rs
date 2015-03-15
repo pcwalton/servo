@@ -289,6 +289,31 @@ impl PreorderFlow for FlowTreeVerification {
     }
 }
 
+#[derive(Copy)]
+pub struct ResizeTextPreorderTraversal<'a>;
+
+impl<'a> PreorderFlowTraversal for ResizeTextPreorderTraversal<'a> {
+    #[inline]
+    fn process(&self, _: &mut Flow) {}
+}
+
+#[derive(Copy)]
+pub struct ResizeText<'a> {
+    pub layout_context: &'a LayoutContext<'a>,
+}
+
+impl<'a> PostorderFlowTraversal for ResizeText<'a> {
+    #[inline]
+    fn process(&self, flow: &mut Flow) {
+        flow.resize_text(self.layout_context);
+    }
+
+    #[inline]
+    fn should_process(&self, _: &mut Flow) -> bool {
+        true
+    }
+}
+
 /// The bubble-inline-sizes traversal, the first part of layout computation. This computes
 /// preferred and intrinsic inline-sizes and bubbles them up the tree.
 pub struct BubbleISizes<'a> {

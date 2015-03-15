@@ -426,6 +426,9 @@ pub trait MutableFlowUtils {
 
     // Mutators
 
+    /// Resizes text in this flow.
+    fn resize_text(self, layout_context: &LayoutContext);
+
     /// Computes the overflow region for this flow.
     fn store_overflow(self, _: &LayoutContext);
 
@@ -1217,6 +1220,10 @@ impl<'a> MutableFlowUtils for &'a mut (Flow + 'a) {
         if traversal.should_process(self) {
             traversal.process(self)
         }
+    }
+
+    fn resize_text(self, layout_context: &LayoutContext) {
+        self.mutate_fragments(&mut |fragment| fragment.resize_text(layout_context))
     }
 
     /// Calculate and set overflow for current flow.

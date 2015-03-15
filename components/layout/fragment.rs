@@ -2070,6 +2070,40 @@ impl Fragment {
             _ => {}
         }
     }
+
+    pub fn resize_text(&mut self, layout_context: &LayoutContext) {
+        /*let new_fragment = match self.specific {
+            SpecificFragmentInfo::ScannedText(ref mut scanned_text_fragment_info) => {
+                let mut unscanned_fragments = DList::new();
+                let text =
+                    scanned_text_fragment_info.run
+                                              .text
+                                              .slice_chars(scanned_text_fragment_info.range
+                                                                                     .begin()
+                                                                                     .to_uint(),
+                                                           scanned_text_fragment_info.range
+                                                                                     .end()
+                                                                                     .to_uint())
+                                              .to_owned();
+                unscanned_fragments.push_back(Fragment::from_opaque_node_and_style(
+                        self.node,
+                        self.style.clone(),
+                        self.restyle_damage,
+                        SpecificFragmentInfo::UnscannedText(
+                            UnscannedTextFragmentInfo::from_text(text))));
+                let new_fragments = 
+                    TextRunScanner::new().scan_for_runs(layout_context.font_context(),
+                                                        layout_context.shared,
+                                                        unscanned_fragments);
+                match new_fragments.fragments.into_iter().next() {
+                    Some(new_fragment) => new_fragment,
+                    None => return,
+                }
+            }
+            _ => return,
+        };
+        *self = new_fragment*/
+    }
 }
 
 impl fmt::Debug for Fragment {

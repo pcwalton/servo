@@ -12,7 +12,7 @@ use fragment::FragmentBorderBoxIterator;
 use generated_content::ResolveGeneratedContent;
 use traversal::{BubbleISizes, RecalcStyleForNode, ConstructFlows};
 use traversal::{AssignBSizesAndStoreOverflow, AssignISizes};
-use traversal::{ComputeAbsolutePositions, BuildDisplayList};
+use traversal::{ComputeAbsolutePositions, BuildDisplayList, ResizeText};
 use wrapper::LayoutNode;
 use wrapper::{PostorderNodeMutTraversal};
 use wrapper::{PreorderDomTraversal, PostorderDomTraversal};
@@ -58,8 +58,29 @@ pub fn resolve_generated_content(root: &mut FlowRef, shared_layout_context: &Sha
     doit(&mut **root, 0, &mut traversal)
 }
 
-pub fn traverse_flow_tree_preorder(root: &mut FlowRef,
-                                   shared_layout_context: &SharedLayoutContext) {
+pub fn resize_text(root: &mut FlowRef, shared_layout_context: &SharedLayoutContext) {
+    fn doit(flow: &mut Flow, resize_text: ResizeText) {
+        for kid in flow::child_iter(flow) {
+            doit(kid, resize_text);
+        }
+
+        if resize_text.should_process(flow) {
+            resize_text.process(flow);
+        }
+    }
+
+    let layout_context = LayoutContext::new(shared_layout_context);
+
+    let root = &mut **root;
+    let resize_text = ResizeText {
+        layout_context: &layout_context,
+    };
+
+    doit(root, resize_text);
+}
+
+pub fn assign_inline_and_block_sizes(root: &mut FlowRef,
+                                     shared_layout_context: &SharedLayoutContext) {
     fn doit(flow: &mut Flow,
             assign_inline_sizes: AssignISizes,
             assign_block_sizes: AssignBSizesAndStoreOverflow) {

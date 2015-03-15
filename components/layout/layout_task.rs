@@ -378,23 +378,7 @@ impl LayoutTask {
                     }
                     LayoutControlMsg::SetFontScale(new_font_scale) => {
                         let mut rw_data = self.lock_rw_data(possibly_locked_rw_data);
-                        rw_data.font_scale = new_font_scale;
-                        let mut shared_layout_context = self.build_shared_layout_context(
-                            &*rw_data,
-                            false,
-                            None,
-                            &Url::parse("http://bogus.com").unwrap());
-                        rw_data.layout_root.as_mut().unwrap().reflow_entire_document();
-                        self.layout_and_build_display_list((*rw_data.layout_root
-                                                                    .as_ref()
-                                                                    .unwrap()).clone(),
-                                                           &mut shared_layout_context,
-                                                           &mut *rw_data,
-                                                           &self.backdoor_profiler_metadata(),
-                                                           ReflowGoal::ForDisplay,
-                                                           None,
-                                                           &MAX_RECT);
-                        true
+                        self.handle_set_font_scale(&mut *rw_data, new_font_scale)
                     }
                 }
             },
@@ -516,6 +500,44 @@ impl LayoutTask {
         response_port.recv().unwrap()
     }
 
+    fn handle_set_font_scale(&self, rw_data: &mut LayoutTaskData, new_font_scale: f32) -> bool {
+        rw_data.font_scale = new_font_scale;
+        let mut shared_layout_context =
+            self.build_shared_layout_context(&*rw_data,
+                                             false,
+                                             None,
+                                             &Url::parse("http://bogus.com").unwrap());
+        rw_data.layout_root.as_mut().unwrap().reflow_entire_document();
+
+        let profiler_metadata = self.backdoor_profiler_metadata();
+        profile(TimeProfilerCategory::LayoutResizeText,
+                profiler_metadata,
+                self.time_profiler_chan.clone(),
+                || {
+                    if let Some(ref mut traversal) = rw_data.parallel_traversal {
+                        parallel::perform_text_resize_traversal(rw_data.layout_root
+                                                                       .as_mut()
+                                                                       .unwrap(),
+                                                                &profiler_metadata,
+                                                                self.time_profiler_chan.clone(),
+                                                                &shared_layout_context,
+                                                                traversal);
+                    } else {
+                        sequential::resize_text(rw_data.layout_root.as_mut().unwrap(),
+                                                &shared_layout_context)
+                    }
+                });
+
+        self.layout_and_build_display_list((*rw_data.layout_root.as_ref().unwrap()).clone(),
+                                           &mut shared_layout_context,
+                                           &mut *rw_data,
+                                           &profiler_metadata,
+                                           ReflowGoal::ForDisplay,
+                                           None,
+                                           &MAX_RECT);
+        true
+    }
+
     fn handle_load_stylesheet<'a>(&'a self,
                                   url: Url,
                                   possibly_locked_rw_data:
@@ -596,11 +618,11 @@ impl LayoutTask {
     /// This corresponds to `Reflow()` in Gecko and `layout()` in WebKit/Blink and should be
     /// benchmarked against those two. It is marked `#[inline(never)]` to aid profiling.
     #[inline(never)]
-    fn solve_constraints<'a>(&self,
+    fn solve_constraints(&self,
                          layout_root: &mut FlowRef,
                          shared_layout_context: &SharedLayoutContext) {
         let _scope = layout_debug_scope!("solve_constraints");
-        sequential::traverse_flow_tree_preorder(layout_root, shared_layout_context);
+        sequential::assign_inline_and_block_sizes(layout_root, shared_layout_context);
     }
 
     /// Performs layout constraint solving in parallel.
@@ -620,11 +642,11 @@ impl LayoutTask {
             Some(ref mut traversal) => {
                 // NOTE: this currently computes borders, so any pruning should separate that
                 // operation out.
-                parallel::traverse_flow_tree_preorder(layout_root,
-                                                      profiler_metadata,
-                                                      self.time_profiler_chan.clone(),
-                                                      shared_layout_context,
-                                                      traversal);
+                parallel::assign_inline_and_block_sizes(layout_root,
+                                                        profiler_metadata,
+                                                        self.time_profiler_chan.clone(),
+                                                        shared_layout_context,
+                                                        traversal);
             }
         }
     }
