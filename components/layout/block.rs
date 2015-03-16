@@ -2612,17 +2612,17 @@ impl ISizeAndMarginsComputer for FloatNonReplaced {
     /// CSS Section 10.3.5
     ///
     /// If inline-size is computed as 'auto', the used value is the 'shrink-to-fit' inline-size.
-    fn solve_inline_size_constraints(&self,
-                               block: &mut BlockFlow,
-                               input: &ISizeConstraintInput)
-                               -> ISizeConstraintSolution {
-        let (computed_inline_size, inline_start_margin, inline_end_margin, available_inline_size) = (input.computed_inline_size,
-                                                                            input.inline_start_margin,
-                                                                            input.inline_end_margin,
-                                                                            input.available_inline_size);
+    fn solve_inline_size_constraints(&self, block: &mut BlockFlow, input: &ISizeConstraintInput)
+                                     -> ISizeConstraintSolution {
+        let (computed_inline_size, inline_start_margin, inline_end_margin, available_inline_size) =
+            (input.computed_inline_size,
+             input.inline_start_margin,
+             input.inline_end_margin,
+             input.available_inline_size);
         let margin_inline_start = inline_start_margin.specified_or_zero();
         let margin_inline_end = inline_end_margin.specified_or_zero();
-        let available_inline_size_float = available_inline_size - margin_inline_start - margin_inline_end;
+        let available_inline_size_float = available_inline_size - margin_inline_start -
+            margin_inline_end;
         let shrink_to_fit = block.get_shrink_to_fit_inline_size(available_inline_size_float);
         let inline_size = computed_inline_size.specified_or_default(shrink_to_fit);
         debug!("assign_inline_sizes_float -- inline_size: {:?}", inline_size);
@@ -2635,15 +2635,16 @@ impl ISizeAndMarginsComputer for FloatReplaced {
     ///
     /// If inline-size is computed as 'auto', the used value is the 'shrink-to-fit' inline-size.
     fn solve_inline_size_constraints(&self, _: &mut BlockFlow, input: &ISizeConstraintInput)
-                               -> ISizeConstraintSolution {
-        let (computed_inline_size, inline_start_margin, inline_end_margin) = (input.computed_inline_size,
-                                                           input.inline_start_margin,
-                                                           input.inline_end_margin);
+                                     -> ISizeConstraintSolution {
+        let (computed_inline_size, inline_start_margin, inline_end_margin) =
+            (input.computed_inline_size, input.inline_start_margin, input.inline_end_margin);
         let margin_inline_start = inline_start_margin.specified_or_zero();
         let margin_inline_end = inline_end_margin.specified_or_zero();
         let inline_size = match computed_inline_size {
             MaybeAuto::Specified(w) => w,
-            MaybeAuto::Auto => panic!("FloatReplaced: inline_size should have been computed by now")
+            MaybeAuto::Auto => {
+                panic!("FloatReplaced: inline_size should have been computed by now")
+            }
         };
         debug!("assign_inline_sizes_float -- inline_size: {:?}", inline_size);
         ISizeConstraintSolution::new(inline_size, margin_inline_start, margin_inline_end)

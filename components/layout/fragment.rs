@@ -46,7 +46,7 @@ use style::computed_values::{clear, mix_blend_mode, overflow_wrap};
 use style::computed_values::{position, text_align, text_decoration, vertical_align, white_space};
 use style::computed_values::{word_break};
 use style::node::{TElement, TNode};
-use style::properties::{ComputedValues, cascade_anonymous, make_border};
+use style::properties::{self, ComputedValues, cascade_anonymous, make_border};
 use style::values::computed::{Length, LengthOrPercentage, LengthOrPercentageOrAuto};
 use style::values::computed::{LengthOrPercentageOrNone};
 use text::TextRunScanner;
@@ -2081,16 +2081,20 @@ impl Fragment {
     }
 
     pub fn resize_text(&mut self, layout_context: &LayoutContext) {
+        let font_scale = layout_context.shared.font_scale;
         if let SpecificFragmentInfo::ScannedText(ref mut scanned_text_fragment_info) =
                 self.specific {
             let font_group =
                 layout_context.font_context()
                               .get_layout_font_group_for_style(self.style.get_font_arc(),
-                                                               layout_context.shared.font_scale);
+                                                               font_scale);
             let font = &mut *font_group.fonts.get(0).borrow_mut();
             scanned_text_fragment_info.run =
                 Arc::new(box TextRun::resize(&**scanned_text_fragment_info.run, font))
         }
+
+        let ratio = font_scale as f64 / layout_context.shared.last_font_scale as f64;
+        self.style = properties::adjust_font_size(&self.style, ratio)
     }
 }
 

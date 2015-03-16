@@ -106,6 +106,9 @@ pub struct LayoutTaskData {
     /// The font scale, used for the "zoom text only" feature.
     pub font_scale: f32,
 
+    /// The last font scale, used for the "zoom text only" feature.
+    pub last_font_scale: f32,
+
     /// Starts at zero, and increased by one every time a layout completes.
     /// This can be used to easily check for invalid stale data.
     pub generation: uint,
@@ -302,6 +305,7 @@ impl LayoutTask {
                 dirty: Rect::zero(),
                 layout_root: None,
                 font_scale: 1.0,
+                last_font_scale: 1.0,
                 generation: 0,
                 content_box_response: Rect::zero(),
                 content_boxes_response: Vec::new(),
@@ -333,6 +337,7 @@ impl LayoutTask {
             font_cache_task: self.font_cache_task.clone(),
             stylist: &*rw_data.stylist,
             font_scale: rw_data.font_scale,
+            last_font_scale: rw_data.last_font_scale,
             url: (*url).clone(),
             reflow_root: reflow_root.map(|reflow_root| {
                 OpaqueNodeMethods::from_layout_node(reflow_root)
@@ -501,6 +506,7 @@ impl LayoutTask {
     }
 
     fn handle_set_font_scale(&self, rw_data: &mut LayoutTaskData, new_font_scale: f32) -> bool {
+        rw_data.last_font_scale = rw_data.font_scale;
         rw_data.font_scale = new_font_scale;
         let mut shared_layout_context =
             self.build_shared_layout_context(&*rw_data,

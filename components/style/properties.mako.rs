@@ -10,6 +10,7 @@ use std::ascii::AsciiExt;
 use std::borrow::ToOwned;
 use std::fmt;
 use std::fmt::Debug;
+use std::num::ToPrimitive;
 use std::sync::Arc;
 
 use util::logical_geometry::{WritingMode, LogicalMargin};
@@ -22,7 +23,7 @@ use geom::SideOffsets2D;
 use geom::size::Size2D;
 
 use values::specified::{Length, BorderStyle};
-use values::computed::{self, ToComputedValue};
+use values::computed::{self, ToComputedValue, AdjustFontSize};
 use selectors::matching::DeclarationBlock;
 use parser::{ParserContext, log_css_error};
 use stylesheets::Origin;
@@ -45,12 +46,13 @@ def to_camel_case(ident):
     return re.sub("_([a-z])", lambda m: m.group(1).upper(), ident.strip("_").capitalize())
 
 class Longhand(object):
-    def __init__(self, name, derived_from=None, experimental=False):
+    def __init__(self, name, derived_from=None, experimental=False, affected_by_font_size=False):
         self.name = name
         self.ident = to_rust_ident(name)
         self.camel_case = to_camel_case(self.ident)
         self.style_struct = THIS_STYLE_STRUCT
         self.experimental = experimental
+        self.affected_by_font_size = affected_by_font_size
         if derived_from is None:
             self.derived_from = None
         else:
@@ -98,12 +100,15 @@ def switch_to_style_struct(name):
 
 pub mod longhands {
 
-    <%def name="raw_longhand(name, derived_from=None, experimental=False)">
+    <%def name="raw_longhand(name, derived_from=None, experimental=False, affected_by_font_size=False)">
     <%
         if derived_from is not None:
             derived_from = derived_from.split()
 
-        property = Longhand(name, derived_from=derived_from, experimental=experimental)
+        property = Longhand(name,
+                            derived_from=derived_from,
+                            experimental=experimental,
+                            affected_by_font_size=affected_by_font_size)
         THIS_STYLE_STRUCT.longhands.append(property)
         LONGHANDS.append(property)
         LONGHANDS_BY_NAME[name] = property
@@ -136,9 +141,11 @@ pub mod longhands {
         }
     </%def>
 
-    <%def name="longhand(name, derived_from=None, experimental=False)">
-        <%self:raw_longhand name="${name}" derived_from="${derived_from}"
-                            experimental="${experimental}">
+    <%def name="longhand(name, derived_from=None, experimental=False, affected_by_font_size=False)">
+        <%self:raw_longhand name="${name}"
+                            derived_from="${derived_from}"
+                            experimental="${experimental}"
+                            affected_by_font_size="${affected_by_font_size}">
             ${caller.body()}
             % if derived_from is None:
                 pub fn parse_specified(context: &ParserContext, input: &mut Parser)
@@ -227,7 +234,7 @@ pub mod longhands {
     % endfor
 
     % for side in ["top", "right", "bottom", "left"]:
-        <%self:longhand name="border-${side}-width">
+        <%self:longhand name="border-${side}-width" affected_by_font_size="True">
             use values::computed::{ToComputedValue, Context};
             use util::geometry::Au;
             use cssparser::ToCss;
@@ -489,7 +496,7 @@ pub mod longhands {
 
     ${switch_to_style_struct("InheritedBox")}
 
-    <%self:longhand name="line-height">
+    <%self:longhand name="line-height" affected_by_font_size="True">
         use values::computed::{ToComputedValue, Context};
         use cssparser::ToCss;
         use text_writer::{self, TextWriter};
@@ -536,21 +543,34 @@ pub mod longhands {
         }
         pub mod computed_value {
             use values::CSSFloat;
-            use values::computed;
+            use values::computed::{self, AdjustFontSize};
             use util::geometry::Au;
             use std::fmt;
+
             #[derive(PartialEq, Copy, Clone)]
             pub enum T {
                 Normal,
                 Length(computed::Length),
                 Number(CSSFloat),
             }
+
             impl fmt::Debug for T {
                 fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
                     match self {
                         &T::Normal => write!(f, "normal"),
                         &T::Length(length) => write!(f, "{:?}%", length),
                         &T::Number(number) => write!(f, "{}", number),
+                    }
+                }
+            }
+
+            impl AdjustFontSize for T {
+                fn adjust_font_size(&self, ratio: f64) -> Option<T> {
+                    match *self {
+                        T::Length(length) => {
+                            length.adjust_font_size(ratio).map(|length| T::Length(length))
+                        }
+                        T::Normal | T::Number(_) => None,
                     }
                 }
             }
@@ -4401,3 +4421,28 @@ pub fn longhands_from_shorthand(shorthand: &str) -> Option<Vec<String>> {
         _ => None,
     }
 }
+
+#[inline]
+pub fn adjust_font_size(old_style: &Arc<ComputedValues>, ratio: f64) -> Arc<ComputedValues> {
+    % for style_struct in STYLE_STRUCTS:
+        let old_${style_struct.ident} = &old_style.${style_struct.ident};
+        let mut new_${style_struct.ident} = (*old_${style_struct.ident}).clone();
+            % for longhand in style_struct.longhands:
+                % if longhand.affected_by_font_size:
+                    if let Some(result) = old_${style_struct.ident}.${longhand.ident}
+                                                                   .adjust_font_size(ratio) {
+                        new_${style_struct.ident}.make_unique().${longhand.ident} = result
+                    }
+                % endif
+            % endfor
+    % endfor
+    Arc::new(ComputedValues {
+        % for style_struct in STYLE_STRUCTS:
+            ${style_struct.ident}: new_${style_struct.ident},
+        % endfor
+        shareable: old_style.shareable,
+        writing_mode: old_style.writing_mode,
+        root_font_size: old_style.root_font_size,
+    })
+}
+

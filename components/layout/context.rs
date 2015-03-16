@@ -91,6 +91,9 @@ pub struct SharedLayoutContext {
     /// The font scale, used for "zoom text only".
     pub font_scale: f32,
 
+    /// The last font scale, used for "zoom text only".
+    pub last_font_scale: f32,
+
     /// Did the screen size change?
     pub screen_size_changed: bool,
 }

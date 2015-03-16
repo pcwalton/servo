@@ -755,7 +755,9 @@ pub mod computed {
     pub use cssparser::Color as CSSColor;
     use geom::size::Size2D;
     use properties::longhands;
+
     use std::fmt;
+    use std::num::ToPrimitive;
     use url::Url;
     use util::geometry::Au;
 
@@ -1058,4 +1060,23 @@ pub mod computed {
             }
         }
     }
+
+    pub trait AdjustFontSize {
+        fn adjust_font_size(&self, ratio: f64) -> Option<Self>;
+    }
+
+    impl AdjustFontSize for Length {
+        #[inline]
+        fn adjust_font_size(&self, ratio: f64) -> Option<Length> {
+            if !self.font_relative {
+                None
+            } else {
+                Some(Length {
+                    au: Au((self.au.to_f64().unwrap() * ratio) as i32),
+                    font_relative: true,
+                })
+            }
+        }
+    }
 }
+
