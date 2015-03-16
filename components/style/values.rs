@@ -1078,5 +1078,57 @@ pub mod computed {
             }
         }
     }
+
+    impl AdjustFontSize for LengthOrPercentage {
+        #[inline]
+        fn adjust_font_size(&self, ratio: f64) -> Option<LengthOrPercentage> {
+            match *self {
+                LengthOrPercentage::Length(length) => {
+                    length.adjust_font_size(ratio).map(|new_length| {
+                        LengthOrPercentage::Length(new_length)
+                    })
+                }
+                LengthOrPercentage::Percentage(_) => None,
+            }
+        }
+    }
+
+    impl AdjustFontSize for LengthOrPercentageOrAuto {
+        #[inline]
+        fn adjust_font_size(&self, ratio: f64) -> Option<LengthOrPercentageOrAuto> {
+            match *self {
+                LengthOrPercentageOrAuto::Length(length) => {
+                    length.adjust_font_size(ratio).map(|new_length| {
+                        LengthOrPercentageOrAuto::Length(new_length)
+                    })
+                }
+                LengthOrPercentageOrAuto::Percentage(_) | LengthOrPercentageOrAuto::Auto => None,
+            }
+        }
+    }
+
+    impl AdjustFontSize for LengthOrPercentageOrNone {
+        #[inline]
+        fn adjust_font_size(&self, ratio: f64) -> Option<LengthOrPercentageOrNone> {
+            match *self {
+                LengthOrPercentageOrNone::Length(length) => {
+                    length.adjust_font_size(ratio).map(|new_length| {
+                        LengthOrPercentageOrNone::Length(new_length)
+                    })
+                }
+                LengthOrPercentageOrNone::Percentage(_) | LengthOrPercentageOrNone::None => None,
+            }
+        }
+    }
+
+    impl<T:AdjustFontSize> AdjustFontSize for Option<T> {
+        #[inline]
+        fn adjust_font_size(&self, ratio: f64) -> Option<Option<T>> {
+            match *self {
+                None => None,
+                Some(ref inner) => inner.adjust_font_size(ratio).map(|inner| Some(inner)),
+            }
+        }
+    }
 }
 

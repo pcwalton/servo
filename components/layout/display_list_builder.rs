@@ -608,7 +608,7 @@ impl FragmentDisplayListBuilding for Fragment {
                                                        absolute_bounds: &Rect<Au>,
                                                        clip: &ClippingRegion) {
         // NB: According to CSS-BACKGROUNDS, box shadows render in *reverse* order (front to back).
-        for box_shadow in style.get_effects().box_shadow.iter().rev() {
+        for box_shadow in style.get_effects().box_shadow.0.iter().rev() {
             let bounds =
                 shadow_bounds(&absolute_bounds.translate(&Point2D(box_shadow.offset_x.au,
                                                                   box_shadow.offset_y.au)),

@@ -186,8 +186,8 @@ pub mod longhands {
         </%self:single_keyword_computed>
     </%def>
 
-    <%def name="predefined_type(name, type, initial_value, parse_method='parse')">
-        <%self:longhand name="${name}">
+    <%def name="predefined_type(name, type, initial_value, parse_method='parse', affected_by_font_size=False)">
+        <%self:longhand name="${name}" affected_by_font_size="${affected_by_font_size}">
             #[allow(unused_imports)]
             use util::geometry::Au;
             pub type SpecifiedValue = specified::${type};
@@ -211,7 +211,8 @@ pub mod longhands {
         ${predefined_type(
                 "margin-" + side,
                 "LengthOrPercentageOrAuto",
-                "computed::LengthOrPercentageOrAuto::Length(computed::Length::from_au(Au(0)))")}
+                "computed::LengthOrPercentageOrAuto::Length(computed::Length::from_au(Au(0)))",
+                affected_by_font_size=True)}
     % endfor
 
     ${new_style_struct("Padding", is_inherited=False)}
@@ -220,7 +221,8 @@ pub mod longhands {
         ${predefined_type("padding-" + side,
                           "LengthOrPercentage",
                           "computed::LengthOrPercentage::Length(computed::Length::from_au(Au(0)))",
-                          "parse_non_negative")}
+                          "parse_non_negative",
+                          affected_by_font_size=True)}
     % endfor
 
     ${new_style_struct("Border", is_inherited=False)}
@@ -278,9 +280,11 @@ pub mod longhands {
 
     // FIXME(#4126): when gfx supports painting it, make this Size2D<LengthOrPercentage>
     % for corner in ["top-left", "top-right", "bottom-right", "bottom-left"]:
-        ${predefined_type("border-" + corner + "-radius", "LengthOrPercentage",
+        ${predefined_type("border-" + corner + "-radius",
+                          "LengthOrPercentage",
                           "computed::LengthOrPercentage::Length(computed::Length::from_au(Au(0)))",
-                          "parse_non_negative")}
+                          "parse_non_negative",
+                          affected_by_font_size=True)}
     % endfor
 
     ${new_style_struct("Outline", is_inherited=False)}
@@ -313,13 +317,18 @@ pub mod longhands {
         }
     </%self:longhand>
 
-    ${predefined_type("outline-offset", "Length", "computed::Length::from_au(Au(0))")}
+    ${predefined_type("outline-offset",
+                      "Length",
+                      "computed::Length::from_au(Au(0))",
+                      affected_by_font_size=True)}
 
     ${new_style_struct("PositionOffsets", is_inherited=False)}
 
     % for side in ["top", "right", "bottom", "left"]:
-        ${predefined_type(side, "LengthOrPercentageOrAuto",
-                          "computed::LengthOrPercentageOrAuto::Auto")}
+        ${predefined_type(side,
+                          "LengthOrPercentageOrAuto",
+                          "computed::LengthOrPercentageOrAuto::Auto",
+                          affected_by_font_size=True)}
     % endfor
 
     // CSS 2.1, Section 9 - Visual formatting model
@@ -437,10 +446,12 @@ pub mod longhands {
 
     ${switch_to_style_struct("Box")}
 
-    ${predefined_type("width", "LengthOrPercentageOrAuto",
+    ${predefined_type("width",
+                      "LengthOrPercentageOrAuto",
                       "computed::LengthOrPercentageOrAuto::Auto",
-                      "parse_non_negative")}
-    <%self:longhand name="height">
+                      "parse_non_negative",
+                      affected_by_font_size="True")}
+    <%self:longhand name="height" affected_by_font_size="True">
         use values::computed::{ToComputedValue, Context};
         use cssparser::ToCss;
         use text_writer::{self, TextWriter};
@@ -480,19 +491,27 @@ pub mod longhands {
         }
     </%self:longhand>
 
-    ${predefined_type("min-width", "LengthOrPercentage",
+    ${predefined_type("min-width",
+                      "LengthOrPercentage",
                       "computed::LengthOrPercentage::Length(computed::Length::from_au(Au(0)))",
-                      "parse_non_negative")}
-    ${predefined_type("max-width", "LengthOrPercentageOrNone",
+                      "parse_non_negative",
+                      affected_by_font_size=True)}
+    ${predefined_type("max-width",
+                      "LengthOrPercentageOrNone",
                       "computed::LengthOrPercentageOrNone::None",
-                      "parse_non_negative")}
+                      "parse_non_negative",
+                      affected_by_font_size=True)}
 
-    ${predefined_type("min-height", "LengthOrPercentage",
+    ${predefined_type("min-height",
+                      "LengthOrPercentage",
                       "computed::LengthOrPercentage::Length(computed::Length::from_au(Au(0)))",
-                      "parse_non_negative")}
-    ${predefined_type("max-height", "LengthOrPercentageOrNone",
+                      "parse_non_negative",
+                      affected_by_font_size=True)}
+    ${predefined_type("max-height",
+                      "LengthOrPercentageOrNone",
                       "computed::LengthOrPercentageOrNone::None",
-                      "parse_non_negative")}
+                      "parse_non_negative",
+                      affected_by_font_size=True)}
 
     ${switch_to_style_struct("InheritedBox")}
 
@@ -1209,18 +1228,33 @@ pub mod longhands {
         }
     </%self:longhand>
 
-    <%self:longhand name="background-position">
+    <%self:longhand name="background-position" affected_by_font_size="True">
             use cssparser::ToCss;
             use text_writer::{self, TextWriter};
             use values::computed::{ToComputedValue, Context};
 
             pub mod computed_value {
-                use values::computed::LengthOrPercentage;
+                use values::computed::{AdjustFontSize, LengthOrPercentage};
 
                 #[derive(PartialEq, Copy, Clone)]
                 pub struct T {
                     pub horizontal: LengthOrPercentage,
                     pub vertical: LengthOrPercentage,
+                }
+
+                impl AdjustFontSize for T {
+                    fn adjust_font_size(&self, ratio: f64) -> Option<T> {
+                        let horizontal = self.horizontal.adjust_font_size(ratio);
+                        let vertical = self.vertical.adjust_font_size(ratio);
+                        if horizontal.is_some() || vertical.is_some() {
+                            Some(T {
+                                horizontal: horizontal.unwrap_or(self.horizontal),
+                                vertical: vertical.unwrap_or(self.vertical),
+                            })
+                        } else {
+                            None
+                        }
+                    }
                 }
             }
 
@@ -1318,14 +1352,14 @@ pub mod longhands {
 
     ${single_keyword("background-attachment", "scroll fixed")}
 
-    <%self:longhand name="background-size">
+    <%self:longhand name="background-size" affected_by_font_size="True">
         use cssparser::{ToCss, Token};
         use std::ascii::AsciiExt;
         use text_writer::{self, TextWriter};
         use values::computed::{Context, ToComputedValue};
 
         pub mod computed_value {
-            use values::computed::LengthOrPercentageOrAuto;
+            use values::computed::{AdjustFontSize, LengthOrPercentageOrAuto};
 
             #[derive(PartialEq, Clone, Debug)]
             pub struct ExplicitSize {
@@ -1338,6 +1372,26 @@ pub mod longhands {
                 Explicit(ExplicitSize),
                 Cover,
                 Contain,
+            }
+
+            impl AdjustFontSize for T {
+                fn adjust_font_size(&self, ratio: f64) -> Option<T> {
+                    match *self {
+                        T::Cover | T::Contain => None,
+                        T::Explicit(ref explicit_size) => {
+                            let width = explicit_size.width.adjust_font_size(ratio);
+                            let height = explicit_size.height.adjust_font_size(ratio);
+                            if width.is_some() || height.is_some() {
+                                Some(T::Explicit(ExplicitSize {
+                                    width: width.unwrap_or(explicit_size.width),
+                                    height: height.unwrap_or(explicit_size.height),
+                                }))
+                            } else {
+                                None
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -1683,7 +1737,7 @@ pub mod longhands {
         }
     </%self:longhand>
 
-    <%self:longhand name="font-size">
+    <%self:longhand name="font-size" affected_by_font_size="True">
         use util::geometry::Au;
         use values::computed::{ToComputedValue, Context};
         use cssparser::ToCss;
@@ -1775,7 +1829,7 @@ pub mod longhands {
     // TODO: initial value should be 'start' (CSS Text Level 3, direction-dependent.)
     ${single_keyword("text-align", "left right center justify")}
 
-    <%self:longhand name="letter-spacing">
+    <%self:longhand name="letter-spacing" affected_by_font_size="True">
         use values::computed::{ToComputedValue, Context};
         use cssparser::ToCss;
         use text_writer::{self, TextWriter};
@@ -1826,7 +1880,7 @@ pub mod longhands {
         }
     </%self:longhand>
 
-    <%self:longhand name="word-spacing">
+    <%self:longhand name="word-spacing" affected_by_font_size="True">
         use values::computed::{ToComputedValue, Context};
         use cssparser::ToCss;
         use text_writer::{self, TextWriter};
@@ -1879,7 +1933,8 @@ pub mod longhands {
 
     ${predefined_type("text-indent",
                       "LengthOrPercentage",
-                      "computed::LengthOrPercentage::Length(computed::Length::from_au(Au(0)))")}
+                      "computed::LengthOrPercentage::Length(computed::Length::from_au(Au(0)))",
+                      affected_by_font_size=True)}
 
     // Also known as "word-wrap" (which is more popular because of IE), but this is the preferred
     // name per CSS-TEXT 6.2.
@@ -2071,7 +2126,7 @@ pub mod longhands {
 
     ${single_keyword("border-collapse", "separate collapse", experimental=True)}
 
-    <%self:longhand name="border-spacing">
+    <%self:longhand name="border-spacing" affected_by_font_size="True">
         use values::computed::{Context, ToComputedValue};
 
         use cssparser::ToCss;
@@ -2079,12 +2134,27 @@ pub mod longhands {
         use util::geometry::Au;
 
         pub mod computed_value {
-            use values::computed;
+            use values::computed::{self, AdjustFontSize};
 
             #[derive(Clone, Copy, Debug, PartialEq, RustcEncodable)]
             pub struct T {
                 pub horizontal: computed::Length,
                 pub vertical: computed::Length,
+            }
+
+            impl AdjustFontSize for T {
+                fn adjust_font_size(&self, ratio: f64) -> Option<T> {
+                    let horizontal = self.horizontal.adjust_font_size(ratio);
+                    let vertical = self.vertical.adjust_font_size(ratio);
+                    if horizontal.is_some() || vertical.is_some() {
+                        Some(T {
+                            horizontal: horizontal.unwrap_or(self.horizontal),
+                            vertical: vertical.unwrap_or(self.vertical),
+                        })
+                    } else {
+                        None
+                    }
+                }
             }
         }
 
@@ -2267,7 +2337,7 @@ pub mod longhands {
         }
     </%self:longhand>
 
-    <%self:longhand name="box-shadow">
+    <%self:longhand name="box-shadow" affected_by_font_size="True">
         use cssparser::{self, ToCss};
         use text_writer::{self, TextWriter};
         use values::computed::{ToComputedValue, Context};
@@ -2323,10 +2393,29 @@ pub mod longhands {
         }
 
         pub mod computed_value {
-            use values::computed;
+            use values::computed::{self, AdjustFontSize};
             use std::fmt;
 
-            pub type T = Vec<BoxShadow>;
+            #[derive(Clone, PartialEq, Debug)]
+            pub struct T(pub Vec<BoxShadow>);
+
+            impl AdjustFontSize for T {
+                fn adjust_font_size(&self, ratio: f64) -> Option<T> {
+                    let result: Vec<_> =
+                        self.0
+                            .iter()
+                            .map(|box_shadow| box_shadow.adjust_font_size(ratio))
+                            .collect();
+                    if result.iter().any(|x| x.is_some()) {
+                        Some(T(result.into_iter()
+                                     .enumerate()
+                                     .map(|(i, box_shadow)| box_shadow.unwrap_or(self.0[i]))
+                                     .collect()))
+                    } else {
+                        None
+                    }
+                }
+            }
 
             #[derive(Clone, PartialEq, Copy)]
             pub struct BoxShadow {
@@ -2336,6 +2425,28 @@ pub mod longhands {
                 pub spread_radius: computed::Length,
                 pub color: computed::CSSColor,
                 pub inset: bool,
+            }
+
+            impl AdjustFontSize for BoxShadow {
+                fn adjust_font_size(&self, ratio: f64) -> Option<BoxShadow> {
+                    let offset_x = self.offset_x.adjust_font_size(ratio);
+                    let offset_y = self.offset_y.adjust_font_size(ratio);
+                    let blur_radius = self.blur_radius.adjust_font_size(ratio);
+                    let spread_radius = self.spread_radius.adjust_font_size(ratio);
+                    if offset_x.is_some() || offset_y.is_some() || blur_radius.is_some() ||
+                            spread_radius.is_some() {
+                        Some(BoxShadow {
+                            offset_x: offset_x.unwrap_or(self.offset_x),
+                            offset_y: offset_y.unwrap_or(self.offset_y),
+                            blur_radius: blur_radius.unwrap_or(self.blur_radius),
+                            spread_radius: spread_radius.unwrap_or(self.spread_radius),
+                            color: self.color,
+                            inset: self.inset,
+                        })
+                    } else {
+                        None
+                    }
+                }
             }
 
             impl fmt::Debug for BoxShadow {
@@ -2352,7 +2463,7 @@ pub mod longhands {
 
         #[inline]
         pub fn get_initial_value() -> computed_value::T {
-            Vec::new()
+            computed_value::T(Vec::new())
         }
 
         pub fn parse(_context: &ParserContext, input: &mut Parser) -> Result<SpecifiedValue, ()> {
@@ -2368,7 +2479,9 @@ pub mod longhands {
 
             #[inline]
             fn to_computed_value(&self, context: &Context) -> computed_value::T {
-                self.iter().map(|value| compute_one_box_shadow(value, context)).collect()
+                computed_value::T(self.iter()
+                                      .map(|value| compute_one_box_shadow(value, context))
+                                      .collect())
             }
         }
 
@@ -2449,7 +2562,7 @@ pub mod longhands {
         }
     </%self:longhand>
 
-    <%self:longhand name="clip">
+    <%self:longhand name="clip" affected_by_font_size="True">
         use cssparser::ToCss;
         use text_writer::{self, TextWriter};
 
@@ -2458,7 +2571,7 @@ pub mod longhands {
         use values::computed::{ToComputedValue, Context};
 
         pub mod computed_value {
-            use values::computed;
+            use values::computed::{self, AdjustFontSize};
 
             #[derive(Clone, PartialEq, Eq, Copy, Debug)]
             pub struct ClipRect {
@@ -2466,6 +2579,25 @@ pub mod longhands {
                 pub right: Option<computed::Length>,
                 pub bottom: Option<computed::Length>,
                 pub left: computed::Length,
+            }
+
+            impl AdjustFontSize for ClipRect {
+                fn adjust_font_size(&self, ratio: f64) -> Option<ClipRect> {
+                    let top = self.top.adjust_font_size(ratio);
+                    let right = self.right.adjust_font_size(ratio);
+                    let bottom = self.bottom.adjust_font_size(ratio);
+                    let left = self.left.adjust_font_size(ratio);
+                    if top.is_some() || right.is_some() || bottom.is_some() || left.is_some() {
+                        Some(ClipRect {
+                            top: top.unwrap_or(self.top),
+                            right: right.unwrap_or(self.right),
+                            bottom: bottom.unwrap_or(self.bottom),
+                            left: left.unwrap_or(self.left),
+                        })
+                    } else {
+                        None
+                    }
+                }
             }
 
             pub type T = Option<ClipRect>;
@@ -2571,7 +2703,7 @@ pub mod longhands {
         }
     </%self:longhand>
 
-    <%self:longhand name="text-shadow">
+    <%self:longhand name="text-shadow" affected_by_font_size="True">
         use cssparser::{self, ToCss};
         use std::fmt;
         use text_writer::{self, TextWriter};
@@ -2605,17 +2737,53 @@ pub mod longhands {
 
         pub mod computed_value {
             use cssparser::Color;
-            use values::computed;
+            use values::computed::{self, AdjustFontSize};
 
             #[derive(Clone, PartialEq, Debug)]
             pub struct T(pub Vec<TextShadow>);
 
-            #[derive(Clone, PartialEq, Debug)]
+            impl AdjustFontSize for T {
+                fn adjust_font_size(&self, ratio: f64) -> Option<T> {
+                    let result: Vec<_> =
+                        self.0
+                            .iter()
+                            .map(|text_shadow| text_shadow.adjust_font_size(ratio))
+                            .collect();
+                    if result.iter().any(|x| x.is_some()) {
+                        Some(T(result.into_iter()
+                                     .enumerate()
+                                     .map(|(i, text_shadow)| text_shadow.unwrap_or(self.0[i]))
+                                     .collect()))
+                    } else {
+                        None
+                    }
+                }
+            }
+
+            #[derive(Copy, Clone, PartialEq, Debug)]
             pub struct TextShadow {
                 pub offset_x: computed::Length,
                 pub offset_y: computed::Length,
                 pub blur_radius: computed::Length,
                 pub color: Color,
+            }
+
+            impl AdjustFontSize for TextShadow {
+                fn adjust_font_size(&self, ratio: f64) -> Option<TextShadow> {
+                    let offset_x = self.offset_x.adjust_font_size(ratio);
+                    let offset_y = self.offset_y.adjust_font_size(ratio);
+                    let blur_radius = self.blur_radius.adjust_font_size(ratio);
+                    if offset_x.is_some() || offset_y.is_some() || blur_radius.is_some() {
+                        Some(TextShadow {
+                            offset_x: offset_x.unwrap_or(self.offset_x),
+                            offset_y: offset_y.unwrap_or(self.offset_y),
+                            blur_radius: blur_radius.unwrap_or(self.blur_radius),
+                            color: self.color,
+                        })
+                    } else {
+                        None
+                    }
+                }
             }
         }
 
@@ -4423,6 +4591,7 @@ pub fn longhands_from_shorthand(shorthand: &str) -> Option<Vec<String>> {
 }
 
 #[inline]
+#[allow(unused_mut)]
 pub fn adjust_font_size(old_style: &Arc<ComputedValues>, ratio: f64) -> Arc<ComputedValues> {
     % for style_struct in STYLE_STRUCTS:
         let old_${style_struct.ident} = &old_style.${style_struct.ident};

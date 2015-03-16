@@ -2044,7 +2044,7 @@ impl Fragment {
         let mut overflow = border_box;
 
         // Box shadows cause us to draw outside our border box.
-        for box_shadow in self.style().get_effects().box_shadow.iter() {
+        for box_shadow in self.style().get_effects().box_shadow.0.iter() {
             let offset = Point2D(box_shadow.offset_x.au, box_shadow.offset_y.au);
             let inflation = box_shadow.spread_radius.au + box_shadow.blur_radius.au *
                 BLUR_INFLATION_FACTOR;
