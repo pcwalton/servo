@@ -24,7 +24,7 @@ use geom::{Point2D, Rect};
 use std::cmp::max;
 use std::fmt;
 use std::sync::Arc;
-use style::computed_values::{border_collapse, border_spacing, table_layout};
+use style::computed_values::{border_collapse, table_layout};
 use style::properties::ComputedValues;
 use style::values::CSSFloat;
 use style::values::computed::LengthOrPercentageOrAuto;

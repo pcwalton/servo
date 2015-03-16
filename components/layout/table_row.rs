@@ -23,7 +23,6 @@ use util::logical_geometry::LogicalRect;
 use std::cmp::max;
 use std::fmt;
 use std::sync::Arc;
-use style::computed_values::border_spacing;
 use style::properties::ComputedValues;
 use style::values::computed::LengthOrPercentageOrAuto;
 

@@ -506,41 +506,48 @@ impl LayoutTask {
     }
 
     fn handle_set_font_scale(&self, rw_data: &mut LayoutTaskData, new_font_scale: f32) -> bool {
-        rw_data.last_font_scale = rw_data.font_scale;
-        rw_data.font_scale = new_font_scale;
-        let mut shared_layout_context =
-            self.build_shared_layout_context(&*rw_data,
-                                             false,
-                                             None,
-                                             &Url::parse("http://bogus.com").unwrap());
-        rw_data.layout_root.as_mut().unwrap().reflow_entire_document();
-
         let profiler_metadata = self.backdoor_profiler_metadata();
-        profile(TimeProfilerCategory::LayoutResizeText,
+        profile(TimeProfilerCategory::LayoutPerform,
                 profiler_metadata,
                 self.time_profiler_chan.clone(),
                 || {
-                    if let Some(ref mut traversal) = rw_data.parallel_traversal {
-                        parallel::perform_text_resize_traversal(rw_data.layout_root
-                                                                       .as_mut()
-                                                                       .unwrap(),
-                                                                &profiler_metadata,
-                                                                self.time_profiler_chan.clone(),
-                                                                &shared_layout_context,
-                                                                traversal);
-                    } else {
-                        sequential::resize_text(rw_data.layout_root.as_mut().unwrap(),
-                                                &shared_layout_context)
-                    }
-                });
+            rw_data.last_font_scale = rw_data.font_scale;
+            rw_data.font_scale = new_font_scale;
+            let mut shared_layout_context =
+                self.build_shared_layout_context(&*rw_data,
+                                                 false,
+                                                 None,
+                                                 &Url::parse("http://bogus.com").unwrap());
+            rw_data.layout_root.as_mut().unwrap().reflow_entire_document();
 
-        self.layout_and_build_display_list((*rw_data.layout_root.as_ref().unwrap()).clone(),
-                                           &mut shared_layout_context,
-                                           &mut *rw_data,
-                                           &profiler_metadata,
-                                           ReflowGoal::ForDisplay,
-                                           None,
-                                           &MAX_RECT);
+            profile(TimeProfilerCategory::LayoutResizeText,
+                    profiler_metadata,
+                    self.time_profiler_chan.clone(),
+                    || {
+                        if let Some(ref mut traversal) = rw_data.parallel_traversal {
+                            parallel::perform_text_resize_traversal(rw_data.layout_root
+                                                                           .as_mut()
+                                                                           .unwrap(),
+                                                                    &profiler_metadata,
+                                                                    self.time_profiler_chan
+                                                                        .clone(),
+                                                                    &shared_layout_context,
+                                                                    traversal);
+                        } else {
+                            sequential::resize_text(rw_data.layout_root.as_mut().unwrap(),
+                                                    &shared_layout_context)
+                        }
+                    });
+
+            self.layout_and_build_display_list((*rw_data.layout_root.as_ref().unwrap()).clone(),
+                                               &mut shared_layout_context,
+                                               &mut *rw_data,
+                                               &profiler_metadata,
+                                               ReflowGoal::ForDisplay,
+                                               None,
+                                               &MAX_RECT);
+        });
+
         true
     }
 

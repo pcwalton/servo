@@ -11,7 +11,6 @@ use context::LayoutContext;
 use flow::{FlowClass, Flow};
 use fragment::{Fragment, FragmentBorderBoxIterator};
 use layout_debug;
-use style::computed_values::border_spacing;
 use table::{BorderSpacing, ChildInlineSizeInfo, ColumnComputedInlineSize};
 use table::{ColumnIntrinsicInlineSize, InternalTable, TableLikeFlow};
 use wrapper::ThreadSafeLayoutNode;

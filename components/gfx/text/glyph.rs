@@ -10,8 +10,9 @@ use std::num::{ToPrimitive, NumCast};
 use std::ops::{Add, Sub, Mul, Neg, Div, Rem, BitAnd, BitOr, BitXor, Shl, Shr, Not};
 use std::u16;
 use std::vec::Vec;
-use util::geometry::Au;
+use util::geometry::{Au, ZERO_POINT};
 use util::range::{self, Range, RangeIndex, EachIndex};
+use util::smallvec::{SmallVec, SmallVec1};
 use util::vec::*;
 
 /// GlyphEntry is a port of Gecko's CompressedGlyph scheme for storing glyph data compactly.
@@ -320,7 +321,10 @@ impl<'a> DetailedGlyphStore {
         }
     }
 
-    fn add_detailed_glyphs_for_entry(&mut self, entry_offset: CharIndex, glyphs: &[DetailedGlyph]) {
+    #[inline]
+    fn add_detailed_glyphs_for_entry(&mut self,
+                                     entry_offset: CharIndex,
+                                     glyphs: &[DetailedGlyph]) {
         let entry = DetailedGlyphRecord {
             entry_offset: entry_offset,
             detail_offset: self.detail_buffer.len() as int,
@@ -344,18 +348,19 @@ impl<'a> DetailedGlyphStore {
         self.lookup_is_sorted = false;
     }
 
-    fn get_detailed_glyphs_for_entry(&'a self, entry_offset: CharIndex, count: u16)
-                                  -> &'a [DetailedGlyph] {
+    #[inline]
+    fn get_detailed_glyphs_for_entry(&self, entry_offset: CharIndex, count: u16)
+                                     -> &[DetailedGlyph] {
         debug!("Requesting detailed glyphs[n={}] for entry[off={:?}]", count, entry_offset);
 
         // FIXME: Is this right? --pcwalton
         // TODO: should fix this somewhere else
         if count == 0 {
-            return &self.detail_buffer[0..0];
+            return &[]
         }
 
-        assert!((count as uint) <= self.detail_buffer.len());
-        assert!(self.lookup_is_sorted);
+        debug_assert!((count as uint) <= self.detail_buffer.len());
+        debug_assert!(self.lookup_is_sorted);
 
         let key = DetailedGlyphRecord {
             entry_offset: entry_offset,
@@ -365,7 +370,7 @@ impl<'a> DetailedGlyphStore {
         let i = self.detail_lookup.as_slice().binary_search_index(&key)
             .expect("Invalid index not found in detailed glyph lookup table!");
 
-        assert!(i + (count as uint) <= self.detail_buffer.len());
+        debug_assert!(i + (count as uint) <= self.detail_buffer.len());
         // return a slice into the buffer
         &self.detail_buffer[i .. i + count as uint]
     }
@@ -374,8 +379,8 @@ impl<'a> DetailedGlyphStore {
                                      entry_offset: CharIndex,
                                      detail_offset: u16)
             -> &'a DetailedGlyph {
-        assert!((detail_offset as uint) <= self.detail_buffer.len());
-        assert!(self.lookup_is_sorted);
+        debug_assert!((detail_offset as uint) <= self.detail_buffer.len());
+        debug_assert!(self.lookup_is_sorted);
 
         let key = DetailedGlyphRecord {
             entry_offset: entry_offset,
@@ -747,17 +752,51 @@ impl<'a> GlyphStore {
     pub fn resize(&self, ratio: f64) -> GlyphStore {
         let mut new_glyph_store = GlyphStore::new(self.char_len().to_int().unwrap(),
                                                   self.is_whitespace);
+        let mut new_detailed_glyphs;
         for (i, glyph_entry) in self.entry_buffer.iter().enumerate() {
             let mut glyph_entry = *glyph_entry;
             if glyph_entry.is_simple() {
                 let new_advance = Au::from_frac_px(glyph_entry.advance().to_subpx() * ratio);
                 if is_simple_advance(new_advance) {
                     glyph_entry = glyph_entry.set_advance(new_advance)
+                } else {
+                    new_glyph_store.detail_store
+                                   .add_detailed_glyphs_for_entry(CharIndex(i as isize), &[
+                        DetailedGlyph {
+                            id: glyph_entry.id(),
+                            advance: new_advance,
+                            offset: ZERO_POINT,
+                        },
+                    ]);
                 }
+            } else {
+                let old_detailed_glyphs =
+                    self.detail_store.get_detailed_glyphs_for_entry(CharIndex(i as isize),
+                                                                    glyph_entry.glyph_count());
+
+                new_detailed_glyphs = SmallVec1::new();
+                for old_detailed_glyph in old_detailed_glyphs.iter() {
+                    // FIXME(pcwalton): Scale the offset too?
+                    let new_advance =
+                        Au::from_frac_px(old_detailed_glyph.advance.to_subpx() * ratio);
+                    new_detailed_glyphs.push(DetailedGlyph {
+                        id: old_detailed_glyph.id,
+                        advance: new_advance,
+                        offset: old_detailed_glyph.offset,
+                    })
+                }
+
+                new_glyph_store.detail_store
+                               .add_detailed_glyphs_for_entry(CharIndex(i as isize),
+                                                              new_detailed_glyphs.as_slice());
             }
             new_glyph_store.entry_buffer[i] = glyph_entry
         }
-        new_glyph_store.detail_store = self.detail_store.clone();
+
+        // We ensure by construction that the lookup buffer remains sorted, so we don't need to
+        // actually sort it.
+        new_glyph_store.detail_store.lookup_is_sorted = true;
+
         new_glyph_store
     }
 }
