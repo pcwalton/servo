@@ -190,9 +190,9 @@ impl Window {
                     }
                 } else if self.alt_pressed() {
                     if delta < 0 {
-                        self.event_queue.borrow_mut().push(WindowEvent::ZoomTextOnly(1.0/1.1));
+                        self.event_queue.borrow_mut().push(WindowEvent::ZoomTextOnly(1.0/1.03));
                     } else if delta > 0 {
-                        self.event_queue.borrow_mut().push(WindowEvent::ZoomTextOnly(1.1));
+                        self.event_queue.borrow_mut().push(WindowEvent::ZoomTextOnly(1.03));
                     }
                 } else {
                     let dx = 0.0;

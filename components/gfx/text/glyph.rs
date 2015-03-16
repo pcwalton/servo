@@ -750,9 +750,10 @@ impl<'a> GlyphStore {
         for (i, glyph_entry) in self.entry_buffer.iter().enumerate() {
             let mut glyph_entry = *glyph_entry;
             if glyph_entry.is_simple() {
-                glyph_entry =
-                    glyph_entry.set_advance(Au::from_frac_px(glyph_entry.advance().to_subpx() *
-                                                             ratio))
+                let new_advance = Au::from_frac_px(glyph_entry.advance().to_subpx() * ratio);
+                if is_simple_advance(new_advance) {
+                    glyph_entry = glyph_entry.set_advance(new_advance)
+                }
             }
             new_glyph_store.entry_buffer[i] = glyph_entry
         }

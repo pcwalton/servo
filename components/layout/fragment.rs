@@ -2080,8 +2080,13 @@ impl Fragment {
         }
     }
 
-    pub fn resize_text(&mut self, layout_context: &LayoutContext) {
+    pub fn resize_text(&mut self,
+                       layout_context: &LayoutContext,
+                       text_run_cache: &mut RunCacheForTextResizing) {
         let font_scale = layout_context.shared.font_scale;
+        let ratio = font_scale as f64 / layout_context.shared.last_font_scale as f64;
+        self.style = properties::adjust_font_size(&self.style, ratio);
+
         if let SpecificFragmentInfo::ScannedText(ref mut scanned_text_fragment_info) =
                 self.specific {
             let font_group =
@@ -2090,11 +2095,27 @@ impl Fragment {
                                                                font_scale);
             let font = &mut *font_group.fonts.get(0).borrow_mut();
             scanned_text_fragment_info.run =
-                Arc::new(box TextRun::resize(&**scanned_text_fragment_info.run, font))
-        }
+                match text_run_cache.find(&scanned_text_fragment_info.run) {
+                    None => {
+                        let new_text_run =
+                            Arc::new(box TextRun::resize(&**scanned_text_fragment_info.run, font));
+                        text_run_cache.insert(scanned_text_fragment_info.run.clone(),
+                                              new_text_run.clone()); 
+                        new_text_run
+                    }
+                    Some(new_text_run) => new_text_run,
+                };
 
-        let ratio = font_scale as f64 / layout_context.shared.last_font_scale as f64;
-        self.style = properties::adjust_font_size(&self.style, ratio)
+            let new_metrics = scanned_text_fragment_info.run.metrics_for_range(
+                &scanned_text_fragment_info.range);
+            let bounding_box_size = text::bounding_box_for_run_metrics(&new_metrics,
+                                                                       self.style.writing_mode);
+            scanned_text_fragment_info.content_size = bounding_box_size
+            /*let new_border_box = LogicalRect::from_point_size(self.style.writing_mode,
+                                                              self.border_box.start,
+                                                              bounding_box_size);
+            self.border_box = new_border_box*/
+        }
     }
 }
 
@@ -2169,5 +2190,30 @@ fn strip_trailing_whitespace(text_run: &TextRun, range: &mut Range<CharIndex>) -
 
     range.extend_by(-CharIndex(trailing_whitespace_character_count));
     return true
+}
+
+pub struct RunCacheForTextResizing {
+    runs: Vec<(Arc<Box<TextRun>>, Arc<Box<TextRun>>)>,
+}
+
+impl RunCacheForTextResizing {
+    pub fn new() -> RunCacheForTextResizing {
+        RunCacheForTextResizing {
+            runs: Vec::new(),
+        }
+    }
+
+    fn find(&self, text_run: &Arc<Box<TextRun>>) -> Option<Arc<Box<TextRun>>> {
+        for &(ref old_run, ref new_run) in self.runs.iter() {
+            if (&***old_run as *const TextRun) == (&***text_run as *const TextRun) {
+                return Some((*new_run).clone())
+            }
+        }
+        None
+    }
+
+    fn insert(&mut self, old_text_run: Arc<Box<TextRun>>, new_text_run: Arc<Box<TextRun>>) {
+        self.runs.push((old_text_run, new_text_run))
+    }
 }
 

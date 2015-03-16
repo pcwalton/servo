@@ -32,7 +32,7 @@ use display_list_builder::DisplayListBuildingResult;
 use floats::Floats;
 use flow_list::{FlowList, FlowListIterator, MutFlowListIterator};
 use flow_ref::FlowRef;
-use fragment::{Fragment, FragmentBorderBoxIterator, SpecificFragmentInfo};
+use fragment::{Fragment, FragmentBorderBoxIterator, RunCacheForTextResizing, SpecificFragmentInfo};
 use incremental::{self, RECONSTRUCT_FLOW, REFLOW, REFLOW_OUT_OF_FLOW, RestyleDamage};
 use inline::InlineFlow;
 use model::{CollapsibleMargins, IntrinsicISizes, MarginCollapseInfo};
@@ -1223,7 +1223,11 @@ impl<'a> MutableFlowUtils for &'a mut (Flow + 'a) {
     }
 
     fn resize_text(self, layout_context: &LayoutContext) {
-        self.mutate_fragments(&mut |fragment| fragment.resize_text(layout_context))
+        let mut text_run_cache = RunCacheForTextResizing::new();
+        self.mutate_fragments(&mut |fragment| {
+            fragment.resize_text(layout_context, &mut text_run_cache)
+        });
+        self.bubble_inline_sizes()
     }
 
     /// Calculate and set overflow for current flow.

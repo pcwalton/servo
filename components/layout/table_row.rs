@@ -176,6 +176,8 @@ impl Flow for TableRowFlow {
         let _scope = layout_debug_scope!("table_row::bubble_inline_sizes {:x}",
                                          self.block_flow.base.debug_id());
 
+        self.cell_intrinsic_inline_sizes.clear();
+
         // Bubble up the specified inline-sizes from child table cells.
         let (mut min_inline_size, mut pref_inline_size) = (Au(0), Au(0));
         for kid in self.block_flow.base.child_iter() {

@@ -386,7 +386,6 @@ impl<'a> TextRun {
 
 impl GlyphRun {
     fn resize(&self, ratio: f64) -> GlyphRun {
-        // TODO(pcwalton): Resize.
         GlyphRun {
             glyph_store: Arc::new(self.glyph_store.resize(ratio)),
             range: self.range,

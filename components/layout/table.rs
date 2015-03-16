@@ -223,6 +223,8 @@ impl Flow for TableFlow {
         let _scope = layout_debug_scope!("table::bubble_inline_sizes {:x}",
                                          self.block_flow.base.debug_id());
 
+        self.column_intrinsic_inline_sizes.clear();
+
         // Don't use `compute_intrinsic_inline_sizes` here because that will count padding as
         // part of the table, which we don't want to do—it belongs to the table wrapper instead.
         let mut computation = IntrinsicISizesContribution::new();
