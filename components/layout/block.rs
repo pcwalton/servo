@@ -1449,7 +1449,7 @@ impl BlockFlow {
 
         let info = PlacementInfo {
             size: LogicalSize::new(self.fragment.style.writing_mode,
-                                   self.base.position.size.inline,
+                                   self.fragment.border_box.size.inline,
                                    self.fragment.border_box.size.block),
             ceiling: self.base.position.start.b,
             max_inline_size: MAX_AU,
