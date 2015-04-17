@@ -312,6 +312,11 @@ impl<Window: WindowMethods> IOCompositor<Window> {
                 self.create_or_update_descendant_layer(layer_properties);
             }
 
+            (Msg::RemoveLayersNotInSet(pipeline_id, layer_ids),
+             ShutdownState::NotShuttingDown) => {
+                self.remove_layers_not_in_set(pipeline_id, layer_ids.as_slice());
+            }
+
             (Msg::GetGraphicsMetadata(chan), ShutdownState::NotShuttingDown) => {
                 chan.send(Some(self.window.native_metadata())).unwrap();
             }
@@ -639,6 +644,12 @@ impl<Window: WindowMethods> IOCompositor<Window> {
         self.scroll_layer_to_fragment_point_if_necessary(layer_properties.pipeline_id,
                                                          layer_properties.id);
         self.send_buffer_requests_for_all_layers();
+    }
+
+    fn remove_layers_not_in_set(&mut self, pipeline_id: PipelineId, layer_ids: &[LayerId]) {
+        if let Some(ref root_layer) = self.scene.root {
+            remove_descendant_layers_not_in_set(root_layer, pipeline_id, layer_ids)
+        }
     }
 
     fn create_descendant_layer(&self, layer_properties: LayerProperties) {
@@ -1319,6 +1330,26 @@ fn find_layer_with_pipeline_and_layer_id_for_layer(layer: Rc<Layer<CompositorDat
     }
 
     return None;
+}
+
+fn remove_descendant_layers_not_in_set(parent_layer: &Layer<CompositorData>,
+                                       pipeline_id: PipelineId,
+                                       layer_ids: &[LayerId]) {
+    let mut indices_to_remove = Vec::new();
+    for (i, kid) in parent_layer.children().iter().enumerate().rev() {
+        if kid.extra_data.borrow().pipeline_id == pipeline_id &&
+                !layer_ids.contains(&kid.extra_data.borrow().id) {
+            indices_to_remove.push(i);
+        }
+    }
+
+    for index in indices_to_remove.into_iter() {
+        parent_layer.remove_child_at_index(index);
+    }
+
+    for kid in parent_layer.children().iter() {
+        remove_descendant_layers_not_in_set(&*kid, pipeline_id, layer_ids)
+    }
 }
 
 impl<Window> CompositorEventListener for IOCompositor<Window> where Window: WindowMethods {

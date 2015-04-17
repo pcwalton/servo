@@ -94,6 +94,7 @@ impl CompositorEventListener for NullCompositor {
 
             Msg::CreateOrUpdateBaseLayer(..) |
             Msg::CreateOrUpdateDescendantLayer(..) |
+            Msg::RemoveLayersNotInSet(..) |
             Msg::SetLayerRect(..) |
             Msg::AssignPaintedBuffers(..) |
             Msg::ChangeReadyState(..) |

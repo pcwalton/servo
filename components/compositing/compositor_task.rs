@@ -153,6 +153,9 @@ impl PaintListener for Box<CompositorProxy+'static+Send> {
                 self.send(Msg::CreateOrUpdateDescendantLayer(layer_properties));
             }
         }
+
+        let ids = metadata.iter().map(|metadata| metadata.id).collect();
+        self.send(Msg::RemoveLayersNotInSet(pipeline_id, ids));
     }
 
     fn paint_msg_discarded(&mut self) {
@@ -187,6 +190,8 @@ pub enum Msg {
     /// Tells the compositor to create a descendant layer for a pipeline if necessary (i.e. if no
     /// layer with that ID exists).
     CreateOrUpdateDescendantLayer(LayerProperties),
+    /// Removes layers that belong to the given pipeline and are not in the given set.
+    RemoveLayersNotInSet(PipelineId, Vec<LayerId>),
     /// Alerts the compositor that the specified layer's rect has changed.
     SetLayerRect(PipelineId, LayerId, Rect<f32>),
     /// Scroll a page in a window
@@ -229,6 +234,7 @@ impl Debug for Msg {
             Msg::GetGraphicsMetadata(..) => write!(f, "GetGraphicsMetadata"),
             Msg::CreateOrUpdateBaseLayer(..) => write!(f, "CreateOrUpdateBaseLayer"),
             Msg::CreateOrUpdateDescendantLayer(..) => write!(f, "CreateOrUpdateDescendantLayer"),
+            Msg::RemoveLayersNotInSet(..) => write!(f, "RemoveLayersNotInSet"),
             Msg::SetLayerRect(..) => write!(f, "SetLayerRect"),
             Msg::ScrollFragmentPoint(..) => write!(f, "ScrollFragmentPoint"),
             Msg::AssignPaintedBuffers(..) => write!(f, "AssignPaintedBuffers"),
