@@ -138,6 +138,8 @@ pub struct Opts {
 
     /// Whether Style Sharing Cache is used
     pub disable_share_style_cache: bool,
+
+    pub partial_display_list_construction_hack: bool,
 }
 
 fn print_usage(app: &str, opts: &[getopts::OptGroup]) {
@@ -222,6 +224,7 @@ pub fn default_opts() -> Opts {
         resources_path: None,
         sniff_mime_types: false,
         disable_share_style_cache: false,
+        partial_display_list_construction_hack: false,
     }
 }
 
@@ -384,6 +387,8 @@ pub fn from_cmdline_args(args: &[String]) -> bool {
         resources_path: opt_match.opt_str("resources-path"),
         sniff_mime_types: opt_match.opt_present("sniff-mime-types"),
         disable_share_style_cache: debug_options.contains(&"disable-share-style-cache"),
+        partial_display_list_construction_hack:
+            debug_options.contains(&"partial-display-list-construction-hack"),
     };
 
     set_opts(opts);

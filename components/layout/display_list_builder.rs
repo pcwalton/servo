@@ -790,6 +790,11 @@ impl FragmentDisplayListBuilding for Fragment {
                           relative_containing_block_mode: WritingMode,
                           background_and_border_level: BackgroundAndBorderLevel,
                           clip: &ClippingRegion) {
+        if opts::get().partial_display_list_construction_hack &&
+                stacking_relative_flow_origin.y > Au::from_px(1000) {
+            return
+        }
+
         // Compute the fragment position relative to the parent stacking context. If the fragment
         // itself establishes a stacking context, then the origin of its position will be (0, 0)
         // for the purposes of this computation.
