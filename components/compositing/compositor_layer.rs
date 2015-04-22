@@ -63,7 +63,6 @@ impl CompositorData {
         Rc::new(Layer::new(Rect::from_untyped(&layer_properties.rect),
                            tile_size,
                            to_layers_color(&layer_properties.background_color),
-                           1.0,
                            new_compositor_data))
     }
 }

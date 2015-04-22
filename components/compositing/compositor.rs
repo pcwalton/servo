@@ -1343,9 +1343,11 @@ fn remove_descendant_layers_not_in_set(parent_layer: &Layer<CompositorData>,
         }
     }
 
+    /*
     for index in indices_to_remove.into_iter() {
         parent_layer.remove_child_at_index(index);
     }
+    */
 
     for kid in parent_layer.children().iter() {
         remove_descendant_layers_not_in_set(&*kid, pipeline_id, layer_ids)
