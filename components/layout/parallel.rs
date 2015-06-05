@@ -33,6 +33,7 @@ const CHUNK_SIZE: usize = 100;
 fn static_assertion(node: UnsafeLayoutNode) {
     unsafe {
         let _: UnsafeFlow = ::std::intrinsics::transmute(node);
+        let _: UnsafeLayoutNodeList = ::std::intrinsics::transmute(node);
     }
 }
 
@@ -81,7 +82,7 @@ impl DomParallelInfo {
     }
 }
 
-pub type UnsafeLayoutNodeList = *mut Vec<UnsafeLayoutNode>;
+pub type UnsafeLayoutNodeList = (Box<Vec<UnsafeLayoutNode>>, usize);
 
 pub type MultiDomTraversalFunction =
     extern "Rust" fn(UnsafeLayoutNodeList,
@@ -108,7 +109,7 @@ pub trait ParallelPreorderDomTraversal : PreorderDomTraversal {
             top_down_func: MultiDomTraversalFunction,
             bottom_up_func: MultiDomTraversalFunction) {
         let mut discovered_child_nodes = Vec::new();
-        for unsafe_node in unsafe_nodes.into_iter() {
+        for unsafe_node in unsafe_nodes.0.into_iter() {
             // Get a real layout node.
             let node: LayoutNode = unsafe {
                 layout_node_from_unsafe_layout_node(&unsafe_node)
@@ -135,14 +136,14 @@ pub trait ParallelPreorderDomTraversal : PreorderDomTraversal {
                 }
             } else {
                 // If there were no more children, start walking back up.
-                bottom_up_func(box vec![unsafe_node], proxy)
+                bottom_up_func((box vec![unsafe_node], 0), proxy)
             }
         }
 
         for chunk in discovered_child_nodes.chunks(CHUNK_SIZE) {
             proxy.push(WorkUnit {
                 fun:  top_down_func,
-                data: box chunk.iter().cloned().collect(),
+                data: (box chunk.iter().cloned().collect(), 0),
             });
         }
     }
@@ -164,7 +165,7 @@ trait ParallelPostorderDomTraversal : PostorderDomTraversal {
     fn run_parallel(&self,
                     mut unsafe_nodes: UnsafeLayoutNodeList,
                     proxy: &mut WorkerProxy<SharedLayoutContextWrapper,UnsafeLayoutNodeList>) {
-        for unsafe_node in unsafe_nodes.into_iter() {
+        for unsafe_node in unsafe_nodes.0.into_iter() {
             let mut unsafe_node = unsafe_node;
             loop {
                 // Get a real layout node.
@@ -445,7 +446,7 @@ pub fn traverse_dom_preorder(root: LayoutNode,
 
         queue.push(WorkUnit {
             fun:  recalc_style,
-            data: box vec![layout_node_to_unsafe_layout_node(&root)],
+            data: (box vec![layout_node_to_unsafe_layout_node(&root)], 0),
         });
 
         queue.run();
