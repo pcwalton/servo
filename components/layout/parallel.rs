@@ -107,7 +107,7 @@ pub trait ParallelPreorderDomTraversal : PreorderDomTraversal {
             unsafe_nodes: UnsafeLayoutNodeList,
             proxy: &mut WorkerProxy<SharedLayoutContextWrapper,UnsafeLayoutNodeList>,
             top_down_func: MultiDomTraversalFunction,
-            bottom_up_func: MultiDomTraversalFunction) {
+            bottom_up_func: DomTraversalFunction) {
         let mut discovered_child_nodes = Vec::new();
         for unsafe_node in unsafe_nodes.0.into_iter() {
             // Get a real layout node.
@@ -136,7 +136,7 @@ pub trait ParallelPreorderDomTraversal : PreorderDomTraversal {
                 }
             } else {
                 // If there were no more children, start walking back up.
-                bottom_up_func((box vec![unsafe_node], 0), proxy)
+                bottom_up_func(unsafe_node, proxy)
             }
         }
 
@@ -163,45 +163,43 @@ trait ParallelPostorderDomTraversal : PostorderDomTraversal {
     /// The only communication between siblings is that they both
     /// fetch-and-subtract the parent's children count.
     fn run_parallel(&self,
-                    mut unsafe_nodes: UnsafeLayoutNodeList,
+                    mut unsafe_node: UnsafeLayoutNode,
                     proxy: &mut WorkerProxy<SharedLayoutContextWrapper,UnsafeLayoutNodeList>) {
-        for unsafe_node in unsafe_nodes.0.into_iter() {
-            let mut unsafe_node = unsafe_node;
-            loop {
-                // Get a real layout node.
-                let mut node: LayoutNode = unsafe {
-                    layout_node_from_unsafe_layout_node(&unsafe_node)
-                };
+        let mut unsafe_node = unsafe_node;
+        loop {
+            // Get a real layout node.
+            let mut node: LayoutNode = unsafe {
+                layout_node_from_unsafe_layout_node(&unsafe_node)
+            };
 
-                // Perform the appropriate operation.
-                self.process(node);
+            // Perform the appropriate operation.
+            self.process(node);
 
-                let shared_layout_context = unsafe { &*(proxy.user_data().0) };
-                let layout_context = LayoutContext::new(shared_layout_context);
+            let shared_layout_context = unsafe { &*(proxy.user_data().0) };
+            let layout_context = LayoutContext::new(shared_layout_context);
 
-                let parent = match node.layout_parent_node(layout_context.shared) {
-                    None => break,
-                    Some(parent) => parent,
-                };
+            let parent = match node.layout_parent_node(layout_context.shared) {
+                None => break,
+                Some(parent) => parent,
+            };
 
-                unsafe {
-                    let parent_layout_data =
-                        (*parent.borrow_layout_data_unchecked()).as_ref().expect("no layout data");
+            unsafe {
+                let parent_layout_data =
+                    (*parent.borrow_layout_data_unchecked()).as_ref().expect("no layout data");
 
-                    unsafe_node = layout_node_to_unsafe_layout_node(&parent);
+                unsafe_node = layout_node_to_unsafe_layout_node(&parent);
 
-                    let parent_layout_data: &LayoutDataWrapper =
-                        mem::transmute(parent_layout_data);
-                    if parent_layout_data
-                        .data
-                        .parallel
-                        .children_count
-                        .fetch_sub(1, Ordering::Relaxed) == 1 {
-                        // We were the last child of our parent. Construct flows for our parent.
-                    } else {
-                        // Get out of here and find another node to work on.
-                        break
-                    }
+                let parent_layout_data: &LayoutDataWrapper =
+                    mem::transmute(parent_layout_data);
+                if parent_layout_data
+                    .data
+                    .parallel
+                    .children_count
+                    .fetch_sub(1, Ordering::Relaxed) == 1 {
+                    // We were the last child of our parent. Construct flows for our parent.
+                } else {
+                    // Get out of here and find another node to work on.
+                    break
                 }
             }
         }
@@ -383,14 +381,14 @@ fn recalc_style(unsafe_nodes: UnsafeLayoutNodeList,
     recalc_style_for_node_traversal.run_parallel(unsafe_nodes, proxy)
 }
 
-fn construct_flows(unsafe_nodes: UnsafeLayoutNodeList,
+fn construct_flows(unsafe_node: UnsafeLayoutNode,
                    proxy: &mut WorkerProxy<SharedLayoutContextWrapper, UnsafeLayoutNodeList>) {
     let shared_layout_context = unsafe { &*(proxy.user_data().0) };
     let layout_context = LayoutContext::new(shared_layout_context);
     let construct_flows_traversal = ConstructFlows {
         layout_context: &layout_context,
     };
-    construct_flows_traversal.run_parallel(unsafe_nodes, proxy)
+    construct_flows_traversal.run_parallel(unsafe_node, proxy)
 }
 
 fn assign_inline_sizes(unsafe_flow: UnsafeFlow,
