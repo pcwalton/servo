@@ -5606,6 +5606,8 @@ pub fn cascade(viewport_size: Size2D<Au>,
     % endfor
     let mut cacheable = true;
     let mut seen = PropertyBitField::new();
+    cacheable = false;
+
     // Declaration blocks are stored in increasing precedence order,
     // we want them in decreasing order here.
     for sub_list in applicable_declarations.iter().rev() {

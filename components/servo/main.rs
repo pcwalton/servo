@@ -15,7 +15,7 @@
 //!
 //! [glutin]: https://github.com/tomaka/glutin
 
-#![feature(start)]
+#![feature(start, link_args)]
 
 // The Servo engine
 extern crate servo;
@@ -41,6 +41,17 @@ use compositing::windowing::WindowEvent;
 
 #[cfg(target_os="android")]
 use std::borrow::ToOwned;
+
+#[link_args="-L/home/pcwalton/Source/gperftools/.libs -lprofiler"]
+extern {
+    fn ProfilerStart();
+}
+
+fn unused() {
+    unsafe {
+        ProfilerStart();
+    }
+}
 
 fn main() {
     // Parse the command line options and store them globally

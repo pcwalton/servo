@@ -164,7 +164,7 @@ impl<QueueData: Send, WorkData: Send> WorkerThread<QueueData, WorkData> {
                 // The work is done. Now decrement the count of outstanding work items. If this was
                 // the last work unit in the queue, then send a message on the channel.
                 unsafe {
-                    if (*ref_count).fetch_sub(1, Ordering::SeqCst) == 1 {
+                    if (*ref_count).fetch_sub(1, Ordering::Relaxed) == 1 {
                         self.chan.send(SupervisorMsg::Finished).unwrap()
                     }
                 }
@@ -189,7 +189,7 @@ impl<'a, QueueData: 'static, WorkData: Send + 'static> WorkerProxy<'a, QueueData
     #[inline]
     pub fn push(&mut self, work_unit: WorkUnit<QueueData, WorkData>) {
         unsafe {
-            drop((*self.ref_count).fetch_add(1, Ordering::SeqCst));
+            drop((*self.ref_count).fetch_add(1, Ordering::Relaxed));
         }
         self.worker.push(work_unit);
     }

@@ -445,6 +445,10 @@ impl<'ln> PrivateMatchMethods for LayoutNode<'ln> {
                                    new_animations_sender: &Sender<Animation>,
                                    shareable: bool)
                                    -> RestyleDamage {
+        if style.is_some() {
+            return RestyleDamage::empty();
+        }
+
         let mut this_style;
         let cacheable;
         match parent_style {
@@ -493,12 +497,16 @@ impl<'ln> PrivateMatchMethods for LayoutNode<'ln> {
         let damage = incremental::compute_damage(style, &*this_style);
 
         // Cache the resolved style if it was cacheable.
-        if cacheable {
+        /*if cacheable {
             applicable_declarations_cache.insert(applicable_declarations.to_vec(), this_style.clone());
-        }
+        }*/
 
         // Write in the final style and return the damage done to our caller.
-        *style = Some(this_style);
+        if style.is_none() {
+            *style = Some(this_style);
+        } else {
+            ::std::mem::forget(this_style);
+        }
         damage
     }
 
