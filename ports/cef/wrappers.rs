@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use interfaces::{cef_drag_data_t, cef_post_data_element_t, cef_v8value_t, CefPostDataElement};
+use interfaces::{cef_app_t, CefApp, cef_drag_data_t, cef_post_data_element_t, cef_v8value_t, CefPostDataElement};
 use interfaces::{CefV8Value};
 use interfaces::{cef_download_handler_t, cef_drag_handler_t, cef_context_menu_handler_t};
 use interfaces::{cef_dialog_handler_t, cef_focus_handler_t};
@@ -98,6 +98,7 @@ cef_pointer_wrapper!(());
 cef_pointer_wrapper!(*mut ());
 cef_pointer_wrapper!(*mut c_void);
 cef_pointer_wrapper!(c_void);
+cef_pointer_wrapper!(cef_app_t);
 cef_pointer_wrapper!(cef_base_t);
 cef_pointer_wrapper!(cef_browser_settings_t);
 cef_pointer_wrapper!(cef_cookie_t);
@@ -134,9 +135,9 @@ cef_noop_wrapper!(*mut cef_jsdialog_handler_t);
 cef_noop_wrapper!(*mut cef_keyboard_handler_t);
 cef_noop_wrapper!(*mut cef_load_handler_t);
 cef_noop_wrapper!(*mut cef_request_handler_t);
-cef_noop_wrapper!(*mut cef_string_list_t);
 cef_noop_wrapper!(*mut cef_string_utf16);
 cef_noop_wrapper!(c_int);
+cef_noop_wrapper!(CefApp);
 cef_noop_wrapper!(CefBrowserSettings);
 cef_noop_wrapper!(CefScreenInfo);
 cef_noop_wrapper!(CefRequestContextSettings);
@@ -183,10 +184,10 @@ cef_noop_wrapper!(f64);
 cef_noop_wrapper!(i64);
 cef_noop_wrapper!(u32);
 cef_noop_wrapper!(u64);
+cef_noop_wrapper!(cef_string_list_t);
 
 cef_unimplemented_wrapper!(*const *mut cef_v8value_t, *const CefV8Value);
 cef_unimplemented_wrapper!(*mut *mut cef_post_data_element_t, *mut CefPostDataElement);
-cef_unimplemented_wrapper!(cef_string_list_t, Vec<String>);
 cef_unimplemented_wrapper!(cef_string_map_t, HashMap<String,String>);
 cef_unimplemented_wrapper!(cef_string_multimap_t, HashMap<String,Vec<String>>);
 cef_unimplemented_wrapper!(cef_string_t, String);
@@ -291,3 +292,11 @@ impl<'a> CefWrap<cef_string_t> for &'a mut String {
     }
 }
 
+impl<'a> CefWrap<&'a cef_string_list_t> for &'a cef_string_list_t {
+    fn to_c(stringlist: &'a cef_string_list_t) -> &'a cef_string_list_t {
+        stringlist
+    }
+    unsafe fn to_rust(_: &'a cef_string_list_t) -> &'a cef_string_list_t {
+        panic!("unimplemented CEF type conversion: cef_string_t");
+    }
+}

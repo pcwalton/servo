@@ -19,12 +19,9 @@ path = "../util"
 [dependencies.devtools_traits]
 path = "../devtools_traits"
 
-[dependencies.webdriver_traits]
-path = "../webdriver_traits"
-
 [dependencies.geom]
 git = "https://github.com/servo/rust-geom"
 
 [dependencies]
-url = "0.2.16"
+url = "0.2.35"
 libc = "*"

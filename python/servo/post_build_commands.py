@@ -1,15 +1,18 @@
+# Copyright 2013 The Servo Project Developers. See the COPYRIGHT
+# file at the top-level directory of this distribution.
+#
+# Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+# http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+# <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+# option. This file may not be copied, modified, or distributed
+# except according to those terms.
+
 from __future__ import print_function, unicode_literals
 
-import argparse
 import os
 import os.path as path
-from os import chdir
 import subprocess
-import SimpleHTTPServer
-import SocketServer
-import mozdebug
-import sys
-from shutil import copytree, rmtree, ignore_patterns, copy2
+from shutil import copytree, rmtree, copy2
 
 from mach.registrar import Registrar
 
@@ -32,44 +35,6 @@ def read_file(filename, if_exists=False):
 @CommandProvider
 class MachCommands(CommandBase):
 
-    def get_binary_path(self, release, dev):
-        base_path = path.join("components", "servo", "target")
-        release_path = path.join(base_path, "release", "servo")
-        dev_path = path.join(base_path, "debug", "servo")
-
-        # Prefer release if both given
-        if release and dev:
-            dev = False
-
-        release_exists = path.exists(release_path)
-        dev_exists = path.exists(dev_path)
-
-        if not release_exists and not dev_exists:
-            print("No Servo binary found. Please run './mach build' and try again.")
-            sys.exit()
-
-        if release and release_exists:
-            return release_path
-
-        if dev and dev_exists:
-            return dev_path
-
-        if not dev and not release and release_exists and dev_exists:
-            print("You have multiple profiles built. Please specify which "
-                  "one to run with '--release' or '--dev'.")
-            sys.exit()
-
-        if not dev and not release:
-            if release_exists:
-                return release_path
-            else:
-                return dev_path
-
-        print("The %s profile is not built. Please run './mach build%s' "
-              "and try again." % ("release" if release else "dev",
-                                   " --release" if release else ""))
-        sys.exit()
-
     @Command('run',
              description='Run Servo',
              category='post-build')
@@ -83,7 +48,7 @@ class MachCommands(CommandBase):
                           'debugger being used. The following arguments '
                           'have no effect without this.')
     @CommandArgument('--debugger', default=None, type=str,
-        help='Name of debugger to use.')
+                     help='Name of debugger to use.')
     @CommandArgument(
         'params', nargs='...',
         help="Command-line arguments to be passed through to Servo")
@@ -108,17 +73,20 @@ class MachCommands(CommandBase):
                 return 1
 
             # Prepend the debugger args.
-            args = ([self.debuggerInfo.path] + self.debuggerInfo.args
-                    + args + params)
+            args = ([self.debuggerInfo.path] + self.debuggerInfo.args +
+                    args + params)
         else:
             args = args + params
 
         try:
             subprocess.check_call(args, env=env)
+        except subprocess.CalledProcessError as e:
+            print("Servo exited with return value %d" % e.returncode)
+            return e.returncode
         except OSError as e:
             if e.errno == 2:
                 print("Servo Binary can't be found! Run './mach build'"
-                     " and try again!")
+                      " and try again!")
             else:
                 raise e
 
@@ -166,8 +134,7 @@ class MachCommands(CommandBase):
         help="Command-line arguments to be passed through to cargo doc")
     def doc(self, params):
         self.ensure_bootstrapped()
-        if not path.exists(path.join(
-               self.config["tools"]["rust-root"], "doc")):
+        if not path.exists(path.join(self.config["tools"]["rust-root"], "doc")):
             Registrar.dispatch("bootstrap-rust-docs", context=self.context)
         rust_docs = path.join(self.config["tools"]["rust-root"], "doc")
         docs = path.join(

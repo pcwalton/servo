@@ -97,7 +97,8 @@ impl CompositorEventListener for NullCompositor {
             Msg::AssignPaintedBuffers(..) |
             Msg::ChangeRunningAnimationsState(..) |
             Msg::ScrollFragmentPoint(..) |
-            Msg::LoadComplete |
+            Msg::LoadStart(..) |
+            Msg::LoadComplete(..) |
             Msg::ScrollTimeout(..) |
             Msg::RecompositeAfterScroll |
             Msg::ChangePageTitle(..) |
@@ -108,6 +109,8 @@ impl CompositorEventListener for NullCompositor {
             Msg::CreatePng(..) |
             Msg::PaintTaskExited(..) |
             Msg::IsReadyToSaveImageReply(..) => {}
+            Msg::NewFavicon(..) => {}
+            Msg::HeadParsed => {}
         }
         true
     }

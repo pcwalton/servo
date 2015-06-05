@@ -91,7 +91,7 @@ impl ScriptListener for Box<CompositorProxy+'static+Send> {
 
 /// Implementation of the abstract `PaintListener` interface.
 impl PaintListener for Box<CompositorProxy+'static+Send> {
-    fn get_graphics_metadata(&mut self) -> Option<NativeGraphicsMetadata> {
+    fn graphics_metadata(&mut self) -> Option<NativeGraphicsMetadata> {
         let (chan, port) = channel();
         self.send(Msg::GetGraphicsMetadata(chan));
         // If the compositor is shutting down when a paint task
@@ -160,8 +160,10 @@ pub enum Msg {
     ChangeRunningAnimationsState(PipelineId, AnimationState),
     /// Replaces the current frame tree, typically called during main frame navigation.
     SetFrameTree(SendableFrameTree, Sender<()>, ConstellationChan),
-    /// The load of a page has completed.
-    LoadComplete,
+    /// The load of a page has begun: (can go back, can go forward).
+    LoadStart(bool, bool),
+    /// The load of a page has completed: (can go back, can go forward).
+    LoadComplete(bool, bool),
     /// Indicates that the scrolling timeout with the given starting timestamp has happened and a
     /// composite should happen. (See the `scrolling` module.)
     ScrollTimeout(u64),
@@ -178,6 +180,10 @@ pub enum Msg {
     ViewportConstrained(PipelineId, ViewportConstraints),
     /// A reply to the compositor asking if the output image is stable.
     IsReadyToSaveImageReply(bool),
+    /// A favicon was detected
+    NewFavicon(Url),
+    /// <head> tag finished parsing
+    HeadParsed,
 }
 
 impl Debug for Msg {
@@ -194,7 +200,8 @@ impl Debug for Msg {
             Msg::ChangePageTitle(..) => write!(f, "ChangePageTitle"),
             Msg::ChangePageUrl(..) => write!(f, "ChangePageUrl"),
             Msg::SetFrameTree(..) => write!(f, "SetFrameTree"),
-            Msg::LoadComplete => write!(f, "LoadComplete"),
+            Msg::LoadComplete(..) => write!(f, "LoadComplete"),
+            Msg::LoadStart(..) => write!(f, "LoadStart"),
             Msg::ScrollTimeout(..) => write!(f, "ScrollTimeout"),
             Msg::RecompositeAfterScroll => write!(f, "RecompositeAfterScroll"),
             Msg::KeyEvent(..) => write!(f, "KeyEvent"),
@@ -203,6 +210,8 @@ impl Debug for Msg {
             Msg::PaintTaskExited(..) => write!(f, "PaintTaskExited"),
             Msg::ViewportConstrained(..) => write!(f, "ViewportConstrained"),
             Msg::IsReadyToSaveImageReply(..) => write!(f, "IsReadyToSaveImageReply"),
+            Msg::NewFavicon(..) => write!(f, "NewFavicon"),
+            Msg::HeadParsed => write!(f, "HeadParsed"),
         }
     }
 }

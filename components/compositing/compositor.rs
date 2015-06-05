@@ -384,7 +384,11 @@ impl<Window: WindowMethods> IOCompositor<Window> {
                 self.scroll_fragment_to_point(pipeline_id, layer_id, point);
             }
 
-            (Msg::LoadComplete, ShutdownState::NotShuttingDown) => {
+            (Msg::LoadStart(back, forward), ShutdownState::NotShuttingDown) => {
+                self.window.load_start(back, forward);
+            }
+
+            (Msg::LoadComplete(back, forward), ShutdownState::NotShuttingDown) => {
                 self.got_load_complete_message = true;
 
                 // If we're painting in headless mode, schedule a recomposite.
@@ -395,7 +399,7 @@ impl<Window: WindowMethods> IOCompositor<Window> {
                 // Inform the embedder that the load has finished.
                 //
                 // TODO(pcwalton): Specify which frame's load completed.
-                self.window.load_end();
+                self.window.load_end(back, forward);
             }
 
             (Msg::ScrollTimeout(timestamp), ShutdownState::NotShuttingDown) => {
@@ -448,6 +452,14 @@ impl<Window: WindowMethods> IOCompositor<Window> {
                     self.ready_to_save_state = ReadyState::Unknown;
                 }
                 self.composite_if_necessary(CompositingReason::Headless);
+            }
+
+            (Msg::NewFavicon(url), ShutdownState::NotShuttingDown) => {
+                self.window.set_favicon(url);
+            }
+
+            (Msg::HeadParsed, ShutdownState::NotShuttingDown) => {
+                self.window.head_parsed();
             }
 
             // When we are shutting_down, we need to avoid performing operations
@@ -878,14 +890,13 @@ impl<Window: WindowMethods> IOCompositor<Window> {
     fn on_load_url_window_event(&mut self, url_string: String) {
         debug!("osmain: loading URL `{}`", url_string);
         self.got_load_complete_message = false;
-        let root_pipeline_id = match self.scene.root {
-            Some(ref layer) => layer.get_pipeline_id(),
-            None => panic!("Compositor: Received WindowEvent::LoadUrl without initialized compositor \
-                           layers"),
+        let url = Url::parse(&url_string).unwrap();
+        self.window.set_page_url(url.clone());
+        let msg = match self.scene.root {
+            Some(ref layer) => ConstellationMsg::LoadUrl(layer.pipeline_id(), LoadData::new(url)),
+            None => ConstellationMsg::InitLoadUrl(url)
         };
 
-        let msg = ConstellationMsg::LoadUrl(root_pipeline_id,
-            LoadData::new(Url::parse(&url_string).unwrap()));
         let ConstellationChan(ref chan) = self.constellation_chan;
         chan.send(msg).unwrap()
     }
@@ -1114,7 +1125,7 @@ impl<Window: WindowMethods> IOCompositor<Window> {
         let mut results: HashMap<PipelineId, Vec<PaintRequest>> = HashMap::new();
 
         for (layer, mut layer_requests) in requests.into_iter() {
-            let pipeline_id = layer.get_pipeline_id();
+            let pipeline_id = layer.pipeline_id();
             let current_epoch = self.pipeline_details.get(&pipeline_id).unwrap().current_epoch;
             layer.extra_data.borrow_mut().requested_epoch = current_epoch;
             let vec = match results.entry(pipeline_id) {
@@ -1148,7 +1159,7 @@ impl<Window: WindowMethods> IOCompositor<Window> {
                                                      Vec<Box<LayerBuffer>>)>) {
         for (layer, buffers) in unused_buffers.into_iter() {
             if !buffers.is_empty() {
-                let pipeline = self.get_pipeline(layer.get_pipeline_id());
+                let pipeline = self.get_pipeline(layer.pipeline_id());
                 let _ = pipeline.paint_chan.send_opt(PaintMsg::UnusedBuffer(buffers));
             }
         }
@@ -1158,7 +1169,7 @@ impl<Window: WindowMethods> IOCompositor<Window> {
         if layer.extra_data.borrow().id == LayerId::null() {
             let layer_rect = Rect(-layer.extra_data.borrow().scroll_offset.to_untyped(),
                                   layer.bounds.borrow().size.to_untyped());
-            let pipeline = self.get_pipeline(layer.get_pipeline_id());
+            let pipeline = self.get_pipeline(layer.pipeline_id());
             let ScriptControlChan(ref chan) = pipeline.script_chan;
             chan.send(ConstellationControlMsg::Viewport(pipeline.id.clone(), layer_rect)).unwrap();
         }
@@ -1278,6 +1289,9 @@ impl<Window: WindowMethods> IOCompositor<Window> {
                 // Constellation has replied at some point in the past
                 // that the current output image is stable and ready
                 // for saving.
+                // Reset the flag so that we check again in the future
+                // TODO: only reset this if we load a new document?
+                self.ready_to_save_state = ReadyState::Unknown;
                 true
             }
         }

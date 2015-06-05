@@ -58,6 +58,7 @@ use dom::keyboardevent::KeyboardEvent;
 use dom::messageevent::MessageEvent;
 use dom::node::{self, Node, NodeHelpers, NodeTypeId, CloneChildrenFlag, NodeDamage, window_from_node};
 use dom::nodelist::NodeList;
+use dom::nodeiterator::NodeIterator;
 use dom::text::Text;
 use dom::processinginstruction::ProcessingInstruction;
 use dom::range::Range;
@@ -1363,6 +1364,12 @@ impl<'a> DocumentMethods for JSRef<'a, Document> {
         Range::new_with_doc(self)
     }
 
+    // https://dom.spec.whatwg.org/#dom-document-createnodeiteratorroot-whattoshow-filter
+    fn CreateNodeIterator(self, root: JSRef<Node>, whatToShow: u32, filter: Option<NodeFilter>)
+                        -> Temporary<NodeIterator> {
+        NodeIterator::new(self, root, whatToShow, filter)
+    }
+
     // https://dom.spec.whatwg.org/#dom-document-createtreewalker
     fn CreateTreeWalker(self, root: JSRef<Node>, whatToShow: u32, filter: Option<NodeFilter>)
                         -> Temporary<TreeWalker> {
@@ -1533,6 +1540,9 @@ impl<'a> DocumentMethods for JSRef<'a, Document> {
                 Some(element) => element,
                 None => return false,
             };
+            if element.namespace() != &ns!(HTML) {
+                return false;
+            }
             element.get_attribute(&ns!(""), &atom!("name")).root().map_or(false, |attr| {
                 // FIXME(https://github.com/rust-lang/rust/issues/23338)
                 let attr = attr.r();
