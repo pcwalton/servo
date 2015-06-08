@@ -388,7 +388,7 @@ fn construct_flows(unsafe_node: UnsafeLayoutNode,
     let construct_flows_traversal = ConstructFlows {
         layout_context: &layout_context,
     };
-    construct_flows_traversal.run_parallel(unsafe_node, proxy)
+    //construct_flows_traversal.run_parallel(unsafe_node, proxy)
 }
 
 fn assign_inline_sizes(unsafe_flow: UnsafeFlow,

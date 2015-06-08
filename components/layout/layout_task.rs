@@ -963,6 +963,10 @@ impl LayoutTask {
                 }
             });
 
+            if rw_data.parallel_traversal.is_some() {
+                sequential::traverse_dom_preorder(*node, &shared_layout_context);
+            }
+
             // Retrieve the (possibly rebuilt) root flow.
             rw_data.root_flow = Some(self.get_layout_root((*node).clone()));
 

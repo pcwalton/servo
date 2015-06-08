@@ -21,8 +21,7 @@ use geom::point::Point2D;
 use util::geometry::{Au, ZERO_POINT};
 use util::opts;
 
-pub fn traverse_dom_preorder(root: LayoutNode,
-                             shared_layout_context: &SharedLayoutContext) {
+pub fn traverse_dom_preorder(root: LayoutNode, shared_layout_context: &SharedLayoutContext) {
     fn doit(node: LayoutNode, recalc_style: RecalcStyleForNode, construct_flows: ConstructFlows) {
         recalc_style.process(node);
 
