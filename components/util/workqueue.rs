@@ -77,7 +77,7 @@ struct WorkerThread<QueueData: 'static, WorkData: 'static> {
 unsafe impl<QueueData: 'static, WorkData: 'static> Send for WorkerThread<QueueData, WorkData> {}
 
 static SPIN_COUNT: u32 = 128;
-static SPINS_UNTIL_BACKOFF: u32 = 100;
+static SPINS_UNTIL_BACKOFF: u32 = 512;
 static BACKOFF_INCREMENT_IN_US: u32 = 5;
 
 impl<QueueData: Send, WorkData: Send> WorkerThread<QueueData, WorkData> {
