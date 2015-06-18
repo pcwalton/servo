@@ -30,6 +30,7 @@ extern crate gleam;
 extern crate clipboard;
 
 extern crate libc;
+extern crate serialize;
 extern crate time;
 extern crate url;
 
@@ -42,6 +43,7 @@ pub use compositor_task::{CompositorEventListener, CompositorProxy, CompositorTa
 pub use constellation::Constellation;
 
 pub mod compositor_task;
+pub mod content_process;
 
 mod compositor_layer;
 mod compositor;

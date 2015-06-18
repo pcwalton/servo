@@ -316,9 +316,9 @@ impl<Window: WindowMethods> IOCompositor<Window> {
 
             (Msg::Exit(chan), _) => {
                 debug!("shutting down the constellation");
-                let ConstellationChan(ref con_chan) = self.constellation_chan;
-                con_chan.send(ConstellationMsg::Exit).unwrap();
-                chan.send(()).unwrap();
+                let con_chan = &mut self.constellation_chan;
+                con_chan.send(ConstellationMsg::Exit);
+                chan.send(());
                 self.shutdown_state = ShutdownState::ShuttingDown;
             }
 
@@ -678,12 +678,12 @@ impl<Window: WindowMethods> IOCompositor<Window> {
         root_layer.add_child(new_layer);
     }
 
-    fn send_window_size(&self) {
+    fn send_window_size(&mut self) {
         let dppx = self.page_zoom * self.device_pixels_per_screen_px();
         let initial_viewport = self.window_size.as_f32() / dppx;
         let visible_viewport = initial_viewport / self.viewport_zoom;
 
-        let ConstellationChan(ref chan) = self.constellation_chan;
+        let chan = &mut self.constellation_chan;
         chan.send(ConstellationMsg::ResizedWindow(WindowSizeData {
             device_pixel_ratio: dppx,
             initial_viewport: initial_viewport,
@@ -856,13 +856,10 @@ impl<Window: WindowMethods> IOCompositor<Window> {
             }
 
             WindowEvent::Quit => {
-                if !self.has_seen_quit_event {
-                    self.has_seen_quit_event = true;
-                    debug!("shutting down the constellation for WindowEvent::Quit");
-                    let ConstellationChan(ref chan) = self.constellation_chan;
-                    chan.send(ConstellationMsg::Exit).unwrap();
-                    self.shutdown_state = ShutdownState::ShuttingDown;
-                }
+                debug!("shutting down the constellation for WindowEvent::Quit");
+                let chan = &mut self.constellation_chan;
+                chan.send(ConstellationMsg::Exit);
+                self.shutdown_state = ShutdownState::ShuttingDown;
             }
         }
     }
@@ -1103,7 +1100,7 @@ impl<Window: WindowMethods> IOCompositor<Window> {
         self.composite_if_necessary(CompositingReason::Zoom);
     }
 
-    fn on_navigation_window_event(&self, direction: WindowNavigateMsg) {
+    fn on_navigation_window_event(&mut self, direction: WindowNavigateMsg) {
         let direction = match direction {
             windowing::WindowNavigateMsg::Forward => NavigationDirection::Forward,
             windowing::WindowNavigateMsg::Back => NavigationDirection::Back,
@@ -1549,9 +1546,7 @@ impl<Window> CompositorEventListener for IOCompositor<Window> where Window: Wind
         match self.composition_request {
             CompositionRequest::NoCompositingNecessary |
             CompositionRequest::CompositeOnScrollTimeout(_) => {}
-            CompositionRequest::CompositeNow(_) => {
-                self.composite()
-            }
+            CompositionRequest::CompositeNow(_) => self.composite(),
         }
 
         self.shutdown_state != ShutdownState::FinishedShuttingDown
@@ -1600,7 +1595,7 @@ impl<Window> CompositorEventListener for IOCompositor<Window> where Window: Wind
         self.viewport_zoom.get() as f32
     }
 
-    fn get_title_for_main_frame(&self) {
+    fn get_title_for_main_frame(&mut self) {
         let root_pipeline_id = match self.root_pipeline {
             None => return,
             Some(ref root_pipeline) => root_pipeline.id,

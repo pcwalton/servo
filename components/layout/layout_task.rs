@@ -38,7 +38,7 @@ use gfx::display_list::{ClippingRegion, DisplayItemMetadata, DisplayList, Opaque
 use gfx::display_list::{StackingContext};
 use gfx::font_cache_task::FontCacheTask;
 use gfx::paint_task::Msg as PaintMsg;
-use gfx::paint_task::{PaintChan, PaintLayer};
+use gfx::paint_task::{LayoutToPaintChan, LayoutToPaintMsg, PaintLayer};
 use layout_traits::{LayoutControlMsg, LayoutTaskFactory};
 use log;
 use msg::compositor_msg::{Epoch, ScrollPolicy, LayerId};
@@ -74,6 +74,7 @@ use style::stylesheets::{Origin, Stylesheet, CSSRuleIteratorExt};
 use url::Url;
 use util::cursor::Cursor;
 use util::geometry::{Au, MAX_RECT};
+use util::ipc::IpcReceiver;
 use util::logical_geometry::LogicalPoint;
 use util::mem::HeapSizeOf;
 use util::opts;
@@ -166,17 +167,17 @@ pub struct LayoutTask {
     /// The channel on which the image cache can send messages to ourself.
     image_cache_sender: ImageCacheChan,
 
-    /// The channel on which we or others can send messages to ourselves.
+    /// The channel to send messages to ourselves.
     pub chan: LayoutChan,
 
     /// The channel on which messages can be sent to the constellation.
     pub constellation_chan: ConstellationChan,
 
     /// The channel on which messages can be sent to the script task.
-    pub script_chan: ScriptControlChan,
+    pub script_chan: Sender<ConstellationControlMsg>,
 
     /// The channel on which messages can be sent to the painting task.
-    pub paint_chan: PaintChan,
+    pub paint_chan: LayoutToPaintChan,
 
     /// The channel on which messages can be sent to the time profiler.
     pub time_profiler_chan: time::ProfilerChan,
@@ -226,7 +227,9 @@ impl LayoutTaskFactory for LayoutTask {
               memory_profiler_chan: mem::ProfilerChan,
               shutdown_chan: Sender<()>) {
         let ConstellationChan(con_chan) = constellation_chan.clone();
-        spawn_named_with_send_on_failure(format!("LayoutTask {:?}", id), task_state::LAYOUT, move || {
+        server::spawn_named_with_send_to_server_on_failure("LayoutTask",
+                                                           task_state::LAYOUT,
+                                                           move || {
             { // Ensures layout task is destroyed before we send shutdown message
                 let sender = chan.sender();
                 let layout = LayoutTask::new(id,
@@ -286,23 +289,26 @@ impl LayoutTask {
            is_iframe: bool,
            port: Receiver<Msg>,
            chan: LayoutChan,
-           pipeline_port: Receiver<LayoutControlMsg>,
+           pipeline_port: IpcReceiver<LayoutControlMsg>,
            constellation_chan: ConstellationChan,
-           script_chan: ScriptControlChan,
-           paint_chan: PaintChan,
+           script_chan: Sender<ConstellationControlMsg>,
+           paint_chan: LayoutToPaintChan,
+           resource_task: ResourceTask,
            image_cache_task: ImageCacheTask,
            font_cache_task: FontCacheTask,
            time_profiler_chan: time::ProfilerChan,
            mem_profiler_chan: mem::ProfilerChan)
            -> LayoutTask {
+        let local_image_cache =
+            Arc::new(Mutex::new(LocalImageCache::new(image_cache_task.clone())));
         let screen_size = Size2D::new(Au(0), Au(0));
-        let device = Device::new(
-            MediaType::Screen,
-            opts::get().initial_window_size.as_f32() * ScaleFactor::new(1.0));
+        let device = Device::new(MediaType::Screen,
+                                 opts::get().initial_window_size.as_f32() * ScaleFactor(1.0));
         let parallel_traversal = if opts::get().layout_threads != 1 {
-            Some(WorkQueue::new("LayoutWorker", task_state::LAYOUT,
+            Some(WorkQueue::new("LayoutWorker",
+                                task_state::LAYOUT,
                                 opts::get().layout_threads,
-                                SharedLayoutContextWrapper(ptr::null())))
+                                ptr::null()))
         } else {
             None
         };
@@ -317,12 +323,20 @@ impl LayoutTask {
         let (image_cache_sender, image_cache_receiver) = channel();
         let (canvas_layers_sender, canvas_layers_receiver) = channel();
 
+        // Create a proxy to proxy messages received from the pipeline over IPC to us.
+        let (proxy_pipeline_sender, proxy_pipeline_receiver) = channel();
+        std_task::spawn(proc() {
+            while let Ok(msg) = pipeline_port.recv_opt() {
+                proxy_pipeline_sender.send(msg)
+            }
+        });
+
         LayoutTask {
             id: id,
             url: url,
             is_iframe: is_iframe,
             port: port,
-            pipeline_port: pipeline_port,
+            pipeline_port: proxy_pipeline_receiver,
             chan: chan,
             script_chan: script_chan,
             constellation_chan: constellation_chan.clone(),
@@ -634,8 +648,6 @@ impl LayoutTask {
     fn exit_now<'a>(&'a self,
                     possibly_locked_rw_data: &mut Option<MutexGuard<'a, LayoutTaskData>>,
                     exit_type: PipelineExitType) {
-        let (response_chan, response_port) = channel();
-
         {
             let mut rw_data = self.lock_rw_data(possibly_locked_rw_data);
             if let Some(ref mut traversal) = (&mut *rw_data).parallel_traversal {
@@ -647,7 +659,7 @@ impl LayoutTask {
         let msg = mem::ProfilerMsg::UnregisterReporter(self.reporter_name.clone());
         self.mem_profiler_chan.send(msg);
 
-        self.paint_chan.send(PaintMsg::Exit(Some(response_chan), exit_type));
+        self.paint_chan.send(LayoutToPaintMsg::Exit(exit_type));
         response_port.recv().unwrap()
     }
 
@@ -888,7 +900,15 @@ impl LayoutTask {
                 debug!("Layout done!");
 
                 rw_data.epoch.next();
-                self.paint_chan.send(PaintMsg::PaintInit(rw_data.epoch, stacking_context));
+
+                if opts::get().multiprocess || opts::get().force_display_list_serialization {
+                    self.paint_chan.send(LayoutToPaintMsg::SerializedPaintInit(stacking_context));
+                } else {
+                    unsafe {
+                        self.paint_chan.send(LayoutToPaintMsg::UnserializedPaintInit(mem::transmute(
+                                    stacking_context)));
+                    }
+                }
             }
         });
     }
@@ -1295,8 +1315,8 @@ impl LayoutRPC for LayoutRPCImpl {
             } else {
                 Cursor::DefaultCursor
             };
-            let ConstellationChan(ref constellation_chan) = rw_data.constellation_chan;
-            constellation_chan.send(ConstellationMsg::SetCursor(cursor)).unwrap();
+            let constellation_chan = &mut rw_data.constellation_chan;
+            constellation_chan.send(ConstellationMsg::SetCursor(cursor));
         }
 
         if mouse_over_list.is_empty() {

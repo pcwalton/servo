@@ -53,7 +53,7 @@ impl NullCompositor {
 
         // Tell the constellation about the initial fake size.
         {
-            let ConstellationChan(ref chan) = compositor.constellation_chan;
+            let chan = &mut compositor.constellation_chan;
             chan.send(ConstellationMsg::ResizedWindow(WindowSizeData {
                 initial_viewport: Size2D::typed(640_f32, 480_f32),
                 visible_viewport: Size2D::typed(640_f32, 480_f32),
@@ -130,5 +130,5 @@ impl CompositorEventListener for NullCompositor {
         1.0
     }
 
-    fn get_title_for_main_frame(&self) {}
+    fn get_title_for_main_frame(&mut self) {}
 }

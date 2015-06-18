@@ -33,7 +33,6 @@ use layout_interface::{ContentBoxResponse, ContentBoxesResponse, ScriptReflow};
 use page::Page;
 use script_task::{TimerSource, ScriptChan, ScriptPort, NonWorkerScriptChan};
 use script_task::ScriptMsg;
-use script_traits::ScriptControlChan;
 use timers::{IsInterval, TimerId, TimerManager, TimerCallback};
 use webdriver_handlers::jsval_to_webdriver;
 
@@ -41,12 +40,13 @@ use devtools_traits::{DevtoolsControlChan, TimelineMarker, TimelineMarkerType, T
 use msg::compositor_msg::ScriptListener;
 use msg::constellation_msg::{LoadData, PipelineId, SubpageId, ConstellationChan, WindowSizeData, WorkerId};
 use msg::webdriver_msg::{WebDriverJSError, WebDriverJSResult};
+use net::server::SharedServerProxy;
 use net_traits::ResourceTask;
 use net_traits::image_cache_task::{ImageCacheChan, ImageCacheTask};
 use net_traits::storage_task::{StorageTask, StorageType};
 use util::geometry::{self, Au, MAX_RECT};
 use util::opts;
-use util::str::{DOMString,HTML_SPACE_CHARACTERS};
+use util::str::{DOMString, HTML_SPACE_CHARACTERS};
 
 use geom::{Point2D, Rect, Size2D};
 use js::jsapi::JS_EvaluateUCScript;
@@ -239,7 +239,7 @@ impl Window {
         &self.image_cache_task
     }
 
-    pub fn compositor<'a>(&'a self) -> RefMut<'a, Box<ScriptListener+'static>> {
+    pub fn compositor(&self) -> RefMut<SharedServerProxy<ScriptToCompositorMsg,()>> {
         self.compositor.borrow_mut()
     }
 

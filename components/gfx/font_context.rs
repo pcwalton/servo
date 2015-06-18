@@ -70,7 +70,6 @@ struct PaintFontCacheEntry {
 /// required.
 pub struct FontContext {
     platform_handle: FontContextHandle,
-    font_cache_task: FontCacheTask,
 
     /// TODO: See bug https://github.com/servo/servo/issues/3300.
     layout_font_cache: Vec<LayoutFontCacheEntry>,
@@ -85,11 +84,10 @@ pub struct FontContext {
 }
 
 impl FontContext {
-    pub fn new(font_cache_task: FontCacheTask) -> FontContext {
+    pub fn new() -> FontContext {
         let handle = FontContextHandle::new();
         FontContext {
             platform_handle: handle,
-            font_cache_task: font_cache_task,
             layout_font_cache: vec!(),
             fallback_font_cache: vec!(),
             paint_font_cache: vec!(),
@@ -185,9 +183,8 @@ impl FontContext {
             }
 
             if !cache_hit {
-                let font_template = self.font_cache_task.get_font_template(family.name()
-                                                                                 .to_owned(),
-                                                                           desc.clone());
+                let font_template = font_cache_task.get_font_template(family.name().into_string(),
+                                                                      desc.clone());
                 match font_template {
                     Some(font_template) => {
                         let layout_font = self.create_layout_font(font_template,
@@ -235,7 +232,7 @@ impl FontContext {
             }
 
             if !cache_hit {
-                let font_template = self.font_cache_task.get_last_resort_font_template(desc.clone());
+                let font_template = font_cache_task.get_last_resort_font_template(desc.clone());
                 let layout_font = self.create_layout_font(font_template,
                                                           desc.clone(),
                                                           style.font_size,
@@ -278,11 +275,6 @@ impl FontContext {
             identifier: template.identifier.clone(),
         });
         paint_font
-    }
-
-    /// Returns a reference to the font cache task.
-    pub fn font_cache_task(&self) -> FontCacheTask {
-        self.font_cache_task.clone()
     }
 }
 

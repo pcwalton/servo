@@ -43,6 +43,8 @@ use std::collections::HashMap;
 use std::io::{self, Write};
 use std::marker::PhantomData;
 use std::mem::replace;
+use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 use std::sync::mpsc::{Sender, Receiver, channel};
 use style::viewport::ViewportConstraints;
 use url::Url;
@@ -59,15 +61,15 @@ use clipboard::ClipboardContext;
 /// `LayoutTask` in the `layout` crate, and `ScriptTask` in
 /// the `script` crate).
 pub struct Constellation<LTF, STF> {
-    /// A channel through which messages can be sent to this object.
-    pub chan: ConstellationChan,
-
-    /// Receives messages.
-    pub request_port: Receiver<ConstellationMsg>,
+    /// The server that we receive messages on.
+    pub server: Server<ConstellationMsg,()>,
 
     /// A channel (the implementation of which is port-specific) through which messages can be sent
     /// to the compositor.
     pub compositor_proxy: Box<CompositorProxy>,
+
+    /// An client that the script thread uses to communicate with the compositor.
+    pub script_to_compositor_client: SharedServerProxy<ScriptToCompositorMsg,()>,
 
     /// A channel through which messages can be sent to the resource task.
     pub resource_task: ResourceTask,
@@ -209,6 +211,7 @@ enum ExitPipelineMode {
 
 impl<LTF: LayoutTaskFactory, STF: ScriptTaskFactory> Constellation<LTF, STF> {
     pub fn start(compositor_proxy: Box<CompositorProxy+Send>,
+                 script_to_compositor_client: SharedServerProxy<ScriptToCompositorMsg,()>,
                  resource_task: ResourceTask,
                  image_cache_task: ImageCacheTask,
                  font_cache_task: FontCacheTask,
@@ -218,13 +221,14 @@ impl<LTF: LayoutTaskFactory, STF: ScriptTaskFactory> Constellation<LTF, STF> {
                  storage_task: StorageTask,
                  supports_clipboard: bool)
                  -> ConstellationChan {
-        let (constellation_port, constellation_chan) = ConstellationChan::new();
-        let constellation_chan_clone = constellation_chan.clone();
+        let mut server = Server::new("Constellation");
+        let constellation_chan = Arc::new(Mutex::new(server.create_new_client()));
+        let constellation_chan = ConstellationChan::from_server_proxy(constellation_chan);
         spawn_named("Constellation".to_owned(), move || {
             let mut constellation: Constellation<LTF, STF> = Constellation {
-                chan: constellation_chan_clone,
-                request_port: constellation_port,
+                server: server,
                 compositor_proxy: compositor_proxy,
+                script_to_compositor_client: script_to_compositor_client,
                 devtools_chan: devtools_chan,
                 resource_task: resource_task,
                 image_cache_task: image_cache_task,
@@ -262,10 +266,11 @@ impl<LTF: LayoutTaskFactory, STF: ScriptTaskFactory> Constellation<LTF, STF> {
     }
 
     fn run(&mut self) {
-        loop {
-            let request = self.request_port.recv().unwrap();
-            if !self.handle_request(request) {
-                break;
+        while let Some(msgs) = self.server.recv() {
+            for (client_id, msg) in msgs.into_iter() {
+                if !self.handle_request(client_id, msg) {
+                    return
+                }
             }
         }
     }
@@ -344,7 +349,7 @@ impl<LTF: LayoutTaskFactory, STF: ScriptTaskFactory> Constellation<LTF, STF> {
     }
 
     /// Handles loading pages, navigation, and granting access to the compositor
-    fn handle_request(&mut self, request: ConstellationMsg) -> bool {
+    fn handle_request(&mut self, _: ClientId, request: ConstellationMsg) -> bool {
         match request {
             ConstellationMsg::Exit => {
                 debug!("constellation exiting");

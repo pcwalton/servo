@@ -15,15 +15,15 @@ use num_cpus;
 use std::collections::HashSet;
 use std::cmp;
 use std::env;
-use std::io::{self, Write};
 use std::fs::PathExt;
+use std::io::{self, Write};
 use std::mem;
 use std::path::Path;
 use std::ptr;
 use url::{self, Url};
 
 /// Global flags for Servo, currently set on the command line.
-#[derive(Clone)]
+#[derive(Clone, RustcDecodable, RustcEncodable)]
 pub struct Opts {
     /// The initial URL to load.
     pub url: Option<Url>,
@@ -55,8 +55,7 @@ pub struct Opts {
     /// Enable experimental web features (`-e`).
     pub enable_experimental: bool,
 
-    /// The number of threads to use for layout (`-y`). Defaults to 1, which results in a recursive
-    /// sequential algorithm.
+    /// The number of threads to use for layout (`-y`). Defaults to 3/2 the number of cores.
     pub layout_threads: usize,
 
     pub nonincremental_layout: bool,
@@ -152,6 +151,13 @@ pub struct Opts {
 
     /// Whether Style Sharing Cache is used
     pub disable_share_style_cache: bool,
+
+    /// Whether we are running in multiprocess mode.
+    pub multiprocess: bool,
+
+    /// True if we should serialize display lists even in single-process mode. This is disabled by
+    /// default because it is currently very slow.
+    pub force_display_list_serialization: bool,
 }
 
 fn print_usage(app: &str, opts: &[getopts::OptGroup]) {
@@ -183,6 +189,8 @@ pub fn print_debug_usage(app: &str)  {
                  "Display an error when display list geometry escapes overflow region.");
     print_option("disable-share-style-cache",
                  "Disable the style sharing cache.");
+    print_option("serialize-display-lists",
+                 "Serialize display lists even in single-process mode.");
 
     println!("");
 }
@@ -241,6 +249,8 @@ pub fn default_opts() -> Opts {
         resources_path: None,
         sniff_mime_types: false,
         disable_share_style_cache: false,
+        multiprocess: false,
+        force_display_list_serialization: false,
     }
 }
 
@@ -275,6 +285,7 @@ pub fn from_cmdline_args(args: &[String]) -> bool {
         getopts::optflag("h", "help", "Print this message"),
         getopts::optopt("", "resources-path", "Path to find static resources", "/home/servo/resources"),
         getopts::optflag("", "sniff-mime-types" , "Enable MIME sniffing"),
+        getopts::optflag("", "multiprocess", "Run in multiprocess mode"),
     );
 
     let opt_match = match getopts::getopts(args, &opts) {
@@ -420,6 +431,9 @@ pub fn from_cmdline_args(args: &[String]) -> bool {
         resources_path: opt_match.opt_str("resources-path"),
         sniff_mime_types: opt_match.opt_present("sniff-mime-types"),
         disable_share_style_cache: debug_options.contains(&"disable-share-style-cache"),
+        multiprocess: opt_match.opt_present("multiprocess"),
+        force_display_list_serialization:
+            debug_options.contains(&"force-display-list-serialization"),
     };
 
     set(opts);

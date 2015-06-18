@@ -5,10 +5,12 @@
 //! IPC over Unix sockets.
 
 use alloc::heap;
-use libc::{mod, c_char, c_int, c_short, c_uint, c_void, size_t, socklen_t, ssize_t};
-use std::io::{IoError, IoResult};
+use libc::{self, c_char, c_int, c_short, c_uint, c_void, size_t, socklen_t, ssize_t};
+use std::io::{Error, Read, Write};
 use std::mem;
 use std::ptr;
+
+type IoResult<T> = Result<T,Error>;
 
 pub struct ServoUnixSocket {
     fd: c_int,
@@ -16,13 +18,13 @@ pub struct ServoUnixSocket {
 
 impl ServoUnixSocket {
     #[inline]
-    pub fn pair() -> IoResult<(ServoUnixSocket, ServoUnixSocket)> {
+    pub fn pair() -> Result<(ServoUnixSocket, ServoUnixSocket),Error> {
         let mut results = [0, 0];
         unsafe {
             if socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, &mut results[0]) >= 0 {
                 Ok((ServoUnixSocket::from_fd(results[0]), ServoUnixSocket::from_fd(results[1])))
             } else {
-                Err(IoError::last_error())
+                Err(Error::last_os_error())
             }
         }
     }
@@ -57,7 +59,7 @@ impl ServoUnixSocket {
         }
     }
 
-    pub fn send_fds(&self, fds: &[c_int]) -> Result<(),IoError> {
+    pub fn send_fds(&self, fds: &[c_int]) -> Result<(),Error> {
         let cmsg_len = mem::size_of::<cmsghdr>() + fds.len() * mem::size_of::<c_int>();
         let cmsg_buf = unsafe {
             heap::allocate(cmsg_len, mem::min_align_of::<cmsghdr>())
@@ -67,9 +69,9 @@ impl ServoUnixSocket {
             (*cmsg).cmsg_len = uint_to_cmsglen(cmsg_len);
             (*cmsg).cmsg_level = libc::SOL_SOCKET;
             (*cmsg).cmsg_type = SCM_RIGHTS;
-            ptr::copy_nonoverlapping_memory(cmsg.offset(1) as *mut u8 as *mut c_int,
-                                            fds.as_ptr(),
-                                            fds.len());
+            ptr::copy_nonoverlapping(fds.as_ptr(),
+                                     cmsg.offset(1) as *mut u8 as *mut c_int,
+                                     fds.len());
         }
 
         let mut dummy_data: c_char = 0;
@@ -97,12 +99,12 @@ impl ServoUnixSocket {
             length if length > 0 => Ok(()),
             _ => {
                 error!("FD send failed");
-                Err(IoError::last_error())
+                Err(Error::last_os_error())
             }
         }
     }
 
-    pub fn recv_fds(&self, fds: &mut [c_int]) -> Result<u32,IoError> {
+    pub fn recv_fds(&self, fds: &mut [c_int]) -> Result<u32,Error> {
         let cmsg_len = mem::size_of::<cmsghdr>() + fds.len() * mem::size_of::<c_int>();
         let cmsg_buf = unsafe {
             heap::allocate(cmsg_len, mem::align_of::<cmsghdr>())
@@ -132,19 +134,19 @@ impl ServoUnixSocket {
                 length if length > 0 => {}
                 _ => {
                     error!("FD receive failed");
-                    return Err(IoError::last_error())
+                    return Err(Error::last_os_error())
                 }
             }
 
-            let mut fd_count = ((*cmsg).cmsg_len as uint - mem::size_of::<cmsghdr>()) /
+            let mut fd_count = ((*cmsg).cmsg_len as usize - mem::size_of::<cmsghdr>()) /
                 mem::size_of::<c_int>();
             if fd_count > fds.len() {
                 // FIXME(pcwalton): Should probably close any extraneous FDs that we got.
                 fd_count = fds.len()
             }
-            ptr::copy_nonoverlapping_memory(fds.as_mut_ptr(),
-                                            cmsg.offset(1) as *const u8 as *const c_int,
-                                            fds.len());
+            ptr::copy_nonoverlapping(cmsg.offset(1) as *const u8 as *const c_int,
+                                     fds.as_mut_ptr(),
+                                     fds.len());
             Ok(fd_count as c_uint)
         }
     }
@@ -156,29 +158,33 @@ impl Drop for ServoUnixSocket {
     }
 }
 
-impl Writer for ServoUnixSocket {
-    fn write(&mut self, buf: &[u8]) -> IoResult<()> {
+impl Write for ServoUnixSocket {
+    fn write(&mut self, buf: &[u8]) -> IoResult<usize> {
         unsafe {
             let result = libc::send(self.fd, buf.as_ptr() as *const c_void, buf.len() as u64, 0);
             if result == buf.len() as i64 {
-                Ok(())
+                Ok(result as usize)
             } else {
-                Err(IoError::last_error())
+                Err(Error::last_os_error())
             }
         }
+    }
+
+    fn flush(&mut self) -> IoResult<()> {
+        Ok(())
     }
 }
 
 
-impl Reader for ServoUnixSocket {
-    fn read(&mut self, buf: &mut [u8]) -> IoResult<uint> {
+impl Read for ServoUnixSocket {
+    fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
         unsafe {
             match libc::recv(self.fd, buf.as_mut_ptr() as *mut c_void, buf.len() as u64, 0) {
-                length if length > 0 => Ok(length as uint),
-                0 => Err(IoError::from_errno(54, false)),
+                length if length > 0 => Ok(length as usize),
+                0 => Err(Error::from_raw_os_error(54)),
                 _ => {
                     error!("read failed!");
-                    Err(IoError::last_error())
+                    Err(Error::last_os_error())
                 }
             }
         }
@@ -186,10 +192,10 @@ impl Reader for ServoUnixSocket {
 }
 
 /// Polls the given set of file descriptors, exactly as `poll(2)` does.
-pub fn poll_fds(pollfds: &mut [pollfd], timeout: Option<c_int>) -> Result<(),IoError> {
+pub fn poll_fds(pollfds: &mut [pollfd], timeout: Option<c_int>) -> Result<(),Error> {
     unsafe {
         if poll(pollfds.as_mut_ptr(), pollfds.len() as c_uint, timeout.unwrap_or(-1)) < -1 {
-            Err(IoError::last_error())
+            Err(Error::last_os_error())
         } else {
             Ok(())
         }
@@ -197,19 +203,19 @@ pub fn poll_fds(pollfds: &mut [pollfd], timeout: Option<c_int>) -> Result<(),IoE
 }
 
 #[cfg(target_os="macos")]
-fn uint_to_cmsglen(cmsglen: uint) -> c_uint {
+fn uint_to_cmsglen(cmsglen: usize) -> c_uint {
     cmsglen as c_uint
 }
 #[cfg(target_os="linux")]
-fn uint_to_cmsglen(cmsglen: uint) -> size_t {
+fn uint_to_cmsglen(cmsglen: usize) -> size_t {
     cmsglen as size_t
 }
 #[cfg(target_os="macos")]
-fn uint_to_msg_controllen(msg_controllen: uint) -> socklen_t {
+fn uint_to_msg_controllen(msg_controllen: usize) -> socklen_t {
     msg_controllen as socklen_t
 }
 #[cfg(target_os="linux")]
-fn uint_to_msg_controllen(msg_controllen: uint) -> size_t {
+fn uint_to_msg_controllen(msg_controllen: usize) -> size_t {
     msg_controllen as size_t
 }
 

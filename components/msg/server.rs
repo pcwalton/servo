@@ -9,16 +9,16 @@
 //! the resource thread, and the font cache thread.
 
 use libc::c_int;
-use serialize::{Decodable, Encodable};
-use servo_util::ipc::{mod, IpcReceiver, IpcSender};
-use servo_util::platform::unix::ipc as unix_ipc;
-use servo_util::platform::unix::ipc::{POLLRDBAND, POLLRDNORM, ServoUnixSocket, pollfd};
-use servo_util::sbsf::{ServoDecoder, ServoEncoder};
-use servo_util::task_state;
+use rustc_serialize::{Decodable, Encodable};
 use std::collections::HashMap;
-use std::io::IoError;
+use std::io::Error;
 use std::sync::{Arc, Mutex};
-use std::task::TaskBuilder;
+use std::thread::Builder;
+use util::ipc::{self, IpcReceiver, IpcSender};
+use util::platform::unix::ipc as unix_ipc;
+use util::platform::unix::ipc::{POLLRDBAND, POLLRDNORM, ServoUnixSocket, pollfd};
+use util::sbsf::{ServoDecoder, ServoEncoder};
+use util::task_state;
 
 /// A server which maintains connections to content threads.
 ///
@@ -43,16 +43,14 @@ struct ClientInfo<M,R> {
 }
 
 /// Messages sent to the clients.
-#[deriving(Decodable, Encodable)]
+#[derive(RustcDecodable, RustcEncodable)]
 enum ClientMsg<R> {
     /// A response to a request.
     Response(R),
 }
 
-impl<M,R> Server<M,R> where M: for<'a> Decodable<ServoDecoder<'a>,IoError> +
-                               for<'a> Encodable<ServoEncoder<'a>,IoError>,
-                            R: for<'a> Decodable<ServoDecoder<'a>,IoError> +
-                               for<'a> Encodable<ServoEncoder<'a>,IoError> {
+impl<M,R> Server<M,R> where M: for<'a> Decodable + for<'a> Encodable,
+                            R: for<'a> Decodable + for<'a> Encodable {
     /// Creates a new server.
     pub fn new(name: &'static str) -> Server<M,R> {
         Server {
@@ -103,7 +101,7 @@ impl<M,R> Server<M,R> where M: for<'a> Decodable<ServoDecoder<'a>,IoError> +
                     continue
                 }
                 let client_id = pollfd.fd;
-                match self.clients[client_id].receiver.recv() {
+                match self.clients[&client_id].receiver.recv() {
                     ServerMsg::Msg(msg) => result.push((client_id, msg)),
                     ServerMsg::CreateNewClient => {
                         // Create a new pair of sockets and send it to the client.
@@ -119,7 +117,7 @@ impl<M,R> Server<M,R> where M: for<'a> Decodable<ServoDecoder<'a>,IoError> +
                         });
 
                         let fds = [their_socket.fd()];
-                        self.clients[client_id].sender.socket().send_fds(&fds).unwrap();
+                        self.clients[&client_id].sender.socket().send_fds(&fds).unwrap();
                         their_socket.forget();
                     }
                     ServerMsg::Exit => {
@@ -133,12 +131,12 @@ impl<M,R> Server<M,R> where M: for<'a> Decodable<ServoDecoder<'a>,IoError> +
 
     /// Sends a response to a client.
     pub fn send(&self, client_id: ClientId, response: R) {
-        self.clients[client_id].sender.send(ClientMsg::Response(response))
+        self.clients[&client_id].sender.send(ClientMsg::Response(response))
     }
 }
 
 /// Messages sent to the server. `M` is the type of the messages specific to this server.
-#[deriving(Decodable, Encodable)]
+#[derive(RustcDecodable, RustcEncodable)]
 pub enum ServerMsg<M> {
     /// A server-specific asynchronous or synchronous message.
     Msg(M),
@@ -153,20 +151,16 @@ pub enum ServerMsg<M> {
 /// `M` is the type of a message from the server to the client. `N` is the type of a notification
 /// message from the client to the server. `R` is the type of a request from the client to the
 /// server.
-pub struct ServerProxy<M,R> where M: for<'a> Decodable<ServoDecoder<'a>,IoError> +
-                                     for<'a> Encodable<ServoEncoder<'a>,IoError>,
-                                  R: for<'a> Decodable<ServoDecoder<'a>,IoError> +
-                                     for<'a> Encodable<ServoEncoder<'a>,IoError> {
+pub struct ServerProxy<M,R> where M: for<'a> Decodable + for<'a> Encodable,
+                                  R: for<'a> Decodable + for<'a> Encodable {
     /// A channel on which messages can be sent to the server.
     sender: IpcSender<ServerMsg<M>>,
     /// A channel on which messages can be received from the server.
     receiver: IpcReceiver<ClientMsg<R>>,
 }
 
-impl<M,R> ServerProxy<M,R> where M: for<'a> Decodable<ServoDecoder<'a>,IoError> +
-                                    for<'a> Encodable<ServoEncoder<'a>,IoError>,
-                                 R: for<'a> Decodable<ServoDecoder<'a>,IoError> +
-                                    for<'a> Encodable<ServoEncoder<'a>,IoError> {
+impl<M,R> ServerProxy<M,R> where M: for<'a> Decodable + for<'a> Encodable,
+                                 R: for<'a> Decodable + for<'a> Encodable {
     /// Creates a server proxy from a pair of file descriptors.
     #[inline]
     pub fn from_fds(sender_fd: c_int, receiver_fd: c_int) -> ServerProxy<M,R> {
@@ -208,7 +202,7 @@ impl<M,R> ServerProxy<M,R> where M: for<'a> Decodable<ServoDecoder<'a>,IoError> 
 
         // Receive our end of the new Unix socket.
         let mut fds = [0];
-        assert!(self.receiver.socket().recv_fds(&mut fds) == Ok(1));
+        assert!(self.receiver.socket().recv_fds(&mut fds).unwrap() == 1);
         let new_receiver = ServoUnixSocket::from_fd(fds[0]);
         let new_sender = new_receiver.dup();
         ServerProxy {
@@ -222,11 +216,8 @@ impl<M,R> ServerProxy<M,R> where M: for<'a> Decodable<ServoDecoder<'a>,IoError> 
 /// proxy.
 pub type SharedServerProxy<M,R> = Arc<Mutex<ServerProxy<M,R>>>;
 
-#[unsafe_destructor]
-impl<M,R> Drop for ServerProxy<M,R> where M: for<'a> Decodable<ServoDecoder<'a>,IoError> +
-                                             for<'a> Encodable<ServoEncoder<'a>,IoError>,
-                                          R: for<'a> Decodable<ServoDecoder<'a>,IoError> +
-                                             for<'a> Encodable<ServoEncoder<'a>,IoError> {
+impl<M,R> Drop for ServerProxy<M,R> where M: for<'a> Decodable + for<'a> Encodable,
+                                          R: for<'a> Decodable + for<'a> Encodable {
     fn drop(&mut self) {
         drop(self.sender.send_opt(ServerMsg::Exit));
     }
@@ -235,36 +226,28 @@ impl<M,R> Drop for ServerProxy<M,R> where M: for<'a> Decodable<ServoDecoder<'a>,
 /// Spawns a task with an arrangement to send a particular message to a server if the task fails.
 pub fn spawn_named_with_send_to_server_on_failure<M,R>(name: &'static str,
                                                        state: task_state::TaskState,
-                                                       body: proc(): Send,
+                                                       body: Box<FnOnce()>,
                                                        failure_msg: M,
                                                        failure_dest: SharedServerProxy<M,R>)
                                                        where M: Send +
                                                                 'static +
-                                                                for<'a>
-                                                                Decodable<ServoDecoder<'a>,
-                                                                          IoError> +
-                                                                for<'a>
-                                                                Encodable<ServoEncoder<'a>,
-                                                                          IoError>,
-                                                             R: for<'a>
-                                                                Decodable<ServoDecoder<'a>,
-                                                                          IoError> +
-                                                                for<'a>
-                                                                Encodable<ServoEncoder<'a>,
-                                                                          IoError> {
-    let future_result = TaskBuilder::new().named(name).try_future(proc() {
+                                                                for<'a> Decodable +
+                                                                for<'a> Encodable,
+                                                             R: for<'a> Decodable +
+                                                                for<'a> Encodable {
+    let future_result = Builder::new().named(name).try_future(move || {
         task_state::initialize(state);
         // FIXME: Find replacement for this post-runtime removal
         // rtinstrument::instrument(f);
         body();
     });
 
-    let watched_name = name.into_string();
+    let watched_name = name.to_owned();
     let watcher_name = format!("{}Watcher", watched_name);
-    TaskBuilder::new().named(watcher_name).spawn(proc() {
+    Builder::new().named(watcher_name).spawn(move || {
         if future_result.into_inner().is_err() {
             debug!("{} failed, notifying constellation", name);
-            failure_dest.lock().send_async(failure_msg);
+            failure_dest.lock().unwrap().send_async(failure_msg);
         }
     });
 }

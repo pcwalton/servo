@@ -11,6 +11,8 @@ extern crate net_traits;
 extern crate url;
 extern crate util;
 
+extern crate serialize;
+
 // This module contains traits in layout used generically
 //   in the rest of Servo.
 // The traits are here instead of in layout so
@@ -27,9 +29,11 @@ use net_traits::image_cache_task::ImageCacheTask;
 use script_traits::{ScriptControlChan, OpaqueScriptLayoutChannel};
 use std::sync::mpsc::{Sender, Receiver};
 use util::geometry::Au;
+use util::ipc::{IpcReceiver, IpcSender};
 use url::Url;
 
 /// Messages sent to the layout task from the constellation and/or compositor.
+#[derive(RustcEncodable, RustcDecodable)]
 pub enum LayoutControlMsg {
     ExitNow(PipelineExitType),
     GetCurrentEpoch(Sender<Epoch>),
@@ -39,7 +43,7 @@ pub enum LayoutControlMsg {
 
 /// A channel wrapper for constellation messages
 #[derive(Clone)]
-pub struct LayoutControlChan(pub Sender<LayoutControlMsg>);
+pub struct LayoutControlChan(pub IpcSender<LayoutControlMsg>);
 
 // A static method creating a layout task
 // Here to remove the compositor -> layout dependency
@@ -50,7 +54,7 @@ pub trait LayoutTaskFactory {
               url: Url,
               is_iframe: bool,
               chan: OpaqueScriptLayoutChannel,
-              pipeline_port: Receiver<LayoutControlMsg>,
+              pipeline_port: IpcReceiver<LayoutControlMsg>,
               constellation_chan: ConstellationChan,
               failure_msg: Failure,
               script_chan: ScriptControlChan,

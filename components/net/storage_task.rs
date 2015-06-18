@@ -12,6 +12,32 @@ use net_traits::storage_task::{StorageTask, StorageTaskMsg, StorageType};
 use util::str::DOMString;
 use util::task::spawn_named;
 
+/// Handle to a storage task
+#[deriving(Clone)]
+pub struct StorageTask {
+    pub client: SharedServerProxy<StorageTaskMsg,StorageTaskResponse>,
+}
+
+impl StorageTask {
+    #[inline]
+    pub fn from_client(client: SharedServerProxy<StorageTaskMsg,StorageTaskResponse>)
+                       -> StorageTask {
+        StorageTask {
+            client: client,
+        }
+    }
+
+    pub fn send(&self, msg: StorageTaskMsg) -> StorageTaskResponse {
+        self.client.lock().send_sync(msg)
+    }
+
+    pub fn create_new_client(&self) -> StorageTask {
+        StorageTask {
+            client: Arc::new(Mutex::new(self.client.lock().create_new_client())),
+        }
+    }
+}
+
 pub trait StorageTaskFactory {
     fn new() -> Self;
 }
@@ -19,24 +45,27 @@ pub trait StorageTaskFactory {
 impl StorageTaskFactory for StorageTask {
     /// Create a StorageTask
     fn new() -> StorageTask {
-        let (chan, port) = channel();
-        spawn_named("StorageManager".to_owned(), move || {
-            StorageManager::new(port).start();
+        let mut server = Server::new("StorageTask");
+        let client = Arc::new(Mutex::new(server.create_new_client()));
+        spawn_named("StorageManager".to_owned(), proc() {
+            StorageManager::new(server).start();
         });
-        chan
+        StorageTask {
+            client: client,
+        }
     }
 }
 
 struct StorageManager {
-    port: Receiver<StorageTaskMsg>,
+    server: Server<StorageTaskMsg,StorageTaskResponse>,
     session_data: HashMap<String, BTreeMap<DOMString, DOMString>>,
     local_data: HashMap<String, BTreeMap<DOMString, DOMString>>,
 }
 
 impl StorageManager {
-    fn new(port: Receiver<StorageTaskMsg>) -> StorageManager {
+    fn new(server: Server<StorageTaskMsg,StorageTaskResponse>) -> StorageManager {
         StorageManager {
-            port: port,
+            server: server,
             session_data: HashMap::new(),
             local_data: HashMap::new(),
         }
@@ -45,28 +74,19 @@ impl StorageManager {
 
 impl StorageManager {
     fn start(&mut self) {
-        loop {
-            match self.port.recv().unwrap() {
-                StorageTaskMsg::Length(sender, url, storage_type) => {
-                    self.length(sender, url, storage_type)
-                }
-                StorageTaskMsg::Key(sender, url, storage_type, index) => {
-                    self.key(sender, url, storage_type, index)
-                }
-                StorageTaskMsg::SetItem(sender, url, storage_type, name, value) => {
-                    self.set_item(sender, url, storage_type, name, value)
-                }
-                StorageTaskMsg::GetItem(sender, url, storage_type, name) => {
-                    self.get_item(sender, url, storage_type, name)
-                }
-                StorageTaskMsg::RemoveItem(sender, url, storage_type, name) => {
-                    self.remove_item(sender, url, storage_type, name)
-                }
-                StorageTaskMsg::Clear(sender, url, storage_type) => {
-                    self.clear(sender, url, storage_type)
-                }
-                StorageTaskMsg::Exit => {
-                    break
+        while let Some(msgs) = self.server.recv() {
+            for (client_id, msg) in msgs.into_iter() {
+                match msg {
+                    StorageTaskMsg::Length(url) => self.length(client_id, url),
+                    StorageTaskMsg::Key(url, index) => self.key(client_id, url, index),
+                    StorageTaskMsg::SetItem(url, name, value) => {
+                        self.set_item(client_id, url, name, value)
+                    }
+                    StorageTaskMsg::GetItem(url, name) => self.get_item(client_id, url, name),
+                    StorageTaskMsg::RemoveItem(url, name) => {
+                        self.remove_item(client_id, url, name)
+                    }
+                    StorageTaskMsg::Clear(url) => self.clear(client_id, url),
                 }
             }
         }

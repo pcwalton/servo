@@ -37,13 +37,14 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::collections::HashMap;
 use url::Url;
 use util::geometry::{Au, ZERO_POINT};
+use util::ipc::{self, IpcSender};
 use util::opts;
 use util::task::spawn_named_with_send_on_failure;
 use util::task_state;
 use util::task::spawn_named;
 
 /// Information about a hardware graphics layer that layout sends to the painting task.
-#[derive(Clone)]
+#[derive(Clone, RustcEncodable, RustcDecodable)]
 pub struct PaintLayer {
     /// A per-pipeline ID describing this layer that should be stable across reflows.
     pub id: LayerId,
@@ -64,6 +65,7 @@ impl PaintLayer {
     }
 }
 
+#[deriving(RustcDecodable, RustcEncodable)]
 pub struct PaintRequest {
     pub buffer_requests: Vec<BufferRequest>,
     pub scale: f32,
@@ -71,15 +73,25 @@ pub struct PaintRequest {
     pub epoch: Epoch,
 }
 
+/// Messages from the compositor, pipeline, and/or layout tasks to the paint task.
 pub enum Msg {
-    PaintInit(Epoch, Arc<StackingContext>),
-    CanvasLayer(LayerId, Arc<Mutex<Sender<CanvasMsg>>>),
-    Paint(Vec<PaintRequest>, FrameTreeId),
+    FromLayout(LayoutToPaintMsg),
+    Paint(Vec<PaintRequest>),
     UnusedBuffer(Vec<Box<LayerBuffer>>),
     PaintPermissionGranted,
     PaintPermissionRevoked,
     CollectReports(ReportsChan),
-    Exit(Option<Sender<()>>, PipelineExitType),
+    Exit(PipelineExitType),
+}
+
+/// Messages from the layout task to the paint task.
+#[deriving(Decodable, Encodable)]
+pub enum LayoutToPaintMsg {
+    /// A new display list has arrived.
+    SerializedPaintInit(Arc<StackingContext>),
+    /// Same as `PaintInit`, but cast to a pointer. This is to be used only in 
+    UnserializedPaintInit(uint),
+    Exit(PipelineExitType),
 }
 
 #[derive(Clone)]
@@ -106,6 +118,44 @@ impl Reporter for PaintChan {
     fn collect_reports(&self, reports_chan: ReportsChan) -> bool {
         let PaintChan(ref c) = *self;
         c.send(Msg::CollectReports(reports_chan)).is_ok()
+    }
+
+    /// Creates an IPC channel through which layout can send messages to the painting thread. This
+    /// spawns a helper thread to forward messages to the painter.
+    pub fn create_layout_channel(&self) -> LayoutToPaintChan {
+        let (ipc_receiver, ipc_sender) = ipc::channel();
+        let &PaintChan(ref paint_channel) = self;
+        let paint_channel = (*paint_channel).clone();
+        std_task::spawn(proc() {
+            while let Ok(msg) = ipc_receiver.recv_opt() {
+                if paint_channel.send_opt(Msg::FromLayout(msg)).is_err() {
+                    return
+                }
+            }
+        });
+        LayoutToPaintChan(ipc_sender)
+    }
+}
+
+/// The channel on which the layout thread sends messages to the painting thread.
+#[deriving(Clone)]
+pub struct LayoutToPaintChan(IpcSender<LayoutToPaintMsg>);
+
+impl LayoutToPaintChan {
+    #[inline]
+    pub fn from_channel(channel: IpcSender<LayoutToPaintMsg>) -> LayoutToPaintChan {
+        LayoutToPaintChan(channel)
+    }
+
+    #[inline]
+    pub fn fd(&self) -> c_int {
+        let LayoutToPaintChan(ref channel) = *self;
+        channel.fd()
+    }
+
+    pub fn send(&self, msg: LayoutToPaintMsg) {
+        let &LayoutToPaintChan(ref chan) = self;
+        chan.send(msg)
     }
 }
 
@@ -172,7 +222,9 @@ impl<C> PaintTask<C> where C: PaintListener + Send + 'static {
                   mem_profiler_chan: mem::ProfilerChan,
                   shutdown_chan: Sender<()>) {
         let ConstellationChan(c) = constellation_chan.clone();
-        spawn_named_with_send_on_failure(format!("PaintTask {:?}", id), task_state::PAINT, move || {
+        server::spawn_named_with_send_to_server_on_failure(format!("PaintTask {:?}", id),
+                                                           task_state::PAINT,
+                                                           move || {
             {
                 // Ensures that the paint task and graphics context are destroyed before the
                 // shutdown message.
@@ -217,41 +269,42 @@ impl<C> PaintTask<C> where C: PaintListener + Send + 'static {
                     None => (),
                 }
 
-                // Tell all the worker threads to shut down.
-                for worker_thread in paint_task.worker_threads.iter_mut() {
-                    worker_thread.exit()
-                }
+            paint_task.start();
+
+            // Destroy all the buffers.
+            match paint_task.native_graphics_context.as_ref() {
+                Some(ctx) => paint_task.buffer_map.clear(ctx),
+                None => (),
             }
 
-            debug!("paint_task: shutdown_chan send");
-            shutdown_chan.send(()).unwrap();
+            // Tell all the worker threads to shut down.
+            for worker_thread in paint_task.worker_threads.iter_mut() {
+                worker_thread.exit()
+            }
         }, ConstellationMsg::Failure(failure_msg), c);
     }
 
     fn start(&mut self) {
         debug!("PaintTask: beginning painting loop");
 
-        let mut exit_response_channel : Option<Sender<()>> = None;
         let mut waiting_for_compositor_buffers_to_exit = false;
         loop {
-            match self.port.recv().unwrap() {
-                Msg::PaintInit(epoch, stacking_context) => {
-                    self.current_epoch = Some(epoch);
-                    self.root_stacking_context = Some(stacking_context.clone());
-
-                    if !self.paint_permission {
-                        debug!("PaintTask: paint ready msg");
-                        let ConstellationChan(ref mut c) = self.constellation_chan;
-                        c.send(ConstellationMsg::PainterReady(self.id)).unwrap();
-                        continue;
+            match self.port.recv() {
+                Msg::FromLayout(LayoutToPaintMsg::SerializedPaintInit(stacking_context)) => {
+                    self.root_stacking_context = Some(stacking_context);
+                    self.received_paint_init();
+                }
+                Msg::FromLayout(LayoutToPaintMsg::UnserializedPaintInit(stacking_context)) => {
+                    // Security check: in multiprocess mode, an untrusted process can send these to
+                    // us, so we must forbid them in that case.
+                    if opts::get().multiprocess || opts::get().force_display_list_serialization {
+                        panic!("`UnserializedPaintInit` messages not allowed in this mode!");
                     }
-
-                    // If waiting to exit, ignore any more paint commands
-                    if waiting_for_compositor_buffers_to_exit {
-                        continue;
-                    }
-
-                    self.initialize_layers();
+                    let stacking_context: Arc<StackingContext> = unsafe {
+                        mem::transmute(stacking_context)
+                    };
+                    self.root_stacking_context = Some(stacking_context);
+                    self.received_paint_init();
                 }
                 // Inserts a new canvas renderer to the layer map
                 Msg::CanvasLayer(layer_id, canvas_renderer) => {
@@ -262,7 +315,7 @@ impl<C> PaintTask<C> where C: PaintListener + Send + 'static {
                     if !self.paint_permission {
                         debug!("PaintTask: paint ready msg");
                         let ConstellationChan(ref mut c) = self.constellation_chan;
-                        c.send(ConstellationMsg::PainterReady(self.id)).unwrap();
+                        c.lock().send_async(ConstellationMsg::PainterReady(self.id));
                         continue;
                     }
 
@@ -302,7 +355,6 @@ impl<C> PaintTask<C> where C: PaintListener + Send + 'static {
 
                     if waiting_for_compositor_buffers_to_exit && self.used_buffer_count == 0 {
                         debug!("PaintTask: Received all loaned buffers, exiting.");
-                        exit_response_channel.map(|channel| channel.send(()));
                         break;
                     }
                 }
@@ -325,7 +377,7 @@ impl<C> PaintTask<C> where C: PaintListener + Send + 'static {
                     });
                     reports_chan.send(reports);
                 }
-                Msg::Exit(response_channel, exit_type) => {
+                Msg::Exit(exit_type) | Msg::FromLayout(LayoutToPaintMsg::Exit(exit_type)) => {
                     let msg = mem::ProfilerMsg::UnregisterReporter(self.reporter_name.clone());
                     self.mem_profiler_chan.send(msg);
 
@@ -343,7 +395,6 @@ impl<C> PaintTask<C> where C: PaintListener + Send + 'static {
 
                     if !should_wait_for_compositor_buffers {
                         debug!("PaintTask: Exiting without waiting for compositor buffers.");
-                        response_channel.map(|channel| channel.send(()));
                         break;
                     }
 
@@ -352,10 +403,21 @@ impl<C> PaintTask<C> where C: PaintListener + Send + 'static {
                     // When doing a complete exit, the compositor lets all buffers leak.
                     debug!("PaintTask {:?}: Saw ExitMsg, {} buffers in use", self.id, self.used_buffer_count);
                     waiting_for_compositor_buffers_to_exit = true;
-                    exit_response_channel = response_channel;
                 }
             }
         }
+    }
+
+    fn received_paint_init(&mut self) {
+        if !self.paint_permission {
+            debug!("PaintTask: paint ready msg");
+            let ConstellationChan(ref mut c) = self.constellation_chan;
+            c.lock().send_async(ConstellationMsg::PainterReady(self.id));
+            return;
+        }
+
+        self.epoch.next();
+        self.initialize_layers();
     }
 
     /// Retrieves an appropriately-sized layer buffer from the cache to match the requirements of
@@ -458,9 +520,10 @@ impl<C> PaintTask<C> where C: PaintListener + Send + 'static {
                  page_position: &Point2D<Au>) {
             let page_position = stacking_context.bounds.origin + *page_position;
             if let Some(ref paint_layer) = stacking_context.layer {
-                // Layers start at the top left of their overflow rect, as far as the info we give to
-                // the compositor is concerned.
-                let overflow_relative_page_position = page_position + stacking_context.overflow.origin;
+                // Layers start at the top left of their overflow rect, as far as the info we give
+                // to the compositor is concerned.
+                let overflow_relative_page_position = page_position +
+                    stacking_context.overflow.origin;
                 let layer_position =
                     Rect::new(Point2D::new(overflow_relative_page_position.x.to_nearest_px() as f32,
                                            overflow_relative_page_position.y.to_nearest_px() as f32),
@@ -550,7 +613,7 @@ impl WorkerThread {
     fn new(sender: Sender<MsgFromWorkerThread>,
            receiver: Receiver<MsgToWorkerThread>,
            native_graphics_metadata: Option<NativeGraphicsMetadata>,
-           font_cache_task: FontCacheTask,
+           _: FontCacheTask,
            time_profiler_sender: time::ProfilerChan)
            -> WorkerThread {
         WorkerThread {
@@ -559,7 +622,7 @@ impl WorkerThread {
             native_graphics_context: native_graphics_metadata.map(|metadata| {
                 NativePaintingGraphicsContext::from_metadata(&metadata)
             }),
-            font_context: box FontContext::new(font_cache_task.clone()),
+            font_context: box FontContext::new(),
             time_profiler_sender: time_profiler_sender,
         }
     }

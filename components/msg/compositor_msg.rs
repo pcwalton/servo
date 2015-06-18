@@ -14,7 +14,7 @@ use std::fmt;
 use constellation_msg::PipelineId;
 
 /// A newtype struct for denoting the age of messages; prevents race conditions.
-#[derive(PartialEq, Eq, Debug, Copy, Clone, PartialOrd, Ord)]
+#[derive(PartialEq, Eq, Debug, Copy, Clone, PartialOrd, Ord, RustcDecodable, RustcEncodable)]
 pub struct Epoch(pub u32);
 
 impl Epoch {
@@ -24,7 +24,7 @@ impl Epoch {
     }
 }
 
-#[derive(PartialEq, Eq, Debug, Copy, Clone)]
+#[derive(PartialEq, Eq, Debug, Copy, Clone, RustcEncodable, RustcDecodable)]
 pub struct FrameTreeId(pub u32);
 
 impl FrameTreeId {
@@ -34,7 +34,7 @@ impl FrameTreeId {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Copy, Hash)]
+#[derive(Clone, PartialEq, Eq, Copy, Hash, RustcEncodable, RustcDecodable)]
 pub struct LayerId(pub usize, pub u32);
 
 impl Debug for LayerId {
@@ -52,7 +52,7 @@ impl LayerId {
 }
 
 /// The scrolling policy of a layer.
-#[derive(Clone, PartialEq, Eq, Copy)]
+#[derive(Clone, PartialEq, Eq, Copy, RustcDecodable, RustcEncodable)]
 pub enum ScrollPolicy {
     /// These layers scroll when the parent receives a scrolling message.
     Scrollable,
@@ -99,14 +99,11 @@ pub trait PaintListener {
 
 /// The interface used by the script task to tell the compositor to update its ready state,
 /// which is used in displaying the appropriate message in the window's title.
-pub trait ScriptListener {
-    fn scroll_fragment_point(&mut self,
-                             pipeline_id: PipelineId,
-                             layer_id: LayerId,
-                             point: Point2D<f32>);
+#[derive(RustcDecodable, RustcEncodable)]
+pub enum ScriptToCompositorMsg {
+    ScrollFragmentPoint(PipelineId, LayerId, Point2D<f32>),
     /// Informs the compositor that the title of the page with the given pipeline ID has changed.
-    fn set_title(&mut self, pipeline_id: PipelineId, new_title: Option<String>);
-    fn close(&mut self);
-    fn dup(&mut self) -> Box<ScriptListener+'static>;
-    fn send_key_event(&mut self, key: Key, state: KeyState, modifiers: KeyModifiers);
+    SetTitle(PipelineId, Option<String>),
+    SendKeyEvent(Key, KeyState, KeyModifiers),
 }
+

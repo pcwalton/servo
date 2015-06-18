@@ -19,6 +19,7 @@ use msg::compositor_msg::{Epoch, LayerId, LayerProperties, FrameTreeId};
 use msg::compositor_msg::{PaintListener, ScriptListener};
 use msg::constellation_msg::{AnimationState, ConstellationChan, PipelineId};
 use msg::constellation_msg::{Key, KeyState, KeyModifiers};
+use net::server::{Server, SharedServerProxy};
 use profile_traits::mem;
 use profile_traits::time;
 use png;
@@ -233,14 +234,55 @@ impl CompositorTask {
         NativeCompositingGraphicsContext::new()
     }
 
+    pub fn create_compositor_server_channel() -> (Server<ScriptToCompositorMsg,()>,
+                                                  SharedServerProxy<ScriptToCompositorMsg,()>) {
+        let mut server = Server::new("CompositorTask");
+        let server_proxy = Arc::new(Mutex::new(server.create_new_client()));
+        (server, server_proxy)
+    }
+
     pub fn create<Window>(window: Option<Rc<Window>>,
                           sender: Box<CompositorProxy+Send>,
                           receiver: Box<CompositorReceiver>,
+                          mut server: Server<ScriptToCompositorMsg,()>,
                           constellation_chan: ConstellationChan,
                           time_profiler_chan: time::ProfilerChan,
                           mem_profiler_chan: mem::ProfilerChan)
                           -> Box<CompositorEventListener + 'static>
                           where Window: WindowMethods + 'static {
+        // Create a proxy server to forward messages received via IPC to the compositor.
+        let mut compositor_proxy_for_forwarder = sender.clone_compositor_proxy();
+        task::spawn(proc() {
+            while let Some(msgs) = server.recv() {
+                for (_, msg) in msgs.into_iter() {
+                    match msg {
+                        ScriptToCompositorMsg::SetReadyState(pipeline_id, ready_state) => {
+                            compositor_proxy_for_forwarder.send(Msg::ChangeReadyState(
+                                    pipeline_id,
+                                    ready_state))
+                        }
+                        ScriptToCompositorMsg::ScrollFragmentPoint(pipeline_id,
+                                                                   layer_id,
+                                                                   point) => {
+                            compositor_proxy_for_forwarder.send(Msg::ScrollFragmentPoint(
+                                    pipeline_id,
+                                    layer_id,
+                                    point))
+                        }
+                        ScriptToCompositorMsg::SetTitle(pipeline_id, title) => {
+                            compositor_proxy_for_forwarder.send(Msg::ChangePageTitle(pipeline_id,
+                                                                                     title))
+                        }
+                        ScriptToCompositorMsg::SendKeyEvent(key, state, modifiers) => {
+                            if state == KeyState::Pressed {
+                                compositor_proxy_for_forwarder.send(Msg::KeyEvent(key, modifiers))
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
         match window {
             Some(window) => {
                 box compositor::IOCompositor::create(window,
@@ -268,5 +310,5 @@ pub trait CompositorEventListener {
     fn shutdown(&mut self);
     fn pinch_zoom_level(&self) -> f32;
     /// Requests that the compositor send the title for the main frame as soon as possible.
-    fn get_title_for_main_frame(&self);
+    fn get_title_for_main_frame(&mut self);
 }

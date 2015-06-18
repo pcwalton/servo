@@ -30,6 +30,8 @@ extern crate glutin_app as app;
 extern crate time;
 extern crate env_logger;
 
+extern crate libc;
+
 #[cfg(target_os="android")]
 #[macro_use]
 extern crate android_glue;
@@ -46,8 +48,12 @@ use std::borrow::ToOwned;
 fn main() {
     env_logger::init().unwrap();
 
-    // Parse the command line options and store them globally
+    if let Some(bootstrap_fd_string) = os::getenv("SERVO_CONTENT_PROCESS") {
+        return content_process::main(FromStr::from_str(bootstrap_fd_string.as_slice()).unwrap())
+    }
+
     if opts::from_cmdline_args(&*get_args()) {
+
         setup_logging();
 
         // Possibly interpret the `HOST_FILE` environment variable

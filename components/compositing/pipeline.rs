@@ -3,9 +3,10 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 use CompositorProxy;
+use content_process::{mod, AuxiliaryContentProcessData, ContentProcess, ContentProcessIpc, Zone};
 use layout_traits::{LayoutControlMsg, LayoutTaskFactory, LayoutControlChan};
 use script_traits::{ScriptControlChan, ScriptTaskFactory};
-use script_traits::{NewLayoutInfo, ConstellationControlMsg};
+use script_traits::{ConstellationControlMsg};
 
 use devtools_traits::DevtoolsControlChan;
 use geom::rect::{TypedRect};
@@ -24,6 +25,7 @@ use net_traits::storage_task::StorageTask;
 use std::sync::mpsc::{Receiver, channel};
 use url::Url;
 use util::geometry::{PagePx, ViewportPx};
+use util::ipc;
 use util::opts;
 
 /// A uniquely-identifiable pipeline of script task, layout task, and paint task.
@@ -38,6 +40,8 @@ pub struct Pipeline {
     pub paint_shutdown_port: Receiver<()>,
     /// URL corresponding to the most recently-loaded page.
     pub url: Url,
+    /// Load data corresponding to the most recently-loaded page.
+    pub load_data: LoadData,
     /// The title of the most recently-loaded page.
     pub title: Option<String>,
     pub rect: Option<TypedRect<PagePx, f32>>,
@@ -64,7 +68,9 @@ impl Pipeline {
                            parent_info: Option<(PipelineId, SubpageId)>,
                            constellation_chan: ConstellationChan,
                            compositor_proxy: Box<CompositorProxy+'static+Send>,
-                           devtools_chan: Option<DevtoolsControlChan>,
+                           script_to_compositor_client: SharedServerProxy<ScriptToCompositorMsg,
+                                                                          ()>,
+                           _: Option<DevtoolsControlChan>,
                            image_cache_task: ImageCacheTask,
                            font_cache_task: FontCacheTask,
                            resource_task: ResourceTask,
@@ -77,63 +83,51 @@ impl Pipeline {
                            device_pixel_ratio: ScaleFactor<ViewportPx, DevicePixel, f32>)
                            -> Pipeline
                            where LTF: LayoutTaskFactory, STF:ScriptTaskFactory {
-        let layout_pair = ScriptTaskFactory::create_layout_channel(None::<&mut STF>);
         let (paint_port, paint_chan) = PaintChan::new();
-        let (paint_shutdown_chan, paint_shutdown_port) = channel();
-        let (layout_shutdown_chan, layout_shutdown_port) = channel();
-        let (pipeline_chan, pipeline_port) = channel();
+        let (_, layout_shutdown_port) = channel();
+        let (pipeline_port, pipeline_chan) = ipc::channel();
 
         let failure = Failure {
             pipeline_id: id,
             parent_info: parent_info,
         };
 
-        let script_chan = match script_chan {
+        let (script_port, script_chan) = ipc::channel();
+        let content_process_ipc = ContentProcessIpc {
+            script_to_compositor_client: script_to_compositor_client,
+            script_port: script_port,
+            constellation_chan: constellation_chan.clone(),
+            storage_task: storage_task,
+            pipeline_to_layout_port: pipeline_port,
+            layout_to_paint_chan: paint_chan.create_layout_channel(),
+            font_cache_task: font_cache_task.clone(),
+        };
+
+        match script_pipeline {
             None => {
-                let (script_chan, script_port) = channel();
-
-                let window_size = window_rect.map(|rect| {
-                    WindowSizeData {
-                        visible_viewport: rect.size,
-                        initial_viewport: rect.size * ScaleFactor::new(1.0),
-                        device_pixel_ratio: device_pixel_ratio,
-                    }
-                });
-
-                ScriptTaskFactory::create(None::<&mut STF>,
-                                          id,
-                                          parent_info,
-                                          compositor_proxy.clone_compositor_proxy(),
-                                          &layout_pair,
-                                          ScriptControlChan(script_chan.clone()),
-                                          script_port,
-                                          constellation_chan.clone(),
-                                          failure.clone(),
-                                          resource_task,
-                                          storage_task.clone(),
-                                          image_cache_task.clone(),
-                                          devtools_chan,
-                                          window_size,
-                                          load_data.clone());
-                ScriptControlChan(script_chan)
-            }
-            Some(script_chan) => {
-                let (containing_pipeline_id, subpage_id) =
-                    parent_info.expect("script_pipeline != None but subpage_id == None");
-                let new_layout_info = NewLayoutInfo {
-                    containing_pipeline_id: containing_pipeline_id,
-                    new_pipeline_id: id,
-                    subpage_id: subpage_id,
-                    layout_chan: ScriptTaskFactory::clone_layout_channel(None::<&mut STF>,
-                                                                         &layout_pair),
-                    load_data: load_data.clone(),
+                let data = AuxiliaryContentProcessData {
+                    pipeline_id: id,
+                    failure: failure,
+                    window_size: window_size,
+                    zone: Zone::from_load_data(&load_data),
                 };
 
-                let ScriptControlChan(ref chan) = script_chan;
-                chan.send(ConstellationControlMsg::AttachLayout(new_layout_info)).unwrap();
-                script_chan.clone()
+                if !opts::get().multiprocess {
+                    let content_process = ContentProcess {
+                        ipc: content_process_ipc,
+                        resource_task: resource_task.clone(),
+                        image_cache_task: image_cache_task.clone(),
+                        time_profiler_chan: time_profiler_chan.clone(),
+                    };
+                    content_process.create_script_and_layout_threads(data)
+                } else {
+                    content_process::spawn(content_process_ipc, data)
+                }
             }
-        };
+            Some(_spipe) => {
+                panic!("layout connection to existing script thread not yet ported to e10s")
+            }
+        }
 
         PaintTask::create(id,
                           load_data.url.clone(),
@@ -141,37 +135,17 @@ impl Pipeline {
                           paint_port,
                           compositor_proxy,
                           constellation_chan.clone(),
-                          font_cache_task.clone(),
+                          font_cache_task,
                           failure.clone(),
-                          time_profiler_chan.clone(),
-                          mem_profiler_chan.clone(),
-                          paint_shutdown_chan);
-
-        LayoutTaskFactory::create(None::<&mut LTF>,
-                                  id,
-                                  load_data.url.clone(),
-                                  parent_info.is_some(),
-                                  layout_pair,
-                                  pipeline_port,
-                                  constellation_chan,
-                                  failure,
-                                  script_chan.clone(),
-                                  paint_chan.clone(),
-                                  image_cache_task,
-                                  font_cache_task,
-                                  time_profiler_chan,
-                                  mem_profiler_chan,
-                                  layout_shutdown_chan);
+                          time_profiler_chan.clone());
 
         Pipeline::new(id,
-                      parent_info,
-                      script_chan,
+                      subpage_id,
+                      ScriptControlChan(script_chan),
                       LayoutControlChan(pipeline_chan),
                       paint_chan,
                       layout_shutdown_port,
-                      paint_shutdown_port,
-                      load_data.url,
-                      window_rect)
+                      load_data)
     }
 
     pub fn new(id: PipelineId,
@@ -180,9 +154,7 @@ impl Pipeline {
                layout_chan: LayoutControlChan,
                paint_chan: PaintChan,
                layout_shutdown_port: Receiver<()>,
-               paint_shutdown_port: Receiver<()>,
-               url: Url,
-               rect: Option<TypedRect<PagePx, f32>>)
+               load_data: LoadData)
                -> Pipeline {
         Pipeline {
             id: id,
@@ -191,8 +163,7 @@ impl Pipeline {
             layout_chan: layout_chan,
             paint_chan: paint_chan,
             layout_shutdown_port: layout_shutdown_port,
-            paint_shutdown_port: paint_shutdown_port,
-            url: url,
+            load_data: load_data,
             title: None,
             children: vec!(),
             rect: rect,
@@ -218,8 +189,7 @@ impl Pipeline {
         if chan.send(ConstellationControlMsg::ExitPipeline(self.id, exit_type)).is_ok() {
             // Wait until all slave tasks have terminated and run destructors
             // NOTE: We don't wait for script task as we don't always own it
-            let _ = self.paint_shutdown_port.recv();
-            let _ = self.layout_shutdown_port.recv();
+            let _ = self.layout_shutdown_port.recv_opt();
         }
 
     }
@@ -238,8 +208,8 @@ impl Pipeline {
         let ScriptControlChan(ref script_channel) = self.script_chan;
         let _ = script_channel.send(
             ConstellationControlMsg::ExitPipeline(self.id,
-                                                  PipelineExitType::PipelineOnly)).unwrap();
-        let _ = self.paint_chan.send(PaintMsg::Exit(None, PipelineExitType::PipelineOnly));
+                                                  PipelineExitType::PipelineOnly));
+        let _ = self.paint_chan.send_opt(PaintMsg::Exit(PipelineExitType::PipelineOnly));
         let LayoutControlChan(ref layout_channel) = self.layout_chan;
         let _ = layout_channel.send(
             LayoutControlMsg::ExitNow(PipelineExitType::PipelineOnly)).unwrap();

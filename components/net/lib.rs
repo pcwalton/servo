@@ -42,6 +42,8 @@ pub mod pub_domains;
 pub mod resource_task;
 pub mod storage_task;
 pub mod mime_classifier;
+pub mod server;
+mod sniffer_task;
 
 /// An implementation of the [Fetch spec](https://fetch.spec.whatwg.org/)
 pub mod fetch {

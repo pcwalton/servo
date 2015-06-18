@@ -6,6 +6,7 @@ use core_graphics::data_provider::CGDataProvider;
 use core_graphics::font::CGFont;
 use core_text::font::CTFont;
 use core_text;
+use serialize::{Decodable, Decoder, Encodable, Encoder};
 
 use std::borrow::ToOwned;
 
@@ -16,7 +17,22 @@ use std::borrow::ToOwned;
 pub struct FontTemplateData {
     pub ctfont: Option<CTFont>,
     pub identifier: String,
-    pub font_data: Option<Vec<u8>>
+    pub font_data: Option<Vec<u8>>,
+}
+
+impl<E,S> Encodable<S,E> for FontTemplateData where S: Encoder<E> {
+    fn encode(&self, s: &mut S) -> Result<(),E> {
+        try!(self.identifier.encode(s));
+        self.font_data.encode(s)
+    }
+}
+
+impl<E,D> Decodable<D,E> for FontTemplateData where D: Decoder<E> {
+    fn decode(d: &mut D) -> Result<FontTemplateData,E> {
+        let identifier: String = try!(Decodable::decode(d));
+        let font_data: Option<Vec<u8>> = try!(Decodable::decode(d));
+        Ok(FontTemplateData::new(identifier.as_slice(), font_data))
+    }
 }
 
 unsafe impl Send for FontTemplateData {}
@@ -41,7 +57,7 @@ impl FontTemplateData {
         FontTemplateData {
             ctfont: ctfont,
             identifier: identifier.to_owned(),
-            font_data: font_data
+            font_data: font_data,
         }
     }
 }

@@ -446,7 +446,8 @@ impl<'a> FlowConstructor<'a> {
 
 
             let (ascent, descent) =
-                inline_flow.compute_minimum_ascent_and_descent(&mut self.layout_context.font_context(),
+                inline_flow.compute_minimum_ascent_and_descent(&mut self.layout_context
+                                                                        .font_context(),
                                                                &**node.style());
             inline_flow.minimum_block_size_above_baseline = ascent;
             inline_flow.minimum_depth_below_baseline = descent;

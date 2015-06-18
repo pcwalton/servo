@@ -7,6 +7,8 @@ extern crate azure;
 extern crate geom;
 extern crate hyper;
 extern crate layers;
+extern crate libc;
+#[macro_use] extern crate log;
 extern crate png;
 extern crate rustc_serialize;
 extern crate util;
@@ -20,4 +22,6 @@ extern crate io_surface;
 
 pub mod compositor_msg;
 pub mod constellation_msg;
+pub mod server;
 pub mod webdriver_msg;
+

@@ -5,6 +5,8 @@
 //! The high-level interface from script to constellation. Using this abstract interface helps
 //! reduce coupling between these two components.
 
+use server::SharedServerProxy;
+
 use compositor_msg::Epoch;
 use geom::rect::Rect;
 use geom::size::TypedSize2D;
@@ -13,38 +15,60 @@ use hyper::header::Headers;
 use hyper::method::Method;
 use layers::geometry::DevicePixel;
 use png;
-use util::cursor::Cursor;
-use util::geometry::{PagePx, ViewportPx};
+use rustc_serialize::{Decodable, Decoder, Encodable, Encoder};
 use std::collections::HashMap;
+use std::str::FromStr;
 use std::sync::mpsc::{channel, Sender, Receiver};
 use style::viewport::ViewportConstraints;
 use url::Url;
+use util::cursor::Cursor;
+use util::geometry::{PagePx, ViewportPx};
 use webdriver_msg::{WebDriverScriptCommand, LoadStatus};
 
 #[derive(Clone)]
-pub struct ConstellationChan(pub Sender<Msg>);
+pub struct ConstellationChan(pub SharedServerProxy<Msg,()>);
 
 impl ConstellationChan {
-    pub fn new() -> (Receiver<Msg>, ConstellationChan) {
-        let (chan, port) = channel();
-        (port, ConstellationChan(chan))
+    #[inline]
+    pub fn from_server_proxy(server_proxy: SharedServerProxy<Msg,()>) -> ConstellationChan {
+        ConstellationChan(server_proxy)
+    }
+
+    #[inline]
+    pub fn fds(&self) -> (i32, i32) {
+        let ConstellationChan(ref channel) = *self;
+        channel.lock().unwrap().fds()
+    }
+
+    /// Currently, the constellation handles only asynchronous messages, so we provide this message
+    /// for convenience.
+    #[inline]
+    pub fn send(&self, msg: Msg) {
+        let ConstellationChan(ref channel) = *self;
+        channel.lock().unwrap().send_async(msg)
+    }
+
+    #[inline]
+    pub fn server_proxy(&self) -> &SharedServerProxy<Msg,()> {
+        let ConstellationChan(ref channel) = *self;
+        channel
     }
 }
 
-#[derive(PartialEq, Eq, Copy, Clone, Debug)]
+#[derive(PartialEq, Eq, Copy, Clone, Debug, RustcEncodable, RustcDecodable)]
 pub enum IFrameSandboxState {
     IFrameSandboxed,
     IFrameUnsandboxed
 }
 
 // We pass this info to various tasks, so it lives in a separate, cloneable struct.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, RustcEncodable, RustcDecodable)]
 pub struct Failure {
     pub pipeline_id: PipelineId,
     pub parent_info: Option<(PipelineId, SubpageId)>,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, RustcEncodable, RustcDecodable)]
 pub struct WindowSizeData {
     /// The size of the initial layout viewport, before parsing an
     /// http://www.w3.org/TR/css-device-adapt/#initial-viewport
@@ -57,7 +81,7 @@ pub struct WindowSizeData {
     pub device_pixel_ratio: ScaleFactor<ViewportPx, DevicePixel, f32>,
 }
 
-#[derive(PartialEq, Eq, Copy, Clone)]
+#[derive(PartialEq, Eq, Copy, Clone, RustcEncodable, RustcDecodable)]
 pub enum KeyState {
     Pressed,
     Released,
@@ -65,7 +89,7 @@ pub enum KeyState {
 }
 
 //N.B. Based on the glutin key enum
-#[derive(Debug, PartialEq, Eq, Copy, Clone)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone, RustcEncodable, RustcDecodable)]
 pub enum Key {
     Space,
     Apostrophe,
@@ -191,6 +215,7 @@ pub enum Key {
 }
 
 bitflags! {
+    #[derive(RustcDecodable, RustcEncodable)]
     flags KeyModifiers: u8 {
         const SHIFT = 0x01,
         const CONTROL = 0x02,
@@ -207,6 +232,7 @@ pub enum FocusType {
 }
 
 /// Messages from the compositor and script to the constellation.
+#[derive(RustcDecodable, RustcEncodable)]
 pub enum Msg {
     Exit,
     Failure(Failure),
@@ -254,7 +280,7 @@ pub enum Msg {
     HeadParsed,
 }
 
-#[derive(Clone, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
 pub enum AnimationState {
     AnimationsPresent,
     AnimationCallbacksPresent,
@@ -263,6 +289,7 @@ pub enum AnimationState {
 }
 
 // https://developer.mozilla.org/en-US/docs/Web/API/Using_the_Browser_API#Events
+#[derive(RustcEncodable, RustcDecodable)]
 pub enum MozBrowserEvent {
     /// Sent when the scroll position within a browser <iframe> changes.
     AsyncScroll,
@@ -336,11 +363,11 @@ pub enum WebDriverCommandMsg {
 /// Similar to net::resource_task::LoadData
 /// can be passed to LoadUrl to load a page with GET/POST
 /// parameters or headers
-#[derive(Clone)]
+#[derive(Clone, RustcEncodable, RustcDecodable)]
 pub struct LoadData {
     pub url: Url,
-    pub method: Method,
-    pub headers: Headers,
+    pub method: HttpMethod,
+    pub headers: HttpHeaders,
     pub data: Option<Vec<u8>>,
 }
 
@@ -348,29 +375,77 @@ impl LoadData {
     pub fn new(url: Url) -> LoadData {
         LoadData {
             url: url,
-            method: Method::Get,
-            headers: Headers::new(),
+            method: HttpMethod(Method::Get),
+            headers: HttpHeaders(Headers::new()),
             data: None,
         }
     }
 }
 
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+pub struct HttpMethod(pub Method);
+
+impl Decodable for HttpMethod {
+    fn decode<D>(d: &mut D) -> Result<HttpMethod, D::Error> where D: Decoder {
+        let value: String = try!(Decodable::decode(d));
+        Ok(HttpMethod(Method::from_str(&value)))
+    }
+}
+
+impl Encodable for HttpMethod {
+    fn encode<S>(&self, e: &mut S) -> Result<(), S::Error> where S: Encoder {
+        e.emit_str(self.0.as_ref())
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct HttpHeaders(pub Headers);
+
+impl Decodable for HttpHeaders {
+    fn decode<D>(d: &mut D) -> Result<HttpHeaders, D::Error> where D: Decoder {
+        let value: Vec<(String,Vec<Vec<u8>>)> = try!(Decodable::decode(d));
+        let mut headers = Headers::new();
+        for (key, value) in value.into_iter() {
+            headers.set_raw(key, value)
+        }
+        Ok(HttpHeaders(headers))
+    }
+}
+
+impl Encodable for HttpHeaders {
+    fn encode<S>(&self, e: &mut S) -> Result<(), S::Error> where S: Encoder {
+        let mut headers: Vec<(String,Vec<Vec<u8>>)> = Vec::new();
+        for header in self.0.iter() {
+            headers.push((header.name().to_owned(),
+                          self.0.get_raw(header.name()).into_iter.collect::<Vec<_>>()));
+        }
+        headers.encode(e)
+    }
+}
+
+/// Represents the two different ways to which a page can be navigated
 #[derive(Clone, PartialEq, Eq, Copy, Hash, Debug)]
+pub enum NavigationType {
+    Load,               // entered or clicked on a url
+    Navigate,           // browser forward/back buttons
+}
+
+#[derive(Clone, PartialEq, Eq, Copy, Hash, Debug, RustcDecodable, RustcEncodable)]
 pub enum NavigationDirection {
     Forward,
     Back,
 }
 
-#[derive(Clone, PartialEq, Eq, Copy, Hash, Debug)]
+#[derive(Clone, PartialEq, Eq, Copy, Hash, Debug, RustcEncodable, RustcDecodable)]
 pub struct FrameId(pub u32);
 
-#[derive(Clone, PartialEq, Eq, Copy, Hash, Debug)]
+#[derive(Clone, PartialEq, Eq, Copy, Hash, Debug, RustcEncodable, RustcDecodable)]
 pub struct WorkerId(pub u32);
 
-#[derive(Clone, PartialEq, Eq, Copy, Hash, Debug)]
+#[derive(Clone, PartialEq, Eq, Copy, Hash, Debug, RustcEncodable, RustcDecodable)]
 pub struct PipelineId(pub u32);
 
-#[derive(Clone, PartialEq, Eq, Copy, Hash, Debug)]
+#[derive(Clone, PartialEq, Eq, Copy, Hash, Debug, RustcEncodable, RustcDecodable)]
 pub struct SubpageId(pub u32);
 
 // The type of pipeline exit. During complete shutdowns, pipelines do not have to

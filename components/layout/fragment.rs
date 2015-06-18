@@ -1001,7 +1001,8 @@ impl Fragment {
 
     pub fn calculate_line_height(&self, layout_context: &LayoutContext) -> Au {
         let font_style = self.style.get_font_arc();
-        let font_metrics = text::font_metrics_for_style(&mut layout_context.font_context(), font_style);
+        let font_metrics = text::font_metrics_for_style(&mut layout_context.font_context(),
+                                                        font_style);
         text::line_height_from_style(&*self.style, &font_metrics)
     }
 

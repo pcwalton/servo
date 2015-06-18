@@ -73,6 +73,7 @@ use net_traits::LoadData as NetLoadData;
 use net_traits::image_cache_task::{ImageCacheChan, ImageCacheTask, ImageCacheResult};
 use net_traits::storage_task::StorageTask;
 use string_cache::Atom;
+use util::ipc::IpcReceiver;
 use util::str::DOMString;
 use util::task::spawn_named_with_send_on_failure;
 use util::task_state;
@@ -287,17 +288,17 @@ pub struct ScriptTask {
     /// events in the event queue.
     chan: NonWorkerScriptChan,
 
-    /// A channel to hand out to tasks that need to respond to a message from the script task.
-    control_chan: ScriptControlChan,
+    /// The port on which layout can communicate with the script task.
+    layout_to_script_port: Receiver<ConstellationControlMsg>,
 
-    /// The port on which the constellation and layout tasks can communicate with the
-    /// script task.
-    control_port: Receiver<ConstellationControlMsg>,
+    /// The port on which the constellation can communicate with the script task.
+    constellation_to_script_port: Receiver<ConstellationControlMsg>,
 
     /// For communicating load url messages to the constellation
-    constellation_chan: ConstellationChan,
+    constellation_chan: DOMRefCell<ConstellationChan>,
+
     /// A handle to the compositor for communicating ready state messages.
-    compositor: DOMRefCell<Box<ScriptListener+'static>>,
+    compositor: DOMRefCell<SharedServerProxy<ScriptToCompositorMsg,()>>,
 
     /// The port on which we receive messages from the image cache
     image_cache_port: Receiver<ImageCacheResult>,
@@ -373,31 +374,33 @@ impl ScriptTaskFactory for ScriptTask {
         box pair.sender() as Box<Any+Send>
     }
 
-    fn create<C>(_phantom: Option<&mut ScriptTask>,
-                 id: PipelineId,
-                 parent_info: Option<(PipelineId, SubpageId)>,
-                 compositor: C,
-                 layout_chan: &OpaqueScriptLayoutChannel,
-                 control_chan: ScriptControlChan,
-                 control_port: Receiver<ConstellationControlMsg>,
-                 constellation_chan: ConstellationChan,
-                 failure_msg: Failure,
-                 resource_task: ResourceTask,
-                 storage_task: StorageTask,
-                 image_cache_task: ImageCacheTask,
-                 devtools_chan: Option<DevtoolsControlChan>,
-                 window_size: Option<WindowSizeData>,
-                 load_data: LoadData)
-                 where C: ScriptListener + Send + 'static {
+    fn create(_phantom: Option<&mut ScriptTask>,
+              id: PipelineId,
+              compositor: SharedServerProxy<ScriptToCompositorMsg,()>,
+              layout_chan: &OpaqueScriptLayoutChannel,
+              constellation_to_script_port: IpcReceiver<ConstellationControlMsg>,
+              constellation_chan: ConstellationChan,
+              failure_msg: Failure,
+              layout_to_script_port: Receiver<ConstellationControlMsg>,
+              resource_task: ResourceTask,
+              storage_task: StorageTask,
+              image_cache_task: ImageCacheTask,
+              devtools_chan: Option<DevtoolsControlChan>,
+              window_size: WindowSizeData,
+              load_data: LoadData) {
         let ConstellationChan(const_chan) = constellation_chan.clone();
         let (script_chan, script_port) = channel();
         let layout_chan = LayoutChan(layout_chan.sender());
-        spawn_named_with_send_on_failure(format!("ScriptTask {:?}", id), task_state::SCRIPT, move || {
-            let script_task = ScriptTask::new(box compositor as Box<ScriptListener>,
+        server::spawn_named_with_send_to_server_on_failure("ScriptTask",
+                                                           task_state::SCRIPT,
+                                                           proc() {
+            let script_task = ScriptTask::new(id,
+                                              compositor,
+                                              layout_chan,
                                               script_port,
                                               NonWorkerScriptChan(script_chan),
-                                              control_chan,
-                                              control_port,
+                                              layout_to_script_port,
+                                              constellation_to_script_port,
                                               constellation_chan,
                                               resource_task,
                                               storage_task,
@@ -455,11 +458,13 @@ impl ScriptTask {
     }
 
     /// Creates a new script task.
-    pub fn new(compositor: Box<ScriptListener+'static>,
+    pub fn new(id: PipelineId,
+               compositor: SharedServerProxy<ScriptToCompositorMsg,()>,
+               layout_chan: LayoutChan,
                port: Receiver<ScriptMsg>,
                chan: NonWorkerScriptChan,
-               control_chan: ScriptControlChan,
-               control_port: Receiver<ConstellationControlMsg>,
+               layout_to_script_port: Receiver<ConstellationControlMsg>,
+               constellation_to_script_port: IpcReceiver<ConstellationControlMsg>,
                constellation_chan: ConstellationChan,
                resource_task: ResourceTask,
                storage_task: StorageTask,
@@ -488,6 +493,20 @@ impl ScriptTask {
                                       Some(pre_wrap));
         }
 
+        let page = Page::new(id, None, layout_chan, window_size,
+                             resource_task.clone(),
+                             storage_task,
+                             constellation_chan.clone(),
+                             js_context.clone());
+
+        // Create a proxy to proxy messages received from the constellation over IPC to us.
+        let (proxy_constellation_to_script_chan, proxy_constellation_to_script_port) = channel();
+        std_task::spawn(proc() {
+            while let Ok(msg) = constellation_to_script_port.recv_opt() {
+                proxy_constellation_to_script_chan.send(msg)
+            }
+        });
+
         let (devtools_sender, devtools_receiver) = channel();
         let (image_cache_channel, image_cache_port) = channel();
 
@@ -504,9 +523,9 @@ impl ScriptTask {
 
             port: port,
             chan: chan,
-            control_chan: control_chan,
-            control_port: control_port,
-            constellation_chan: constellation_chan,
+            layout_to_script_port: layout_to_script_port,
+            constellation_to_script_port: proxy_constellation_to_script_port,
+            constellation_chan: DOMRefCell::new(constellation_chan),
             compositor: DOMRefCell::new(compositor),
             devtools_chan: devtools_chan,
             devtools_port: devtools_receiver,
@@ -600,14 +619,15 @@ impl ScriptTask {
         let mut event = {
             let sel = Select::new();
             let mut port1 = sel.handle(&self.port);
-            let mut port2 = sel.handle(&self.control_port);
-            let mut port3 = sel.handle(&self.devtools_port);
-            let mut port4 = sel.handle(&self.image_cache_port);
+            let mut port2 = sel.handle(&self.constellation_to_script_port);
+            let mut port3 = sel.handle(&self.layout_to_script_port);
+            let mut port4 = sel.handle(&self.devtools_port);
             unsafe {
                 port1.add();
                 port2.add();
+                port3.add();
                 if self.devtools_chan.is_some() {
-                    port3.add();
+                    port4.add();
                 }
                 port4.add();
             }
@@ -615,11 +635,11 @@ impl ScriptTask {
             if ret == port1.id() {
                 MixedMessage::FromScript(self.port.recv().unwrap())
             } else if ret == port2.id() {
-                MixedMessage::FromConstellation(self.control_port.recv().unwrap())
+                MixedMessage::FromConstellation(self.constellation_to_script_port.recv())
             } else if ret == port3.id() {
-                MixedMessage::FromDevtools(self.devtools_port.recv().unwrap())
+                MixedMessage::FromConstellation(self.layout_to_script_port.recv())
             } else if ret == port4.id() {
-                MixedMessage::FromImageCache(self.image_cache_port.recv().unwrap())
+                MixedMessage::FromDevtools(self.devtools_port.recv())
             } else {
                 panic!("unexpected select result")
             }
@@ -663,12 +683,12 @@ impl ScriptTask {
             // If any of our input sources has an event pending, we'll perform another iteration
             // and check for more resize events. If there are no events pending, we'll move
             // on and execute the sequential non-resize events we've seen.
-            match self.control_port.try_recv() {
+            match self.constellation_to_script_port.try_recv() {
                 Err(_) => match self.port.try_recv() {
                     Err(_) => match self.devtools_port.try_recv() {
-                        Err(_) => match self.image_cache_port.try_recv() {
+                        Err(_) => match self.layout_to_script_port.try_recv() {
                             Err(_) => break,
-                            Ok(ev) => event = MixedMessage::FromImageCache(ev),
+                            Ok(ev) => event = MixedMessage::FromConstellation(ev),
                         },
                         Ok(ev) => event = MixedMessage::FromDevtools(ev),
                     },
@@ -1079,11 +1099,6 @@ impl ScriptTask {
     /// where layout is still accessing them.
     fn handle_exit_window_msg(&self, _: PipelineId) {
         debug!("script task handling exit window msg");
-
-        // TODO(tkuehn): currently there is only one window,
-        // so this can afford to be naive and just shut down the
-        // compositor. In the future it'll need to be smarter.
-        self.compositor.borrow_mut().close();
     }
 
     /// We have received notification that the response associated with a load has completed.
@@ -1345,7 +1360,12 @@ impl ScriptTask {
         // Really what needs to happen is that this needs to go through layout to ask which
         // layer the element belongs to, and have it send the scroll message to the
         // compositor.
-        self.compositor.borrow_mut().scroll_fragment_point(pipeline_id, LayerId::null(), point);
+        self.compositor
+            .borrow_mut()
+            .lock()
+            .send_async(ScriptToCompositorMsg::ScrollFragmentPoint(pipeline_id,
+                                                                   LayerId::null(),
+                                                                   point));
     }
 
     /// Reflows non-incrementally, rebuilding the entire layout tree in the process.

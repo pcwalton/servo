@@ -71,6 +71,8 @@ use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender};
 use string_cache::{Atom, Namespace};
 use style::properties::PropertyDeclarationBlock;
+use util::ipc::{IpcReceiver, IpcSender};
+use util::sbsf::{ServoDecoder, ServoEncoder};
 use url::Url;
 
 
@@ -275,6 +277,7 @@ no_jsmanaged_fields!(StorageType);
 no_jsmanaged_fields!(CanvasGradientStop, LinearGradientStyle, RadialGradientStyle);
 no_jsmanaged_fields!(LineCapStyle, LineJoinStyle, CompositionOrBlending);
 no_jsmanaged_fields!(RepetitionStyle);
+no_jsmanaged_fields!(StorageTask);
 
 impl JSTraceable for Box<ScriptChan+Send> {
     #[inline]
@@ -304,7 +307,35 @@ impl<A,B> JSTraceable for fn(A) -> B {
     }
 }
 
-impl JSTraceable for Box<ScriptListener+'static> {
+impl<T> JSTraceable for IpcReceiver<T> {
+    #[inline]
+    fn trace(&self, _: *mut JSTracer) {
+        // Do nothing
+    }
+}
+
+impl<T> JSTraceable for IpcSender<T> {
+    #[inline]
+    fn trace(&self, _: *mut JSTracer) {
+        // Do nothing
+    }
+}
+
+impl<M,R> JSTraceable for ServerProxy<M,R> where M: for<'a> Decodable<ServoDecoder<'a>,IoError> +
+                                                    for<'a> Encodable<ServoEncoder<'a>,IoError>,
+                                                 R: for<'a> Decodable<ServoDecoder<'a>,IoError> +
+                                                    for<'a> Encodable<ServoEncoder<'a>,IoError> {
+    #[inline]
+    fn trace(&self, _: *mut JSTracer) {
+        // Do nothing
+    }
+}
+
+impl<M,R> JSTraceable for SharedServerProxy<M,R>
+                      where M: for<'a> Decodable<ServoDecoder<'a>,IoError> +
+                               for<'a> Encodable<ServoEncoder<'a>,IoError>,
+                            R: for<'a> Decodable<ServoDecoder<'a>,IoError> +
+                               for<'a> Encodable<ServoEncoder<'a>,IoError> {
     #[inline]
     fn trace(&self, _: *mut JSTracer) {
         // Do nothing

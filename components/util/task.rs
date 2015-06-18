@@ -3,10 +3,9 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 use std::borrow::ToOwned;
-use task_state;
-use std::thread;
 use std::sync::mpsc::Sender;
-use std::thread::Builder;
+use std::thread::{self, Builder};
+use task_state;
 
 pub fn spawn_named<F>(name: String, f: F)
     where F: FnOnce() + Send + 'static
@@ -42,3 +41,4 @@ pub fn spawn_named_with_send_on_failure<F, T>(name: String,
         }
     }).unwrap();
 }
+

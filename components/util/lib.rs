@@ -23,6 +23,7 @@
 extern crate azure;
 extern crate alloc;
 #[macro_use] extern crate bitflags;
+extern crate byteorder;
 #[macro_use] extern crate cssparser;
 extern crate geom;
 extern crate getopts;
@@ -39,6 +40,12 @@ extern crate url;
 
 use std::sync::Arc;
 
+pub mod platform {
+    pub mod unix {
+        pub mod ipc;
+    }
+}
+
 pub mod bezier;
 pub mod cache;
 pub mod cursor;
@@ -46,6 +53,7 @@ pub mod debug_utils;
 pub mod deque;
 pub mod linked_list;
 pub mod geometry;
+pub mod ipc;
 pub mod logical_geometry;
 pub mod mem;
 pub mod namespace;
@@ -53,6 +61,7 @@ pub mod opts;
 pub mod persistent_list;
 pub mod range;
 pub mod resource_files;
+pub mod sbsf;
 pub mod str;
 pub mod task;
 pub mod tid;

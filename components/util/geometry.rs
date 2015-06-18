@@ -8,12 +8,11 @@ use geom::rect::Rect;
 use geom::size::Size2D;
 use geom::num::Zero;
 
+use rustc_serialize::{Decodable, Decoder, Encodable, Encoder};
 use std::default::Default;
 use std::i32;
 use std::fmt;
 use std::ops::{Add, Sub, Neg, Mul, Div, Rem};
-
-use rustc_serialize::{Encoder, Encodable};
 
 // Units for use with geom::length and geom::scale_factor.
 
@@ -30,7 +29,7 @@ use rustc_serialize::{Encoder, Encodable};
 ///
 /// The ratio between ScreenPx and DevicePixel for a given display be found by calling
 /// `servo::windowing::WindowMethods::hidpi_factor`.
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, RustcEncodable, RustcDecodable)]
 pub enum ScreenPx {}
 
 /// One CSS "px" in the coordinate system of the "initial viewport":
@@ -42,7 +41,7 @@ pub enum ScreenPx {}
 ///
 /// At the default zoom level of 100%, one PagePx is equal to one ScreenPx.  However, if the
 /// document is zoomed in or out then this scale may be larger or smaller.
-#[derive(RustcEncodable, Debug, Copy, Clone)]
+#[derive(RustcEncodable, RustcDecodable, Debug, Copy, Clone)]
 pub enum ViewportPx {}
 
 /// One CSS "px" in the root coordinate system for the content document.
@@ -51,7 +50,7 @@ pub enum ViewportPx {}
 /// This is the mobile-style "pinch zoom" that enlarges content without reflowing it.  When the
 /// viewport zoom is not equal to 1.0, then the layout viewport is no longer the same physical size
 /// as the viewable area.
-#[derive(RustcEncodable, Debug, Copy, Clone)]
+#[derive(RustcEncodable, RustcDecodable, Debug, Copy, Clone)]
 pub enum PagePx {}
 
 // In summary, the hierarchy of pixel units and the factors to convert from one to the next:
@@ -119,10 +118,18 @@ impl Encodable for Au {
     }
 }
 
+impl Decodable for Au {
+    fn decode<D>(d: &mut D) -> Result<Au, D::Error> where D: Decoder {
+        let value: f64 = try!(Decodable::decode(d));
+        Ok(Au::from_f64_px(value))
+    }
+}
+
 impl fmt::Debug for Au {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}px", self.to_f64_px())
-    }}
+    }
+}
 
 impl Add for Au {
     type Output = Au;

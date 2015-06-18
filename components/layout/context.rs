@@ -45,7 +45,7 @@ impl HeapSizeOf for LocalLayoutContext {
     }
 }
 
-thread_local!(static LOCAL_CONTEXT_KEY: RefCell<Option<Rc<LocalLayoutContext>>> = RefCell::new(None));
+thread_local!(static LOCAL_CONTEXT_KEY: Cell<*mut LocalLayoutContext> = Cell::new(ptr::null_mut()))
 
 pub fn heap_size_of_local_context() -> usize {
     LOCAL_CONTEXT_KEY.with(|r| {
@@ -140,9 +140,7 @@ pub struct LayoutContext<'a> {
 
 impl<'a> LayoutContext<'a> {
     pub fn new(shared_layout_context: &'a SharedLayoutContext) -> LayoutContext<'a> {
-
-        let local_context = create_or_get_local_context(shared_layout_context);
-
+        let local_context = create_or_get_local_context();
         LayoutContext {
             shared: shared_layout_context,
             cached_local_layout_context: local_context,

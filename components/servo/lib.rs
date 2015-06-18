@@ -98,8 +98,11 @@ impl Browser {
             }
             None => false
         };
+
+        let (compositor_server, compositor_server_proxy) =
+            CompositorTask::create_compositor_server_channel();
         let time_profiler_chan = profile_time::Profiler::create(opts.time_profiler_period);
-        let mem_profiler_chan = profile_mem::Profiler::create(opts.mem_profiler_period);
+        let memory_profiler_chan = profile_mem::Profiler::create(opts.memory_profiler_period);
         let devtools_chan = opts.devtools_port.map(|port| {
             devtools::start_server(port)
         });
@@ -144,7 +147,7 @@ impl Browser {
         self.compositor.pinch_zoom_level()
     }
 
-    pub fn get_title_for_main_frame(&self) {
+    pub fn get_title_for_main_frame(&mut self) {
         self.compositor.get_title_for_main_frame()
     }
 

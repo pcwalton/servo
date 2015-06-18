@@ -45,3 +45,5 @@ lazy_static = "0.1.10"
 url = "*"
 string_cache = "0.1"
 string_cache_plugin = "0.1"
+byteorder = "*"
+

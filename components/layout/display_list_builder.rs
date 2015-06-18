@@ -1083,7 +1083,7 @@ impl FragmentDisplayListBuilding for Fragment {
                                                                             &*self.style,
                                                                             Cursor::DefaultCursor),
                                                    (*clip).clone()),
-                        image: image.clone(),
+                        image: DisplayItemImage(image.clone()),
                         stretch_size: stacking_relative_content_box.size,
                         image_rendering: self.style.get_effects().image_rendering.clone(),
                     }));
@@ -1114,7 +1114,7 @@ impl FragmentDisplayListBuilding for Fragment {
                         width: width as u32,
                         height: height as u32,
                         pixels: PixelsByColorType::RGBA8(canvas_data),
-                    }),
+                    })),
                     stretch_size: stacking_relative_content_box.size,
                     image_rendering: image_rendering::T::Auto,
                 }));
@@ -1248,7 +1248,7 @@ impl FragmentDisplayListBuilding for Fragment {
         debug!("finalizing position and size of iframe for {:?},{:?}",
                iframe_fragment.pipeline_id,
                iframe_fragment.subpage_id);
-        let ConstellationChan(ref chan) = layout_context.shared.constellation_chan;
+        let chan = &layout_context.shared.constellation_chan;
         chan.send(ConstellationMsg::FrameRect(iframe_fragment.pipeline_id,
                                               iframe_fragment.subpage_id,
                                               iframe_rect)).unwrap();

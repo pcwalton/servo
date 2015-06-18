@@ -27,6 +27,8 @@ git = "https://github.com/servo/rust-png"
 
 [dependencies]
 url = "0.2.35"
+log = "*"
+libc = "*"
 bitflags = "*"
 hyper = "0.5"
 rustc-serialize = "0.3.4"
