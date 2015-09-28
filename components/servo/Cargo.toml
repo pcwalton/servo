@@ -39,6 +39,9 @@ name = "reftest"
 path = "../../tests/reftest.rs"
 harness = false
 
+[dependencies.webrender]
+git = "https://github.com/glennw/webrender"
+
 [features]
 default = ["glutin_app", "window", "webdriver"]
 window = ["glutin_app/window"]

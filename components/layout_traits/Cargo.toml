@@ -28,6 +28,9 @@ path = "../util"
 [dependencies.ipc-channel]
 git = "https://github.com/pcwalton/ipc-channel"
 
+[dependencies.webrender]
+git = "https://github.com/glennw/webrender"
+
 [dependencies.url]
 version = "0.2"
 features = [ "serde_serialization" ]

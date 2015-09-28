@@ -25,6 +25,7 @@ extern crate serde;
 extern crate stb_image;
 extern crate url;
 extern crate util;
+extern crate webrender;
 
 use hyper::header::{ContentType, Headers};
 use hyper::http::RawStatus;

@@ -54,6 +54,7 @@ use util::cursor::Cursor;
 use util::geometry::PagePx;
 use util::task::spawn_named;
 use util::{opts, prefs};
+use webrender;
 
 /// Maintains the pipelines and navigation context and grants permission to composite.
 ///
@@ -135,6 +136,9 @@ pub struct Constellation<LTF, STF> {
 
     /// A list of in-process senders to `WebGLPaintTask`s.
     webgl_paint_tasks: Vec<Sender<CanvasMsg>>,
+
+    // Webrender interface, if enabled.
+    webrender_api: Option<webrender::RenderApi>,
 }
 
 /// State needed to construct a constellation.
@@ -157,6 +161,8 @@ pub struct InitialConstellationState {
     pub mem_profiler_chan: mem::ProfilerChan,
     /// Whether the constellation supports the clipboard.
     pub supports_clipboard: bool,
+    /// Optional webrender API reference (if enabled).
+    pub webrender_api: Option<webrender::RenderApi>,
 }
 
 /// Stores the navigation context for a single frame in the frame tree.
@@ -280,6 +286,7 @@ impl<LTF: LayoutTaskFactory, STF: ScriptTaskFactory> Constellation<LTF, STF> {
                 webdriver: WebDriverData::new(),
                 canvas_paint_tasks: Vec::new(),
                 webgl_paint_tasks: Vec::new(),
+                webrender_api: state.webrender_api,
             };
             let namespace_id = constellation.next_pipeline_namespace_id();
             PipelineNamespace::install(namespace_id);
@@ -330,6 +337,7 @@ impl<LTF: LayoutTaskFactory, STF: ScriptTaskFactory> Constellation<LTF, STF> {
                 load_data: load_data,
                 device_pixel_ratio: self.window_size.device_pixel_ratio,
                 pipeline_namespace_id: self.next_pipeline_namespace_id(),
+                webrender_api: self.webrender_api.clone(),
             });
 
         // TODO(pcwalton): In multiprocess mode, send that `PipelineContent` instance over to

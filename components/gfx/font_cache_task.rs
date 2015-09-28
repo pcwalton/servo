@@ -22,16 +22,19 @@ use style::font_face::Source;
 use url::Url;
 use util::str::LowercaseString;
 use util::task::spawn_named;
+use webrender;
 
 /// A list of font templates that make up a given font family.
 struct FontFamily {
     templates: Vec<FontTemplate>,
+    webrender_api: Option<webrender::RenderApi>,
 }
 
 impl FontFamily {
-    fn new() -> FontFamily {
+    fn new(webrender_api: Option<webrender::RenderApi>) -> FontFamily {
         FontFamily {
             templates: vec!(),
+            webrender_api: webrender_api,
         }
     }
 
@@ -71,7 +74,7 @@ impl FontFamily {
             }
         }
 
-        let template = FontTemplate::new(identifier, maybe_data);
+        let template = FontTemplate::new(identifier, maybe_data, self.webrender_api.clone());
         self.templates.push(template);
     }
 }
@@ -100,6 +103,7 @@ struct FontCache {
     web_families: HashMap<LowercaseString, FontFamily>,
     font_context: FontContextHandle,
     resource_task: ResourceTask,
+    webrender_api: Option<webrender::RenderApi>,
 }
 
 fn add_generic_font(generic_fonts: &mut HashMap<LowercaseString, LowercaseString>,
@@ -130,7 +134,7 @@ impl FontCache {
                 Command::AddWebFont(family_name, src, result) => {
                     let family_name = LowercaseString::new(&family_name);
                     if !self.web_families.contains_key(&family_name) {
-                        let family = FontFamily::new();
+                        let family = FontFamily::new(self.webrender_api.clone());
                         self.web_families.insert(family_name.clone(), family);
                     }
 
@@ -196,7 +200,7 @@ impl FontCache {
         for_each_available_family(|family_name| {
             let family_name = LowercaseString::new(&family_name);
             if !self.local_families.contains_key(&family_name) {
-                let family = FontFamily::new();
+                let family = FontFamily::new(self.webrender_api.clone());
                 self.local_families.insert(family_name, family);
             }
         });
@@ -282,7 +286,7 @@ pub struct FontCacheTask {
 }
 
 impl FontCacheTask {
-    pub fn new(resource_task: ResourceTask) -> FontCacheTask {
+    pub fn new(resource_task: ResourceTask, webrender_api: Option<webrender::RenderApi>) -> FontCacheTask {
         let (chan, port) = channel();
 
         let channel_to_self = chan.clone();
@@ -303,6 +307,7 @@ impl FontCacheTask {
                 web_families: HashMap::new(),
                 font_context: FontContextHandle::new(),
                 resource_task: resource_task,
+                webrender_api: webrender_api,
             };
 
             cache.refresh_local_families();
