@@ -35,6 +35,7 @@ dependencies = [
  "util 0.0.1",
  "util_tests 0.0.1",
  "webdriver_server 0.0.1",
+ "webrender 0.1.0 (git+https://github.com/glennw/webrender)",
 ]
 
 [[package]]
@@ -276,6 +277,7 @@ dependencies = [
  "time 0.1.32 (registry+https://github.com/rust-lang/crates.io-index)",
  "url 0.2.37 (registry+https://github.com/rust-lang/crates.io-index)",
  "util 0.0.1",
+ "webrender 0.1.0 (git+https://github.com/glennw/webrender)",
 ]
 
 [[package]]
@@ -657,6 +659,7 @@ dependencies = [
  "unicode-script 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "url 0.2.37 (registry+https://github.com/rust-lang/crates.io-index)",
  "util 0.0.1",
+ "webrender 0.1.0 (git+https://github.com/glennw/webrender)",
 ]
 
 [[package]]
@@ -1034,6 +1037,7 @@ dependencies = [
  "unicode-script 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "url 0.2.37 (registry+https://github.com/rust-lang/crates.io-index)",
  "util 0.0.1",
+ "webrender 0.1.0 (git+https://github.com/glennw/webrender)",
 ]
 
 [[package]]
@@ -1051,6 +1055,7 @@ dependencies = [
  "serde_macros 0.5.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "url 0.2.37 (registry+https://github.com/rust-lang/crates.io-index)",
  "util 0.0.1",
+ "webrender 0.1.0 (git+https://github.com/glennw/webrender)",
 ]
 
 [[package]]
@@ -1177,6 +1182,7 @@ dependencies = [
  "style_traits 0.0.1",
  "url 0.2.37 (registry+https://github.com/rust-lang/crates.io-index)",
  "util 0.0.1",
+ "webrender 0.1.0 (git+https://github.com/glennw/webrender)",
 ]
 
 [[package]]
@@ -1200,6 +1206,7 @@ dependencies = [
  "url 0.2.37 (registry+https://github.com/rust-lang/crates.io-index)",
  "util 0.0.1",
  "uuid 0.1.17 (registry+https://github.com/rust-lang/crates.io-index)",
+ "webrender 0.1.0 (git+https://github.com/glennw/webrender)",
 ]
 
 [[package]]
@@ -1236,6 +1243,7 @@ dependencies = [
  "stb_image 0.1.0 (git+https://github.com/servo/rust-stb-image)",
  "url 0.2.37 (registry+https://github.com/rust-lang/crates.io-index)",
  "util 0.0.1",
+ "webrender 0.1.0 (git+https://github.com/glennw/webrender)",
 ]
 
 [[package]]
@@ -1500,6 +1508,22 @@ version = "0.3.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
+name = "rustc_version"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+dependencies = [
+ "semver 0.1.20 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "scoped_threadpool"
+version = "0.1.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+dependencies = [
+ "rustc_version 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
 name = "script"
 version = "0.0.1"
 dependencies = [
@@ -1586,6 +1610,11 @@ dependencies = [
  "string_cache 0.1.13 (registry+https://github.com/rust-lang/crates.io-index)",
  "string_cache_plugin 0.1.7 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
+
+[[package]]
+name = "semver"
+version = "0.1.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
 name = "serde"
@@ -1921,6 +1950,7 @@ dependencies = [
  "smallvec 0.1.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "string_cache 0.1.13 (registry+https://github.com/rust-lang/crates.io-index)",
  "url 0.2.37 (registry+https://github.com/rust-lang/crates.io-index)",
+ "webrender 0.1.0 (git+https://github.com/glennw/webrender)",
 ]
 
 [[package]]
@@ -2008,6 +2038,25 @@ dependencies = [
  "util 0.0.1",
  "uuid 0.1.17 (registry+https://github.com/rust-lang/crates.io-index)",
  "webdriver 0.3.1 (git+https://github.com/jgraham/webdriver-rust.git)",
+]
+
+[[package]]
+name = "webrender"
+version = "0.1.0"
+source = "git+https://github.com/glennw/webrender#2c4455d16a2c19f89faf56aeea89502585623c61"
+dependencies = [
+ "app_units 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "euclid 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "fnv 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "freetype 0.1.0 (git+https://github.com/servo/rust-freetype)",
+ "gleam 0.1.13 (registry+https://github.com/rust-lang/crates.io-index)",
+ "libc 0.1.10 (registry+https://github.com/rust-lang/crates.io-index)",
+ "scoped_threadpool 0.1.6 (registry+https://github.com/rust-lang/crates.io-index)",
+ "serde 0.6.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "serde_macros 0.5.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "simd 0.1.0 (git+https://github.com/huonw/simd)",
+ "string_cache 0.1.13 (registry+https://github.com/rust-lang/crates.io-index)",
+ "time 0.1.32 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]

@@ -693,7 +693,8 @@ impl StackingContext {
         // TODO(gw): This is a hack to avoid running the DL optimizer
         // on 3d transformed tiles. We should have a better solution
         // than just disabling the opts here.
-        if paint_context.layer_kind == LayerKind::HasTransform {
+        if paint_context.layer_kind == LayerKind::HasTransform ||
+           opts::get().use_webrender {      // webrender takes care of all culling via aabb tree!
             self.draw_into_context(&self.display_list,
                                    paint_context,
                                    &transform,
@@ -931,9 +932,12 @@ impl StackingContextLayerCreator {
     fn add_stacking_context(&mut self,
                             stacking_context: Arc<StackingContext>,
                             parent_stacking_context: &mut StackingContext) {
-        if self.all_following_children_need_layers() || stacking_context.layer_info.is_some() {
-            self.add_layered_stacking_context(stacking_context, parent_stacking_context);
-            return;
+        // webrender doesn't care about layers in the display list - it's handled internally.
+        if !opts::get().use_webrender {
+            if self.all_following_children_need_layers() || stacking_context.layer_info.is_some() {
+                self.add_layered_stacking_context(stacking_context, parent_stacking_context);
+                return;
+            }
         }
 
         // This StackingContext has a layered child somewhere in its children.
@@ -991,6 +995,7 @@ pub enum DisplayItem {
     BoxShadowClass(Box<BoxShadowDisplayItem>),
     LayeredItemClass(Box<LayeredItem>),
     NoopClass(Box<BaseDisplayItem>),
+    IframeClass(Box<IframeDisplayItem>),
 }
 
 /// Information common to all display items.
@@ -1236,6 +1241,13 @@ pub struct ImageDisplayItem {
     pub image_rendering: image_rendering::T,
 }
 
+
+/// Paints an iframe.
+#[derive(Clone, HeapSizeOf, Deserialize, Serialize)]
+pub struct IframeDisplayItem {
+    pub base: BaseDisplayItem,
+    pub iframe: PipelineId,
+}
 
 /// Paints a gradient.
 #[derive(Clone, Deserialize, Serialize)]
@@ -1494,6 +1506,7 @@ impl DisplayItem {
             DisplayItem::LayeredItemClass(_) => panic!("Found layered item during drawing."),
 
             DisplayItem::NoopClass(_) => { }
+            DisplayItem::IframeClass(..) => {}
         }
     }
 
@@ -1508,6 +1521,7 @@ impl DisplayItem {
             DisplayItem::BoxShadowClass(ref box_shadow) => &box_shadow.base,
             DisplayItem::LayeredItemClass(ref layered_item) => layered_item.item.base(),
             DisplayItem::NoopClass(ref base_item) => base_item,
+            DisplayItem::IframeClass(ref iframe) => &iframe.base,
         }
     }
 
@@ -1522,6 +1536,7 @@ impl DisplayItem {
             DisplayItem::BoxShadowClass(ref mut box_shadow) => &mut box_shadow.base,
             DisplayItem::LayeredItemClass(ref mut layered_item) => layered_item.item.mut_base(),
             DisplayItem::NoopClass(ref mut base_item) => base_item,
+            DisplayItem::IframeClass(ref mut iframe) => &mut iframe.base,
         }
     }
 
@@ -1557,6 +1572,7 @@ impl fmt::Debug for DisplayItem {
                 DisplayItem::LayeredItemClass(ref layered_item) =>
                     format!("LayeredItem({:?})", layered_item.item),
                 DisplayItem::NoopClass(_) => "Noop".to_owned(),
+                DisplayItem::IframeClass(_) => "Iframe".to_owned(),
             },
             self.base().bounds,
             self.base().metadata.node.id()

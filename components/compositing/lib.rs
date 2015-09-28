@@ -46,6 +46,7 @@ extern crate script_traits;
 extern crate style_traits;
 extern crate time;
 extern crate url;
+extern crate webrender;
 
 pub use compositor_task::{CompositorEventListener, CompositorProxy, CompositorTask};
 pub use constellation::Constellation;
