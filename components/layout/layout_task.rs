@@ -11,11 +11,12 @@ use animation;
 use app_units::Au;
 use azure::azure::AzColor;
 use canvas_traits::CanvasMsg;
+
 use construct::ConstructionResult;
 use context::{SharedLayoutContext, heap_size_of_local_context};
 use cssparser::ToCss;
 use data::LayoutDataWrapper;
-use display_list_builder::ToGfxColor;
+use display_list_builder::{ToGfxColor, WebRenderStackingContextConverter};
 use encoding::EncodingRef;
 use encoding::all::UTF_8;
 use euclid::Matrix4;
@@ -91,6 +92,7 @@ use util::task_state;
 use util::workqueue::WorkQueue;
 use wrapper::LayoutNode;
 use wrapper::ThreadSafeLayoutNode;
+use webrender;
 
 /// The number of screens of data we're allowed to generate display lists for in each direction.
 pub const DISPLAY_PORT_SIZE_FACTOR: i32 = 8;
@@ -237,6 +239,9 @@ pub struct LayoutTask {
     ///
     /// All the other elements of this struct are read-only.
     pub rw_data: Arc<Mutex<LayoutTaskData>>,
+
+    // Webrender interface, if enabled.
+    pub webrender_api: Option<webrender::RenderApi>,
 }
 
 impl LayoutTaskFactory for LayoutTask {
@@ -255,7 +260,8 @@ impl LayoutTaskFactory for LayoutTask {
               font_cache_task: FontCacheTask,
               time_profiler_chan: time::ProfilerChan,
               mem_profiler_chan: mem::ProfilerChan,
-              shutdown_chan: Sender<()>) {
+              shutdown_chan: Sender<()>,
+              webrender_api: Option<webrender::RenderApi>) {
         let ConstellationChan(con_chan) = constellation_chan.clone();
         spawn_named_with_send_on_failure(format!("LayoutTask {:?}", id),
                                          task_state::LAYOUT,
@@ -275,7 +281,8 @@ impl LayoutTaskFactory for LayoutTask {
                                              image_cache_task,
                                              font_cache_task,
                                              time_profiler_chan,
-                                             mem_profiler_chan.clone());
+                                             mem_profiler_chan.clone(),
+                                             webrender_api);
 
                 let reporter_name = format!("layout-reporter-{}", id.0);
                 mem_profiler_chan.run_with_memory_reporting(|| {
@@ -347,7 +354,8 @@ impl LayoutTask {
            image_cache_task: ImageCacheTask,
            font_cache_task: FontCacheTask,
            time_profiler_chan: time::ProfilerChan,
-           mem_profiler_chan: mem::ProfilerChan)
+           mem_profiler_chan: mem::ProfilerChan,
+           webrender_api: Option<webrender::RenderApi>)
            -> LayoutTask {
         let screen_size = Size2D::new(Au(0), Au(0));
         let device = Device::new(
@@ -405,6 +413,7 @@ impl LayoutTask {
             font_cache_sender: font_cache_sender,
             canvas_layers_receiver: canvas_layers_receiver,
             canvas_layers_sender: canvas_layers_sender,
+            webrender_api: webrender_api,
             rw_data: Arc::new(Mutex::new(
                 LayoutTaskData {
                     root_flow: None,
@@ -723,7 +732,8 @@ impl LayoutTask {
                                   self.font_cache_task.clone(),
                                   self.time_profiler_chan.clone(),
                                   self.mem_profiler_chan.clone(),
-                                  info.layout_shutdown_chan);
+                                  info.layout_shutdown_chan,
+                                  self.webrender_api.clone());
     }
 
     /// Enters a quiescent state in which no new messages will be processed until an `ExitNow` is
@@ -1133,9 +1143,28 @@ impl LayoutTask {
                 debug!("Layout done!");
 
                 rw_data.epoch.next();
-                self.paint_chan
-                    .send(LayoutToPaintMsg::PaintInit(rw_data.epoch, paint_layer))
-                    .unwrap();
+
+                if opts::get().use_webrender {
+                    let api = self.webrender_api.as_ref().unwrap();
+                    // TODO: Avoid the temporary conversion and build webrender sc/dl directly!
+                    let Epoch(epoch_number) = rw_data.epoch;
+                    let epoch = webrender::Epoch(epoch_number);
+                    let PipelineId(pipeline_id) = self.id;
+                    let pipeline_id = webrender::PipelineId(pipeline_id);
+                    let sc = rw_data.stacking_context.as_ref().unwrap().convert_to_webrender(&self.webrender_api.as_ref().unwrap(), pipeline_id, epoch);
+                    let root_background_color = webrender::ColorF::new(root_background_color.r,
+                                                                       root_background_color.g,
+                                                                       root_background_color.b,
+                                                                       root_background_color.a);
+                    api.set_root_stacking_context(sc, root_background_color, epoch, pipeline_id);
+
+                    let ConstellationChan(ref constellation_chan) = rw_data.constellation_chan;
+                    constellation_chan.send(ConstellationMsg::PainterReady(self.id)).unwrap();
+                } else {
+                    self.paint_chan
+                        .send(LayoutToPaintMsg::PaintInit(rw_data.epoch, paint_layer))
+                        .unwrap();
+                }
             }
         });
     }

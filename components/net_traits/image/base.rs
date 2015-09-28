@@ -7,12 +7,14 @@ use png;
 use stb_image::image as stb_image2;
 use std::mem;
 use util::mem::HeapSizeOf;
+use util::opts;
 use util::vec::byte_swap;
+use webrender;
 
 // FIXME: Images must not be copied every frame. Instead we should atomically
 // reference count them.
 
-#[derive(Deserialize, Serialize, HeapSizeOf)]
+#[derive(Deserialize, Serialize, HeapSizeOf, Clone, Copy)]
 pub enum PixelFormat {
     K8,         // Luminance channel only
     KA8,        // Luminance + alpha
@@ -27,19 +29,31 @@ pub struct Image {
     pub format: PixelFormat,
     #[ignore_heap_size_of = "Defined in ipc-channel"]
     pub bytes: IpcSharedMemory,
+    pub id: Option<webrender::ImageID>,
 }
 
 // TODO(pcwalton): Speed up with SIMD, or better yet, find some way to not do this.
 fn byte_swap_and_premultiply(data: &mut [u8]) {
     let length = data.len();
+
+    // No need to pre-multiply alpha when using direct GPU rendering.
+    let premultiply_alpha = !opts::get().use_webrender;
+
     for i in (0..length).step_by(4) {
         let r = data[i + 2];
         let g = data[i + 1];
         let b = data[i + 0];
         let a = data[i + 3];
-        data[i + 0] = ((r as u32) * (a as u32) / 255) as u8;
-        data[i + 1] = ((g as u32) * (a as u32) / 255) as u8;
-        data[i + 2] = ((b as u32) * (a as u32) / 255) as u8;
+
+        if premultiply_alpha {
+            data[i + 0] = ((r as u32) * (a as u32) / 255) as u8;
+            data[i + 1] = ((g as u32) * (a as u32) / 255) as u8;
+            data[i + 2] = ((b as u32) * (a as u32) / 255) as u8;
+        } else {
+            data[i + 0] = r;
+            data[i + 1] = g;
+            data[i + 2] = b;
+        }
     }
 }
 
@@ -75,6 +89,7 @@ pub fn load_from_memory(buffer: &[u8]) -> Option<Image> {
                     height: png_image.height,
                     format: format,
                     bytes: bytes,
+                    id: None,
                 };
 
                 Some(image)
@@ -100,6 +115,7 @@ pub fn load_from_memory(buffer: &[u8]) -> Option<Image> {
                     height: image.height as u32,
                     format: PixelFormat::RGBA8,
                     bytes: IpcSharedMemory::from_bytes(&image.data[..]),
+                    id: None,
                 })
             }
             stb_image2::LoadResult::ImageF32(_image) => {

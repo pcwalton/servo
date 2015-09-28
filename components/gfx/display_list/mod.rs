@@ -24,6 +24,7 @@ use euclid::{Matrix2D, Matrix4, Point2D, Rect, SideOffsets2D, Size2D};
 use gfx_traits::color;
 use libc::uintptr_t;
 use msg::compositor_msg::{LayerId, LayerKind, ScrollPolicy, SubpageLayerInfo};
+use msg::constellation_msg::PipelineId;
 use net_traits::image::base::Image;
 use paint_context::PaintContext;
 use paint_task::PaintLayer;
@@ -577,7 +578,8 @@ impl StackingContext {
         // TODO(gw): This is a hack to avoid running the DL optimizer
         // on 3d transformed tiles. We should have a better solution
         // than just disabling the opts here.
-        if paint_context.layer_kind == LayerKind::HasTransform {
+        if paint_context.layer_kind == LayerKind::HasTransform ||
+           opts::get().use_webrender {      // webrender takes care of all culling via aabb tree!
             self.draw_into_context(&self.display_list,
                                    paint_context,
                                    &transform,
@@ -763,6 +765,7 @@ pub enum DisplayItem {
     GradientClass(Box<GradientDisplayItem>),
     LineClass(Box<LineDisplayItem>),
     BoxShadowClass(Box<BoxShadowDisplayItem>),
+    IframeClass(Box<IframeDisplayItem>),
 }
 
 /// Information common to all display items.
@@ -1009,6 +1012,13 @@ pub struct ImageDisplayItem {
 }
 
 
+/// Paints an iframe.
+#[derive(Clone, HeapSizeOf, Deserialize, Serialize)]
+pub struct IframeDisplayItem {
+    pub base: BaseDisplayItem,
+    pub iframe: PipelineId,
+}
+
 /// Paints a gradient.
 #[derive(Clone, Deserialize, Serialize)]
 pub struct GradientDisplayItem {
@@ -1247,6 +1257,8 @@ impl DisplayItem {
                                               box_shadow.spread_radius,
                                               box_shadow.clip_mode)
             }
+
+            DisplayItem::IframeClass(..) => {}
         }
     }
 
@@ -1259,6 +1271,7 @@ impl DisplayItem {
             DisplayItem::GradientClass(ref gradient) => &gradient.base,
             DisplayItem::LineClass(ref line) => &line.base,
             DisplayItem::BoxShadowClass(ref box_shadow) => &box_shadow.base,
+            DisplayItem::IframeClass(ref iframe) => &iframe.base,
         }
     }
 
@@ -1271,6 +1284,7 @@ impl DisplayItem {
             DisplayItem::GradientClass(ref mut gradient) => &mut gradient.base,
             DisplayItem::LineClass(ref mut line) => &mut line.base,
             DisplayItem::BoxShadowClass(ref mut box_shadow) => &mut box_shadow.base,
+            DisplayItem::IframeClass(ref mut iframe) => &mut iframe.base,
         }
     }
 
@@ -1303,6 +1317,7 @@ impl fmt::Debug for DisplayItem {
                 DisplayItem::GradientClass(_) => "Gradient".to_owned(),
                 DisplayItem::LineClass(_) => "Line".to_owned(),
                 DisplayItem::BoxShadowClass(_) => "BoxShadow".to_owned(),
+                DisplayItem::IframeClass(_) => "Iframe".to_owned(),
             },
             self.base().bounds,
             self.base().metadata.node.id()

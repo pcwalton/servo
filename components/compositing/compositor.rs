@@ -50,6 +50,7 @@ use url::Url;
 use util::geometry::{PagePx, ScreenPx, ViewportPx};
 use util::opts;
 use windowing::{self, MouseWindowEvent, WindowEvent, WindowMethods, WindowNavigateMsg};
+use webrender;
 
 const BUFFER_MAP_SIZE: usize = 10000000;
 
@@ -171,6 +172,12 @@ pub struct IOCompositor<Window: WindowMethods> {
     /// Pipeline IDs of subpages that the compositor has seen in a layer tree but which have not
     /// yet been painted.
     pending_subpages: HashSet<PipelineId>,
+
+    /// The webrender renderer, if enabled.
+    webrender: Option<webrender::Renderer>,
+
+    /// The webrender interface, if enabled.
+    webrender_api: Option<webrender::RenderApi>,
 }
 
 pub struct ScrollEvent {
@@ -279,6 +286,7 @@ impl<Window: WindowMethods> IOCompositor<Window> {
             Some(_) => CompositeTarget::PngFile,
             None => CompositeTarget::Window
         };
+        let webrender_api = state.webrender.as_ref().map(|wr| wr.new_api());
         let native_display = window.native_display();
         IOCompositor {
             window: window,
@@ -317,6 +325,8 @@ impl<Window: WindowMethods> IOCompositor<Window> {
             surface_map: SurfaceMap::new(BUFFER_MAP_SIZE),
             pending_subpage_layers: HashMap::new(),
             pending_subpages: HashSet::new(),
+            webrender: state.webrender,
+            webrender_api: webrender_api,
         }
     }
 
@@ -1140,7 +1150,9 @@ impl<Window: WindowMethods> IOCompositor<Window> {
             let delta = scroll_event.delta / self.scene.scale;
             let cursor = scroll_event.cursor.as_f32() / self.scene.scale;
 
-            if let Some(ref mut layer) = self.scene.root {
+            if let Some(ref webrender_api) = self.webrender_api {
+                webrender_api.scroll(delta.to_untyped());
+            } else if let Some(ref mut layer) = self.scene.root {
                 layer.handle_scroll_event(delta, cursor);
             }
 
@@ -1407,6 +1419,10 @@ impl<Window: WindowMethods> IOCompositor<Window> {
 
     /// Returns true if any buffer requests were sent or false otherwise.
     fn send_buffer_requests_for_all_layers(&mut self) -> bool {
+        if self.webrender.is_some() {
+            return false;
+        }
+
         if let Some(ref root_layer) = self.scene.root {
             root_layer.update_transform_state(&Matrix4::identity(),
                                               &Matrix4::identity(),
@@ -1480,38 +1496,61 @@ impl<Window: WindowMethods> IOCompositor<Window> {
             ReadyState::Unknown => {
                 // Unsure if the output image is stable.
 
-                // Check if any layers are waiting for paints to complete
-                // of their current epoch request. If so, early exit
-                // from this check.
-                match self.scene.root {
-                    Some(ref root_layer) => {
-                        if self.does_layer_have_outstanding_paint_messages(root_layer) {
-                            return false;
-                        }
-                    }
-                    None => {
-                        return false;
-                    }
-                }
+                let mut pipeline_epochs = HashMap::new();
 
                 // Check if there are any pending frames. If so, the image is not stable yet.
                 if self.pending_subpage_layers.len() > 0 || self.pending_subpages.len() > 0 {
                     return false
                 }
 
-                // Collect the currently painted epoch of each pipeline that is
-                // complete (i.e. has *all* layers painted to the requested epoch).
-                // This gets sent to the constellation for comparison with the current
-                // frame tree.
-                let mut pipeline_epochs = HashMap::new();
-                for (id, details) in &self.pipeline_details {
-                    // If animations are currently running, then don't bother checking
-                    // with the constellation if the output image is stable.
-                    if details.animations_running || details.animation_callbacks_running {
-                        return false;
+                if let Some(ref webrender) = self.webrender {
+                    for (id, details) in &self.pipeline_details {
+                        // If animations are currently running, then don't bother checking
+                        // with the constellation if the output image is stable.
+                        if details.animations_running || details.animation_callbacks_running {
+                            return false;
+                        }
+
+                        let PipelineId(id_number) = *id;
+                        let id_number = webrender::PipelineId(id_number);
+                        match webrender.current_epoch(id_number) {
+                            Some(epoch) => {
+                                let webrender::Epoch(epoch) = epoch;
+                                let epoch = Epoch(epoch);
+                                pipeline_epochs.insert(*id, epoch);
+                            }
+                            None => {}
+                        }
+                    }
+                } else {
+                    // Check if any layers are waiting for paints to complete
+                    // of their current epoch request. If so, early exit
+                    // from this check.
+                    match self.scene.root {
+                        Some(ref root_layer) => {
+                            if self.does_layer_have_outstanding_paint_messages(root_layer) {
+                                return false;
+                            }
+                        }
+                        None => {
+                            return false;
+                        }
                     }
 
-                    pipeline_epochs.insert(*id, details.current_epoch);
+                    // Collect the currently painted epoch of each pipeline that is
+                    // complete (i.e. has *all* layers painted to the requested epoch).
+                    // This gets sent to the constellation for comparison with the current
+                    // frame tree.
+                    let mut pipeline_epochs = HashMap::new();
+                    for (id, details) in &self.pipeline_details {
+                        // If animations are currently running, then don't bother checking
+                        // with the constellation if the output image is stable.
+                        if details.animations_running || details.animation_callbacks_running {
+                            return false;
+                        }
+
+                        pipeline_epochs.insert(*id, details.current_epoch);
+                    }
                 }
 
                 // Pass the pipeline/epoch states to the constellation and check
@@ -1544,13 +1583,18 @@ impl<Window: WindowMethods> IOCompositor<Window> {
     }
 
     pub fn composite_specific_target(&mut self, target: CompositeTarget) -> Option<png::Image> {
-        if !self.context.is_some() {
+        if self.context.is_none() && self.webrender.is_none() {
             return None
         }
         let (width, height) =
             (self.window_size.width.get() as usize, self.window_size.height.get() as usize);
         if !self.window.prepare_for_composite(width, height) {
             return None
+        }
+
+        if let Some(ref mut webrender) = self.webrender {
+            assert!(self.context.is_none());
+            webrender.update();
         }
 
         match target {
@@ -1580,7 +1624,10 @@ impl<Window: WindowMethods> IOCompositor<Window> {
             };
 
             // Paint the scene.
-            if let Some(ref layer) = self.scene.root {
+            if let Some(ref mut webrender) = self.webrender {
+                assert!(self.context.is_none());
+                webrender.render();
+            } else if let Some(ref layer) = self.scene.root {
                 match self.context {
                     Some(context) => rendergl::render_scene(layer.clone(), context, &self.scene),
                     None => {
@@ -1662,10 +1709,12 @@ impl<Window: WindowMethods> IOCompositor<Window> {
     }
 
     fn initialize_compositing(&mut self) {
-        let show_debug_borders = opts::get().show_debug_borders;
-        self.context = Some(rendergl::RenderContext::new(self.native_display.clone(),
-                                                         show_debug_borders,
-                                                         opts::get().output_file.is_some()))
+        if self.webrender.is_none() {
+            let show_debug_borders = opts::get().show_debug_borders;
+            self.context = Some(rendergl::RenderContext::new(self.native_display.clone(),
+                                                             show_debug_borders,
+                                                             opts::get().output_file.is_some()))
+        }
     }
 
     fn find_topmost_layer_at_point_for_layer(&self,

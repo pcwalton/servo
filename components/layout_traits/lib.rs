@@ -15,6 +15,7 @@ extern crate net_traits;
 extern crate serde;
 extern crate url;
 extern crate util;
+extern crate webrender;
 
 // This module contains traits in layout used generically
 //   in the rest of Servo.
@@ -54,5 +55,6 @@ pub trait LayoutTaskFactory {
               font_cache_task: FontCacheTask,
               time_profiler_chan: time::ProfilerChan,
               mem_profiler_chan: mem::ProfilerChan,
-              shutdown_chan: Sender<()>);
+              shutdown_chan: Sender<()>,
+              webrender_api: Option<webrender::RenderApi>);
 }

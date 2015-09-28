@@ -32,6 +32,7 @@ use util;
 use util::geometry::{PagePx, ViewportPx};
 use util::ipc::OptionalIpcSender;
 use util::prefs;
+use webrender;
 
 /// A uniquely-identifiable pipeline of script task, layout task, and paint task.
 pub struct Pipeline {
@@ -99,6 +100,8 @@ pub struct InitialPipelineState {
     pub script_chan: Option<Sender<ConstellationControlMsg>>,
     /// Information about the page to load.
     pub load_data: LoadData,
+    /// Optional webrender api (if enabled).
+    pub webrender_api: Option<webrender::RenderApi>,
 }
 
 impl Pipeline {
@@ -198,6 +201,7 @@ impl Pipeline {
             pipeline_port: pipeline_port,
             paint_shutdown_chan: paint_shutdown_chan,
             layout_shutdown_chan: layout_shutdown_chan,
+            webrender_api: state.webrender_api,
         };
 
         (pipeline, pipeline_content)
@@ -332,6 +336,7 @@ pub struct PipelineContent {
     paint_shutdown_chan: Sender<()>,
     pipeline_port: Option<IpcReceiver<LayoutControlMsg>>,
     layout_shutdown_chan: Sender<()>,
+    webrender_api: Option<webrender::RenderApi>,
 }
 
 impl PipelineContent {
@@ -380,7 +385,8 @@ impl PipelineContent {
                                   self.font_cache_task,
                                   self.time_profiler_chan,
                                   self.mem_profiler_chan,
-                                  self.layout_shutdown_chan);
+                                  self.layout_shutdown_chan,
+                                  self.webrender_api);
     }
 
     pub fn start_paint_task(&mut self) {
