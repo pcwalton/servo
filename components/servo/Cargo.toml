@@ -40,6 +40,9 @@ harness = false
 git = "https://github.com/servo/rust-png"
 features = [ "serde-serialization" ]
 
+[dependencies.webrender]
+git = "https://github.com/glennw/webrender"
+
 [features]
 default = ["glutin_app", "window", "webdriver"]
 window = ["glutin_app/window"]

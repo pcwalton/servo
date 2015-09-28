@@ -70,6 +70,9 @@ features = ["texture_surface"]
 version = "0.2"
 features = [ "serde_serialization" ]
 
+[dependencies.webrender]
+git = "https://github.com/glennw/webrender"
+
 [dependencies]
 app_units = "0.1"
 log = "0.3"

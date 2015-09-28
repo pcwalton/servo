@@ -75,6 +75,7 @@ extern crate style;
 extern crate time;
 extern crate unicode_script;
 extern crate url;
+extern crate webrender;
 
 
 pub use paint_context::PaintContext;

@@ -34,6 +34,9 @@ features = [ "serde_serialization" ]
 [dependencies.plugins]
 path = "../plugins"
 
+[dependencies.webrender]
+git = "https://github.com/glennw/webrender"
+
 [dependencies]
 log = "0.3"
 euclid = "0.2"

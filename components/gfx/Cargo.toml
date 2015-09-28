@@ -69,6 +69,9 @@ git = "https://github.com/pcwalton/ipc-channel"
 version = "0.2"
 features = [ "serde_serialization" ]
 
+[dependencies.webrender]
+git = "https://github.com/glennw/webrender"
+
 [target.x86_64-apple-darwin.dependencies]
 core-foundation = "0.1"
 core-graphics = "0.1"
