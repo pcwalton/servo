@@ -33,6 +33,7 @@ use util::cursor::Cursor;
 use util::geometry::ScreenPx;
 #[cfg(feature = "window")]
 use util::opts;
+use std::ffi::CStr;
 
 #[cfg(feature = "window")]
 static mut g_nested_event_loop_listener: Option<*mut (NestedEventLoopListener + 'static)> = None;
@@ -101,6 +102,13 @@ impl Window {
         glutin_window.set_window_resize_callback(Some(Window::nested_window_resize as fn(u32, u32)));
 
         Window::load_gl_functions(&glutin_window);
+
+        let version = unsafe {
+            let data = CStr::from_ptr(gl::GetString(gl::VERSION) as *const _).to_bytes().to_vec();
+            String::from_utf8(data).unwrap()
+        };
+
+        println!("OpenGL version {}", version);
 
         let window = Window {
             window: glutin_window,
