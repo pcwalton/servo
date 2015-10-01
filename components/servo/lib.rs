@@ -148,9 +148,12 @@ impl Browser {
         let (webrender, webrender_api) = if opts::get().use_webrender {
             let resource_path = resources_dir_path();
             let size = opts::get().initial_window_size.to_untyped();
+            let device_pixel_ratio =
+                window.as_ref().map(|window| window.hidpi_factor().get()).unwrap_or(1.0);
             let webrender = webrender::Renderer::new(render_notifier,
                                                      size.width,
                                                      size.height,
+                                                     device_pixel_ratio,
                                                      resource_path);
             let webrender_api = webrender.new_api();
             (Some(webrender), Some(webrender_api))
