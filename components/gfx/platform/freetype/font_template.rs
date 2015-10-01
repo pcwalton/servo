@@ -36,4 +36,10 @@ impl FontTemplateData {
             identifier: identifier,
         }
     }
+
+    /// Returns a clone of the data in this font. This is a hugely expensive operation which
+    /// performs synchronous disk I/O and should never be done lightly.
+    pub fn bytes(&self) -> Vec<u8> {
+        self.bytes.clone()
+    }
 }

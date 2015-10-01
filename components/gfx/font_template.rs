@@ -170,7 +170,7 @@ impl FontTemplate {
         let template_data = Arc::new(FontTemplateData::new(self.identifier.clone(), None));
 
         if let Some(ref webrender_api) = self.webrender_api {
-            webrender_api.add_font(self.identifier.clone(), template_data.bytes.clone());
+            webrender_api.add_font(self.identifier.clone(), template_data.bytes());
         }
 
         self.weak_ref = Some(Arc::downgrade(&template_data));
