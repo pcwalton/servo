@@ -2288,7 +2288,7 @@ impl WebRenderDisplayItemConverter for DisplayItem {
                 let mut glyphs = vec!();
 
                 for slice in item.text_run.natural_word_slices_in_visual_order(&item.range) {
-                    for (_i, glyph) in slice.glyphs.iter_glyphs_for_char_range(&slice.range) {
+                    for glyph in slice.glyphs.iter_glyphs_for_char_range(&slice.range) {
                         let glyph_advance = glyph.advance();
                         let glyph_offset = glyph.offset().unwrap_or(Point2D::zero());
                         let glyph = webrender::GlyphInstance {
