@@ -2219,7 +2219,8 @@ impl WebRenderStackingContextConverter for StackingContext {
                                                      self.z_index,
                                                      &self.transform,
                                                      &self.perspective,
-                                                     self.establishes_3d_context);
+                                                     self.establishes_3d_context,
+                                                     webrender::MixBlendMode::Normal);
 
         let dl_builder = self.display_list.convert_to_webrender();
         if dl_builder.item_count() > 0 {

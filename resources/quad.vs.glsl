@@ -1,3 +1,5 @@
+#version 110
+
 attribute vec3 aPosition;
 attribute vec2 aColorTexCoord;
 attribute vec2 aMaskTexCoord;
