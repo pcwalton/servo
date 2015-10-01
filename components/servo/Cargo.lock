@@ -301,7 +301,7 @@ dependencies = [
 [[package]]
 name = "core-text"
 version = "0.1.0"
-source = "git+https://github.com/servo/core-text-rs#d97cd4ae33509857f956e64c71f43cc71c98430f"
+source = "git+https://github.com/servo/core-text-rs#7140635fa86ea317971c95d78d405d0e1b2e6f03"
 dependencies = [
  "core-foundation 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "core-graphics 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -1989,7 +1989,7 @@ dependencies = [
 [[package]]
 name = "webrender"
 version = "0.1.0"
-source = "git+https://github.com/glennw/webrender#ff46bb5ca4555751d7d15f1c43783c2d366966bb"
+source = "git+https://github.com/glennw/webrender#1a46aab6ca2251f3f6e857066af17f4b039a39fd"
 dependencies = [
  "bit-vec 0.4.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "euclid 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
