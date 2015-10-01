@@ -1114,18 +1114,34 @@ impl<Window: WindowMethods> IOCompositor<Window> {
 
     fn process_pending_scroll_events(&mut self) {
         let had_scroll_events = self.pending_scroll_events.len() > 0;
-        for scroll_event in std_mem::replace(&mut self.pending_scroll_events,
-                                             Vec::new()) {
-            let delta = scroll_event.delta / self.scene.scale;
-            let cursor = scroll_event.cursor.as_f32() / self.scene.scale;
-
-            if let Some(ref webrender_api) = self.webrender_api {
-                webrender_api.scroll(delta.to_untyped());
-            } else if let Some(ref mut layer) = self.scene.root {
-                layer.handle_scroll_event(delta, cursor);
+        match self.webrender_api {
+            Some(ref webrender_api) => {
+                // Batch up all scroll events into one, or else we'll do way too much painting.
+                let mut total_delta = None;
+                for scroll_event in std_mem::replace(&mut self.pending_scroll_events, vec![]) {
+                    let this_delta = scroll_event.delta / self.scene.scale;
+                    match total_delta {
+                        None => total_delta = Some(this_delta),
+                        Some(ref mut total_delta) => *total_delta = *total_delta + this_delta,
+                    }
+                }
+                if let Some(total_delta) = total_delta {
+                    webrender_api.scroll(total_delta.to_untyped());
+                }
             }
+            None => {
+                for scroll_event in std_mem::replace(&mut self.pending_scroll_events,
+                                                     Vec::new()) {
+                    let delta = scroll_event.delta / self.scene.scale;
+                    let cursor = scroll_event.cursor.as_f32() / self.scene.scale;
 
-            self.perform_updates_after_scroll();
+                    if let Some(ref mut layer) = self.scene.root {
+                        layer.handle_scroll_event(delta, cursor);
+                    }
+
+                    self.perform_updates_after_scroll();
+                }
+            }
         }
 
         if had_scroll_events {
