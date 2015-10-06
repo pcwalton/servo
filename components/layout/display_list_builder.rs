@@ -2158,17 +2158,6 @@ impl ToColorF for Color {
     }
 }
 
-trait ToAu {
-    fn to_au(&self) -> webrender::Au;
-}
-
-impl ToAu for Au {
-    fn to_au(&self) -> webrender::Au {
-        let Au(f) = *self;
-        webrender::Au(f)
-    }
-}
-
 trait ToGradientStop {
     fn to_gradient_stop(&self) -> webrender::GradientStop;
 }
@@ -2314,7 +2303,7 @@ impl WebRenderDisplayItemConverter for DisplayItem {
                                       glyphs,
                                       item.text_run.font_template.identifier.clone(),
                                       item.text_color.to_colorf(),
-                                      item.text_run.actual_pt_size.to_au());
+                                      item.text_run.actual_pt_size);
                 }
             }
             DisplayItem::ImageClass(ref item) => {
