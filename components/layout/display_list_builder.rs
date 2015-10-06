@@ -46,7 +46,7 @@ use std::{cmp, f32};
 use style::computed_values::filter::Filter;
 use style::computed_values::{background_attachment, background_clip, background_origin};
 use style::computed_values::{background_repeat, background_size};
-use style::computed_values::{border_style, image_rendering, overflow_x, position};
+use style::computed_values::{border_style, image_rendering, mix_blend_mode, overflow_x, position};
 use style::computed_values::{transform, transform_style, visibility};
 use style::properties::style_structs::Border;
 use style::properties::{self, ComputedValues};
@@ -2181,6 +2181,33 @@ impl ToClipRegion for ClippingRegion {
     }
 }
 
+trait ToBlendMode {
+    fn to_blend_mode(&self) -> webrender::MixBlendMode;
+}
+
+impl ToBlendMode for mix_blend_mode::T {
+    fn to_blend_mode(&self) -> webrender::MixBlendMode {
+        match *self {
+            mix_blend_mode::T::normal => webrender::MixBlendMode::Normal,
+            mix_blend_mode::T::multiply => webrender::MixBlendMode::Multiply,
+            mix_blend_mode::T::screen => webrender::MixBlendMode::Screen,
+            mix_blend_mode::T::overlay => webrender::MixBlendMode::Overlay,
+            mix_blend_mode::T::darken => webrender::MixBlendMode::Darken,
+            mix_blend_mode::T::lighten => webrender::MixBlendMode::Lighten,
+            mix_blend_mode::T::color_dodge => webrender::MixBlendMode::ColorDodge,
+            mix_blend_mode::T::color_burn => webrender::MixBlendMode::ColorBurn,
+            mix_blend_mode::T::hard_light => webrender::MixBlendMode::HardLight,
+            mix_blend_mode::T::soft_light => webrender::MixBlendMode::SoftLight,
+            mix_blend_mode::T::difference => webrender::MixBlendMode::Difference,
+            mix_blend_mode::T::exclusion => webrender::MixBlendMode::Exclusion,
+            mix_blend_mode::T::hue => webrender::MixBlendMode::Hue,
+            mix_blend_mode::T::saturation => webrender::MixBlendMode::Saturation,
+            mix_blend_mode::T::color => webrender::MixBlendMode::Color,
+            mix_blend_mode::T::luminosity => webrender::MixBlendMode::Luminosity,
+        }
+    }
+}
+
 impl WebRenderStackingContextConverter for StackingContext {
     fn convert_to_webrender(&self,
                             api: &webrender::RenderApi,
@@ -2214,7 +2241,7 @@ impl WebRenderStackingContextConverter for StackingContext {
                                                      &self.transform,
                                                      &self.perspective,
                                                      self.establishes_3d_context,
-                                                     webrender::MixBlendMode::Normal);
+                                                     self.blend_mode.to_blend_mode());
 
         let dl_builder = self.display_list.convert_to_webrender();
         if dl_builder.item_count() > 0 {
