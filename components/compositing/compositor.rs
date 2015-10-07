@@ -1476,6 +1476,7 @@ impl<Window: WindowMethods> IOCompositor<Window> {
     /// Query the constellation to see if the current compositor
     /// output matches the current frame tree output, and if the
     /// associated script tasks are idle.
+    #[allow(unsafe_code)]
     fn is_ready_to_paint_image_output(&mut self) -> bool {
         match self.ready_to_save_state {
             ReadyState::Unknown => {
@@ -1496,9 +1497,8 @@ impl<Window: WindowMethods> IOCompositor<Window> {
                             return false;
                         }
 
-                        let PipelineId(id_number) = *id;
-                        let id_number = webrender::PipelineId(id_number);
-                        match webrender.current_epoch(id_number) {
+                        let webrender_pipeline_id = unsafe { std_mem::transmute(*id) };
+                        match webrender.current_epoch(webrender_pipeline_id) {
                             Some(epoch) => {
                                 let webrender::Epoch(epoch) = epoch;
                                 let epoch = Epoch(epoch);
