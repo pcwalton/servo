@@ -2410,6 +2410,7 @@ impl WebRenderDisplayItemConverter for DisplayItem {
                                         item.color.to_colorf(),
                                         item.blur_radius.to_f32_px(),
                                         item.spread_radius.to_f32_px(),
+                                        item.border_radius.to_f32_px(),
                                         item.clip_mode.to_clip_mode());
             }
             DisplayItem::IframeClass(ref item) => {
