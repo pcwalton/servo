@@ -36,7 +36,8 @@ bitflags!(
         const GPU_RENDERING  = 0x00000010,
         const LINUX_TARGET   = 0x00000100,
         const MACOS_TARGET   = 0x00001000,
-        const ANDROID_TARGET = 0x00010000
+        const ANDROID_TARGET = 0x00010000,
+        const WEBRENDER      = 0x00100000,
     }
 );
 
@@ -57,7 +58,8 @@ fn main() {
     let mut render_mode = match &**render_mode_string {
         "cpu" => CPU_RENDERING,
         "gpu" => GPU_RENDERING,
-        _ => panic!("First argument must specify cpu or gpu as rendering mode")
+        "wr" => WEBRENDER,
+        _ => panic!("First argument must specify cpu, gpu or wr as rendering mode")
     };
     if cfg!(target_os = "linux") {
         render_mode.insert(LINUX_TARGET);
@@ -302,6 +304,9 @@ fn capture(reftest: &Reftest, side: usize) -> (u32, u32, Vec<u8>) {
     }
     if reftest.render_mode.contains(GPU_RENDERING) {
         command.arg("-g");
+    }
+    if reftest.render_mode.contains(WEBRENDER) {
+        command.arg("-w");
     }
     for pref in &reftest.prefs {
         command.arg("--pref");
