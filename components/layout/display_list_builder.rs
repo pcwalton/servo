@@ -40,6 +40,7 @@ use msg::constellation_msg::PipelineId;
 use net_traits::image::base::{Image, PixelFormat};
 use net_traits::image_cache_task::UsePlaceholder;
 use std::default::Default;
+use std::mem;
 use std::sync::Arc;
 use std::sync::mpsc::channel;
 use std::{cmp, f32};
@@ -1102,7 +1103,7 @@ impl FragmentDisplayListBuilding for Fragment {
                                                                    clip)
                 }
             }
-            SpecificFragmentInfo::Iframe(..) => {
+            SpecificFragmentInfo::Iframe(ref iframe_fragment) => {
                 if opts::get().use_webrender {
                     display_list.content.push_back(DisplayItem::IframeClass(box IframeDisplayItem {
                         base: BaseDisplayItem::new(stacking_relative_content_box,
@@ -1110,7 +1111,7 @@ impl FragmentDisplayListBuilding for Fragment {
                                                                             &*self.style,
                                                                             Cursor::DefaultCursor),
                                                    (*clip).clone()),
-                        iframe: PipelineId(1),      // uhoh hack hack hack!
+                        iframe: iframe_fragment.pipeline_id,
                     }));
                 }
 
@@ -2294,6 +2295,7 @@ impl WebRenderDisplayListConverter for Box<DisplayList> {
 }
 
 impl WebRenderDisplayItemConverter for DisplayItem {
+    #[allow(unsafe_code)]
     fn convert_to_webrender(&self, level: webrender::StackingLevel, builder: &mut webrender::DisplayListBuilder) {
         match *self {
             DisplayItem::SolidColorClass(ref item) => {
@@ -2412,12 +2414,11 @@ impl WebRenderDisplayItemConverter for DisplayItem {
             }
             DisplayItem::IframeClass(ref item) => {
                 let rect = item.base.bounds.to_rectf();
-                let PipelineId(pipeline_id) = item.iframe;
-                let iframe = webrender::PipelineId(pipeline_id);
+                let pipeline_id = unsafe { mem::transmute(item.iframe) };
                 builder.push_iframe(level,
                                     rect,
                                     item.base.clip.to_clip_region(),
-                                    iframe);
+                                    pipeline_id);
             }
         }
     }

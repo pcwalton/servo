@@ -1164,8 +1164,7 @@ impl LayoutTask {
                     // TODO: Avoid the temporary conversion and build webrender sc/dl directly!
                     let Epoch(epoch_number) = rw_data.epoch;
                     let epoch = webrender::Epoch(epoch_number);
-                    let PipelineId(pipeline_id) = self.id;
-                    let pipeline_id = webrender::PipelineId(pipeline_id);
+                    let pipeline_id = unsafe { transmute(self.id) };
                     let sc = rw_data.stacking_context.as_ref().unwrap().convert_to_webrender(&self.webrender_api.as_ref().unwrap(), pipeline_id, epoch);
                     let root_background_color = webrender::ColorF::new(root_background_color.r,
                                                                        root_background_color.g,
