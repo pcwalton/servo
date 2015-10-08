@@ -374,7 +374,7 @@ pub trait Flow: fmt::Debug + Sync + Send + 'static {
     fn repair_style(&mut self, new_style: &Arc<ComputedValues>);
 
     /// Remove any compositor layers associated with this flow
-    fn remove_compositor_layers(&self, _: ConstellationChan) {}
+    fn remove_from_flow_tree(&self, _: ConstellationChan) {}
 }
 
 // Base access
