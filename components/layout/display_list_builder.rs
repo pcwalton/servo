@@ -2069,15 +2069,20 @@ pub trait WebRenderStackingContextConverter {
     fn convert_to_webrender(&self,
                             api: &webrender::RenderApi,
                             pipeline_id: webrender::PipelineId,
-                            epoch: webrender::Epoch) -> webrender::StackingContext;
+                            epoch: webrender::Epoch,
+                            iframes: &mut Vec<(PipelineId, Rect<Au>)>) -> webrender::StackingContext;
 }
 
 pub trait WebRenderDisplayListConverter {
-    fn convert_to_webrender(&self) -> webrender::DisplayListBuilder;
+    fn convert_to_webrender(&self,
+                            iframes: &mut Vec<(PipelineId, Rect<Au>)>) -> webrender::DisplayListBuilder;
 }
 
 pub trait WebRenderDisplayItemConverter {
-    fn convert_to_webrender(&self, level: webrender::StackingLevel, builder: &mut webrender::DisplayListBuilder);
+    fn convert_to_webrender(&self,
+                            level: webrender::StackingLevel,
+                            builder: &mut webrender::DisplayListBuilder,
+                            iframes: &mut Vec<(PipelineId, Rect<Au>)>);
 }
 
 trait ToBorderStyle {
@@ -2213,7 +2218,8 @@ impl WebRenderStackingContextConverter for StackingContext {
     fn convert_to_webrender(&self,
                             api: &webrender::RenderApi,
                             pipeline_id: webrender::PipelineId,
-                            epoch: webrender::Epoch) -> webrender::StackingContext {
+                            epoch: webrender::Epoch,
+                            iframes: &mut Vec<(PipelineId, Rect<Au>)>) -> webrender::StackingContext {
         //panic!("todo - for now only create a root scrolling layer!");
         let scroll_layer_id = None;
         /*
@@ -2244,18 +2250,18 @@ impl WebRenderStackingContextConverter for StackingContext {
                                                      self.establishes_3d_context,
                                                      self.blend_mode.to_blend_mode());
 
-        let dl_builder = self.display_list.convert_to_webrender();
+        let dl_builder = self.display_list.convert_to_webrender(iframes);
         if dl_builder.item_count() > 0 {
             let dl_id = api.add_display_list(dl_builder, pipeline_id, epoch);
             sc.add_display_list(dl_id);
         }
 
         for child in &self.display_list.children {
-            sc.add_stacking_context(child.convert_to_webrender(api, pipeline_id, epoch));
+            sc.add_stacking_context(child.convert_to_webrender(api, pipeline_id, epoch, iframes));
         }
 
         for child in &self.display_list.layered_children {
-            sc.add_stacking_context(child.stacking_context.convert_to_webrender(api, pipeline_id, epoch));
+            sc.add_stacking_context(child.stacking_context.convert_to_webrender(api, pipeline_id, epoch, iframes));
         }
 
         sc
@@ -2263,31 +2269,31 @@ impl WebRenderStackingContextConverter for StackingContext {
 }
 
 impl WebRenderDisplayListConverter for Box<DisplayList> {
-    fn convert_to_webrender(&self) -> webrender::DisplayListBuilder {
+    fn convert_to_webrender(&self, iframes: &mut Vec<(PipelineId, Rect<Au>)>) -> webrender::DisplayListBuilder {
         let mut builder = webrender::DisplayListBuilder::new();
 
         for item in &self.background_and_borders {
-            item.convert_to_webrender(webrender::StackingLevel::BackgroundAndBorders, &mut builder);
+            item.convert_to_webrender(webrender::StackingLevel::BackgroundAndBorders, &mut builder, iframes);
         }
 
         for item in &self.block_backgrounds_and_borders {
-            item.convert_to_webrender(webrender::StackingLevel::BlockBackgroundAndBorders, &mut builder);
+            item.convert_to_webrender(webrender::StackingLevel::BlockBackgroundAndBorders, &mut builder, iframes);
         }
 
         for item in &self.floats {
-            item.convert_to_webrender(webrender::StackingLevel::Floats, &mut builder);
+            item.convert_to_webrender(webrender::StackingLevel::Floats, &mut builder, iframes);
         }
 
         for item in &self.content {
-            item.convert_to_webrender(webrender::StackingLevel::Content, &mut builder);
+            item.convert_to_webrender(webrender::StackingLevel::Content, &mut builder, iframes);
         }
 
         for item in &self.positioned_content {
-            item.convert_to_webrender(webrender::StackingLevel::PositionedContent, &mut builder);
+            item.convert_to_webrender(webrender::StackingLevel::PositionedContent, &mut builder, iframes);
         }
 
         for item in &self.outlines {
-            item.convert_to_webrender(webrender::StackingLevel::Outlines, &mut builder);
+            item.convert_to_webrender(webrender::StackingLevel::Outlines, &mut builder, iframes);
         }
 
         builder
@@ -2296,7 +2302,10 @@ impl WebRenderDisplayListConverter for Box<DisplayList> {
 
 impl WebRenderDisplayItemConverter for DisplayItem {
     #[allow(unsafe_code)]
-    fn convert_to_webrender(&self, level: webrender::StackingLevel, builder: &mut webrender::DisplayListBuilder) {
+    fn convert_to_webrender(&self,
+                            level: webrender::StackingLevel,
+                            builder: &mut webrender::DisplayListBuilder,
+                            iframes: &mut Vec<(PipelineId, Rect<Au>)>) {
         match *self {
             DisplayItem::SolidColorClass(ref item) => {
                 let color = item.color.to_colorf();
@@ -2414,6 +2423,7 @@ impl WebRenderDisplayItemConverter for DisplayItem {
                                         item.clip_mode.to_clip_mode());
             }
             DisplayItem::IframeClass(ref item) => {
+                iframes.push((item.iframe, item.base.bounds));
                 let rect = item.base.bounds.to_rectf();
                 let pipeline_id = unsafe { mem::transmute(item.iframe) };
                 builder.push_iframe(level,
