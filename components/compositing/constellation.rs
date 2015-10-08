@@ -1199,6 +1199,11 @@ impl<LTF: LayoutTaskFactory, STF: ScriptTaskFactory> Constellation<LTF, STF> {
             return false;
         }
 
+        // If there are any pending frame changes, don't save yet.
+        if self.pending_frames.len() > 0 {
+            return false;
+        }
+
         // Step through the current frame tree, checking that the script
         // task is idle, and that the current epoch of the layout task
         // matches what the compositor has painted. If all these conditions
