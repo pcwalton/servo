@@ -1165,7 +1165,11 @@ impl LayoutTask {
                     let Epoch(epoch_number) = rw_data.epoch;
                     let epoch = webrender::Epoch(epoch_number);
                     let pipeline_id = unsafe { transmute(self.id) };
-                    let sc = rw_data.stacking_context.as_ref().unwrap().convert_to_webrender(&self.webrender_api.as_ref().unwrap(), pipeline_id, epoch);
+                    let mut iframes = Vec::new();
+                    let sc = rw_data.stacking_context.as_ref().unwrap().convert_to_webrender(&self.webrender_api.as_ref().unwrap(),
+                                                                                             pipeline_id,
+                                                                                             epoch,
+                                                                                             &mut iframes);
                     let root_background_color = webrender::ColorF::new(root_background_color.r,
                                                                        root_background_color.g,
                                                                        root_background_color.b,
@@ -1173,6 +1177,13 @@ impl LayoutTask {
                     api.set_root_stacking_context(sc, root_background_color, epoch, pipeline_id);
 
                     let ConstellationChan(ref constellation_chan) = rw_data.constellation_chan;
+
+                    for iframe in iframes {
+                        constellation_chan.send(ConstellationMsg::FrameSize(iframe.0,
+                                                                            Size2D::new(iframe.1.size.width.to_f32_px(),
+                                                                                        iframe.1.size.height.to_f32_px()))).unwrap();
+                    }
+
                     constellation_chan.send(ConstellationMsg::PainterReady(self.id)).unwrap();
                 } else {
                     self.paint_chan
