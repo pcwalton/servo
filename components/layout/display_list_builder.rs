@@ -2346,11 +2346,14 @@ impl WebRenderDisplayItemConverter for DisplayItem {
             }
             DisplayItem::ImageClass(ref item) => {
                 if let Some(id) = item.image.id {
-                    builder.push_image(level,
-                                       item.base.bounds.to_rectf(),
-                                       item.base.clip.to_clip_region(),
-                                       item.stretch_size.to_sizef(),
-                                       id);
+                    if item.stretch_size.width > Au(0) &&
+                       item.stretch_size.height > Au(0) {
+                        builder.push_image(level,
+                                           item.base.bounds.to_rectf(),
+                                           item.base.clip.to_clip_region(),
+                                           item.stretch_size.to_sizef(),
+                                           id);
+                    }
                 }
             }
             DisplayItem::BorderClass(ref item) => {
