@@ -1578,7 +1578,7 @@ impl<Window: WindowMethods> IOCompositor<Window> {
     /// is WindowAndPng Ok(Some(png::Image)) is returned.
     pub fn composite_specific_target(&mut self, target: CompositeTarget) -> Result<Option<png::Image>, ()> {
         if self.context.is_none() && self.webrender.is_none() {
-            return None
+            return Err(())
         }
         let (width, height) =
             (self.window_size.width.get() as usize, self.window_size.height.get() as usize);
