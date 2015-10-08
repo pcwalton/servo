@@ -24,7 +24,7 @@ use ipc_channel::ipc::IpcSender;
 use layout_debug;
 use model::{self, IntrinsicISizes, IntrinsicISizesContribution, MaybeAuto, specified};
 use msg::compositor_msg::{LayerId, LayerType};
-use msg::constellation_msg::PipelineId;
+use msg::constellation_msg::{ConstellationChan, Msg, PipelineId};
 use net_traits::image::base::Image;
 use net_traits::image_cache_task::UsePlaceholder;
 use rustc_serialize::{Encodable, Encoder};
@@ -2212,6 +2212,23 @@ impl Fragment {
         // FIXME(pcwalton): Sometimes excessively fancy glyphs can make us draw outside our border
         // box too.
         overflow
+    }
+
+    /// Remove any compositor layers associated with this fragment - it is being
+    /// removed from the tree or had its display property set to none.
+    /// TODO(gw): This just hides the compositor layer for now. In the future
+    /// it probably makes sense to provide a hint to the compositor whether
+    /// the layers should be destroyed to free memory.
+    pub fn remove_from_flow_tree(&self, constellation_chan: ConstellationChan) {
+        match self.specific {
+            SpecificFragmentInfo::Iframe(ref iframe_info) => {
+                let ConstellationChan(ref chan) = constellation_chan;
+                println!("remove_from_flow_tree {:?}", iframe_info.pipeline_id);
+                chan.send(Msg::FrameSize(iframe_info.pipeline_id,
+                                         Size2D::zero())).unwrap();
+            }
+            _ => {}
+        }
     }
 
     pub fn requires_line_break_afterward_if_wrapping_on_newlines(&self) -> bool {

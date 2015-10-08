@@ -1547,7 +1547,8 @@ impl LayoutTask {
     /// Handles a message to destroy layout data. Layout data must be destroyed on *this* task
     /// because the struct type is transmuted to a different type on the script side.
     unsafe fn handle_reap_layout_data(&self, layout_data: LayoutData) {
-        let _: LayoutDataWrapper = transmute(layout_data);
+        let layout_data_wrapper: LayoutDataWrapper = transmute(layout_data);
+        layout_data_wrapper.remove_from_flow_tree(self.constellation_chan.clone());
     }
 
     /// Returns profiling information which is passed to the time profiler.
