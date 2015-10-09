@@ -2341,7 +2341,8 @@ impl WebRenderDisplayItemConverter for DisplayItem {
                                       glyphs,
                                       item.text_run.font_template.identifier.clone(),
                                       item.text_color.to_colorf(),
-                                      item.text_run.actual_pt_size);
+                                      item.text_run.actual_pt_size,
+                                      item.blur_radius);
                 }
             }
             DisplayItem::ImageClass(ref item) => {
