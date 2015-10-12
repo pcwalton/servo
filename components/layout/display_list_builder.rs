@@ -2183,7 +2183,28 @@ trait ToClipRegion {
 
 impl ToClipRegion for ClippingRegion {
     fn to_clip_region(&self) -> webrender::ClipRegion {
-        webrender::ClipRegion::new(self.main.to_rectf())
+        webrender::ClipRegion::new(self.main.to_rectf(),
+                                   self.complex.iter().map(|complex_clipping_region| {
+                                       webrender::ComplexClipRegion::new(
+                                           complex_clipping_region.rect.to_rectf(),
+                                           complex_clipping_region.radii.to_border_radius(),
+                                        )
+                                   }).collect())
+    }
+}
+
+trait ToBorderRadius {
+    fn to_border_radius(&self) -> webrender::BorderRadius;
+}
+
+impl ToBorderRadius for BorderRadii<Au> {
+    fn to_border_radius(&self) -> webrender::BorderRadius {
+        webrender::BorderRadius {
+            top_left: self.top_left.to_sizef(),
+            top_right: self.top_right.to_sizef(),
+            bottom_left: self.bottom_left.to_sizef(),
+            bottom_right: self.bottom_right.to_sizef(),
+        }
     }
 }
 
@@ -2379,12 +2400,7 @@ impl WebRenderDisplayItemConverter for DisplayItem {
                     color: item.color.bottom.to_colorf(),
                     style: item.style.bottom.to_border_style(),
                 };
-                let radius = webrender::BorderRadius {
-                    top_left: item.radius.top_left.to_sizef(),
-                    top_right: item.radius.top_right.to_sizef(),
-                    bottom_left: item.radius.bottom_left.to_sizef(),
-                    bottom_right: item.radius.bottom_right.to_sizef(),
-                };
+                let radius = item.radius.to_border_radius();
                 builder.push_border(level,
                                     rect,
                                     item.base.clip.to_clip_region(),
