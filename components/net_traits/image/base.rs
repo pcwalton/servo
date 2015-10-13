@@ -5,11 +5,8 @@
 use ipc_channel::ipc::IpcSharedMemory;
 use piston_image::{self, DynamicImage, GenericImage};
 use stb_image::image as stb_image2;
-use std::mem;
-use util::mem::HeapSizeOf;
 use util::opts;
 use util::vec::byte_swap;
-use webrender;
 
 pub use msg::constellation_msg::{Image, PixelFormat};
 
@@ -92,6 +89,7 @@ pub fn load_from_memory(buffer: &[u8]) -> Option<Image> {
                     height: rgba.height(),
                     format: PixelFormat::RGBA8,
                     bytes: IpcSharedMemory::from_bytes(&*rgba),
+                    id: None,
                 })
             }
             Err(e) => {

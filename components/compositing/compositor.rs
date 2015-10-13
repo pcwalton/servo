@@ -1643,6 +1643,7 @@ impl<Window: WindowMethods> IOCompositor<Window> {
                     height: img.height(),
                     format: PixelFormat::RGB8,
                     bytes: IpcSharedMemory::from_bytes(&*img),
+                    id: None,
                 })
             }
             CompositeTarget::PngFile => {

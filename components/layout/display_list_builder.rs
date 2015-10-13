@@ -2281,9 +2281,11 @@ impl WebRenderStackingContextConverter for StackingContext {
             sc.add_stacking_context(child.convert_to_webrender(api, pipeline_id, epoch, iframes));
         }
 
+/*
         for child in &self.display_list.layered_children {
             sc.add_stacking_context(child.stacking_context.convert_to_webrender(api, pipeline_id, epoch, iframes));
         }
+*/
 
         sc
     }
