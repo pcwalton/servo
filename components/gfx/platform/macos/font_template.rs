@@ -6,6 +6,7 @@ use core_graphics::data_provider::CGDataProvider;
 use core_graphics::font::CGFont;
 use core_text;
 use core_text::font::CTFont;
+use font_template::NativeRenderingFontHandleOrBytes;
 use serde::de::{Error, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::borrow::ToOwned;
@@ -81,6 +82,16 @@ impl FontTemplateData {
         let mut bytes = Vec::new();
         File::open(path).expect("Couldn't open font file!").read_to_end(&mut bytes).unwrap();
         bytes
+    }
+
+    pub fn get_native_rendering_font_handle_or_bytes(&self) -> NativeRenderingFontHandleOrBytes {
+        match self.ctfont() {
+            None => NativeRenderingFontHandleOrBytes::None,
+            Some(ctfont) => {
+                NativeRenderingFontHandleOrBytes::NativeRenderingFontHandle(
+                    ctfont.copy_to_CGFont())
+            }
+        }
     }
 }
 

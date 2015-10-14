@@ -12,7 +12,7 @@ use app_units::Au;
 use core_foundation::base::CFIndex;
 use core_foundation::data::CFData;
 use core_foundation::string::UniChar;
-use core_graphics::font::CGGlyph;
+use core_graphics::font::{CGFont, CGGlyph};
 use core_graphics::geometry::CGRect;
 use core_text::font::CTFont;
 use core_text::font_descriptor::{SymbolicTraitAccessors, TraitAccessors};
@@ -211,3 +211,6 @@ impl FontHandleMethods for FontHandle {
         })
     }
 }
+
+pub type RenderingFontHandle = CGFont;
+

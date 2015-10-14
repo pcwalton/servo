@@ -3,7 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 use font::FontHandleMethods;
-use platform::font::FontHandle;
+use platform::font::{FontHandle, RenderingFontHandle};
 use platform::font_context::FontContextHandle;
 use platform::font_template::FontTemplateData;
 use std::sync::{Arc, Weak};
@@ -65,7 +65,7 @@ impl FontTemplate {
         let maybe_data = match maybe_bytes {
             Some(_) => {
                 if let Some(ref webrender_api) = webrender_api {
-                    webrender_api.add_font(identifier.clone(), maybe_bytes.as_ref().unwrap().clone());
+                    webrender_api.add_raw_font(identifier.clone(), maybe_bytes.as_ref().unwrap().clone());
                 }
                 Some(FontTemplateData::new(identifier.clone(), maybe_bytes))
             }
@@ -170,10 +170,25 @@ impl FontTemplate {
         let template_data = Arc::new(FontTemplateData::new(self.identifier.clone(), None));
 
         if let Some(ref webrender_api) = self.webrender_api {
-            webrender_api.add_font(self.identifier.clone(), template_data.bytes());
+            match template_data.get_native_rendering_font_handle_or_bytes() {
+                NativeRenderingFontHandleOrBytes::NativeRenderingFontHandle(handle) => {
+                    webrender_api.add_native_font(self.identifier.clone(), handle);
+                }
+                NativeRenderingFontHandleOrBytes::Bytes(bytes) => {
+                    webrender_api.add_raw_font(self.identifier.clone(), bytes);
+                }
+                NativeRenderingFontHandleOrBytes::None => {}
+            }
         }
 
         self.weak_ref = Some(Arc::downgrade(&template_data));
         template_data
     }
 }
+
+pub enum NativeRenderingFontHandleOrBytes {
+    NativeRenderingFontHandle(RenderingFontHandle),
+    Bytes(Vec<u8>),
+    None,
+}
+

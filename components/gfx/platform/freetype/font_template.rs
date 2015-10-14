@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+use font_template::NativeRenderingFontHandleOrBytes;
 use std::fs::File;
 use std::io::Read;
 use string_cache::Atom;
@@ -41,5 +42,9 @@ impl FontTemplateData {
     /// performs synchronous disk I/O and should never be done lightly.
     pub fn bytes(&self) -> Vec<u8> {
         self.bytes.clone()
+    }
+
+    pub fn get_native_rendering_font_handle_or_bytes(&self) -> NativeRenderingFontHandleOrBytes {
+        NativeRenderingFontHandleOrBytes::Bytes(self.bytes.clone())
     }
 }
