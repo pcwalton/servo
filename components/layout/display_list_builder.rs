@@ -44,7 +44,7 @@ use std::mem;
 use std::sync::Arc;
 use std::sync::mpsc::channel;
 use std::{cmp, f32};
-use style::computed_values::filter::Filter;
+use style::computed_values::filter::{self, Filter};
 use style::computed_values::{background_attachment, background_clip, background_origin};
 use style::computed_values::{background_repeat, background_size};
 use style::computed_values::{border_style, image_rendering, mix_blend_mode, overflow_x, position};
@@ -2235,6 +2235,30 @@ impl ToBlendMode for mix_blend_mode::T {
     }
 }
 
+trait ToFilterOps {
+    fn to_filter_ops(&self) -> Vec<webrender::FilterOp>;
+}
+
+impl ToFilterOps for filter::T {
+    fn to_filter_ops(&self) -> Vec<webrender::FilterOp> {
+        let mut result = Vec::with_capacity(self.filters.len());
+        for filter in self.filters.iter() {
+            match *filter {
+                Filter::Blur(radius) => result.push(webrender::FilterOp::Blur(radius)),
+                Filter::Brightness(amount) => result.push(webrender::FilterOp::Brightness(amount)),
+                Filter::Contrast(amount) => result.push(webrender::FilterOp::Contrast(amount)),
+                Filter::Grayscale(amount) => result.push(webrender::FilterOp::Grayscale(amount)),
+                Filter::HueRotate(angle) => result.push(webrender::FilterOp::HueRotate(angle.0)),
+                Filter::Invert(amount) => result.push(webrender::FilterOp::Invert(amount)),
+                Filter::Opacity(amount) => result.push(webrender::FilterOp::Opacity(amount)),
+                Filter::Saturate(amount) => result.push(webrender::FilterOp::Saturate(amount)),
+                Filter::Sepia(amount) => result.push(webrender::FilterOp::Sepia(amount)),
+            }
+        }
+        result
+    }
+}
+
 impl WebRenderStackingContextConverter for StackingContext {
     fn convert_to_webrender(&self,
                             api: &webrender::RenderApi,
@@ -2269,7 +2293,8 @@ impl WebRenderStackingContextConverter for StackingContext {
                                                      &self.transform,
                                                      &self.perspective,
                                                      self.establishes_3d_context,
-                                                     self.blend_mode.to_blend_mode());
+                                                     self.blend_mode.to_blend_mode(),
+                                                     self.filters.to_filter_ops());
 
         let dl_builder = self.display_list.convert_to_webrender(iframes);
         if dl_builder.item_count() > 0 {
