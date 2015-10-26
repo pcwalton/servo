@@ -653,7 +653,10 @@ impl StackingContext {
             layer_info: layer_info,
             last_child_layer_info: None,
         };
-        StackingContextLayerCreator::add_layers_to_preserve_drawing_order(&mut stacking_context);
+        // webrender doesn't care about layers in the display list - it's handled internally.
+        if !opts::get().use_webrender {
+            StackingContextLayerCreator::add_layers_to_preserve_drawing_order(&mut stacking_context);
+        }
         stacking_context
     }
 
@@ -787,6 +790,9 @@ struct StackingContextLayerCreator {
 
 impl StackingContextLayerCreator {
     fn new() -> StackingContextLayerCreator {
+        // webrender doesn't care about layers in the display list - it's handled internally.
+        debug_assert!(!opts::get().use_webrender);
+
         StackingContextLayerCreator {
             display_list_for_next_layer: None,
             next_layer_info: None,
@@ -932,12 +938,9 @@ impl StackingContextLayerCreator {
     fn add_stacking_context(&mut self,
                             stacking_context: Arc<StackingContext>,
                             parent_stacking_context: &mut StackingContext) {
-        // webrender doesn't care about layers in the display list - it's handled internally.
-        if !opts::get().use_webrender {
-            if self.all_following_children_need_layers() || stacking_context.layer_info.is_some() {
-                self.add_layered_stacking_context(stacking_context, parent_stacking_context);
-                return;
-            }
+        if self.all_following_children_need_layers() || stacking_context.layer_info.is_some() {
+            self.add_layered_stacking_context(stacking_context, parent_stacking_context);
+            return;
         }
 
         // This StackingContext has a layered child somewhere in its children.
