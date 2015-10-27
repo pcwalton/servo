@@ -229,6 +229,7 @@ fn parse_lists(file: &Path,
                 "flaky_gpu" => flakiness.insert(GPU_RENDERING),
                 "flaky_linux" => flakiness.insert(LINUX_TARGET),
                 "flaky_macos" => flakiness.insert(MACOS_TARGET),
+                "flaky_webrender" => flakiness.insert(WEBRENDER),
                 _ => ()
             }
             if condition.starts_with("prefs:\"") {
