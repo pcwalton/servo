@@ -1,5 +1,3 @@
-#version 110
-
 #ifdef GL_ES
     precision mediump float;
 #endif
@@ -10,8 +8,10 @@ uniform vec4 uPosition;
 uniform float uBlurRadius;
 uniform float uArcRadius;
 
-varying vec4 vColor;
-varying vec2 vPosition;
+IN_VARYING vec4 vColor;
+IN_VARYING vec2 vPosition;
+
+DEFINE_FRAG_COLOR_OUTPUT;
 
 void main(void)
 {
@@ -20,6 +20,6 @@ void main(void)
     float lDistance = distance(lPosition, vec2(lArcCenter));
     float lValue = clamp(lDistance, uArcRadius - uBlurRadius, uArcRadius + uBlurRadius);
     lValue = ((lValue - uArcRadius) / uBlurRadius + 1.0) / 2.0;
-    gl_FragColor = vec4(1.0 - lValue);
+    FRAG_COLOR = vec4(1.0 - lValue);
 }
 

@@ -1,11 +1,9 @@
-#version 110
-
-attribute vec3 aPosition;
-attribute vec2 aMaskTexCoord;
+IN_ATTRIBUTE vec3 aPosition;
+IN_ATTRIBUTE vec2 aMaskTexCoord;
 
 uniform mat4 uTransform;
 
-varying vec2 vMaskTexCoord;
+OUT_VARYING vec2 vMaskTexCoord;
 
 void main(void)
 {

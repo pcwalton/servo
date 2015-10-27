@@ -145,9 +145,18 @@ impl Window {
         }
     }
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(not(any(target_os = "android", target_os = "macos")))]
     fn gl_version() -> GlRequest {
         GlRequest::Specific(Api::OpenGl, (2, 1))
+    }
+
+    #[cfg(target_os = "macos")]
+    fn gl_version() -> GlRequest {
+        if opts::get().use_webrender {
+            GlRequest::Specific(Api::OpenGl, (3, 2))
+        } else {
+            GlRequest::Specific(Api::OpenGl, (2, 1))
+        }
     }
 
     #[cfg(target_os = "android")]

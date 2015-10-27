@@ -2,22 +2,41 @@
     precision mediump float;
 #endif
 
-uniform sampler2D sDiffuse;
-uniform sampler2D sMask;
+#ifdef HAVE_TEXTURE_ARRAY
+    uniform sampler2DArray sDiffuse;
+    uniform sampler2DArray sMask;
+#else
+    uniform sampler2D sDiffuse;
+    uniform sampler2D sMask;
+#endif
 
-varying vec2 vColorTexCoord;
-varying vec2 vMaskTexCoord;
-varying vec4 vColor;
+IN_VARYING vec4 vColor;
+
+#ifdef HAVE_TEXTURE_ARRAY
+    IN_VARYING vec3 vColorTexCoord;
+    IN_VARYING vec3 vMaskTexCoord;
+#else
+    IN_VARYING vec2 vColorTexCoord;
+    IN_VARYING vec2 vMaskTexCoord;
+#endif
+
+DEFINE_FRAG_COLOR_OUTPUT;
 
 void main(void)
 {
-	vec4 diffuse = texture2D(sDiffuse, vColorTexCoord);
+    #ifdef HAVE_TEXTURE_ARRAY
+        vec4 diffuse = TEXTURE(sDiffuse, vColorTexCoord);
+        vec4 mask = TEXTURE(sMask, vMaskTexCoord);
+    #else
+        vec4 diffuse = TEXTURE(sDiffuse, vColorTexCoord);
+        vec4 mask = TEXTURE(sMask, vMaskTexCoord);
+    #endif
 
 	#ifdef PLATFORM_ANDROID
-		vec4 mask = vec4(1.0, 1.0, 1.0, texture2D(sMask, vMaskTexCoord).a);
-	#else
-		vec4 mask = vec4(1.0, 1.0, 1.0, texture2D(sMask, vMaskTexCoord).r);
-	#endif
+        float alpha = mask.a;
+    #else
+        float alpha = mask.r;
+    #endif
 
-	gl_FragColor = diffuse * vColor * mask;
+	FRAG_COLOR = diffuse * vec4(vColor.rgb, vColor.a * alpha);
 }

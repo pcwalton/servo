@@ -1,12 +1,10 @@
-#version 110
-
-attribute vec3 aPosition;
-attribute vec4 aColor;
+IN_ATTRIBUTE vec3 aPosition;
+IN_ATTRIBUTE vec4 aColor;
 
 uniform mat4 uTransform;
 
-varying vec4 vColor;
-varying vec2 vPosition;
+OUT_VARYING vec4 vColor;
+OUT_VARYING vec2 vPosition;
 
 void main(void)
 {

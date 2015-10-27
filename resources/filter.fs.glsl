@@ -1,5 +1,3 @@
-#version 110
-
 #ifdef GL_ES
     precision mediump float;
 #endif
@@ -9,8 +7,10 @@ uniform sampler2D sMask;
 uniform vec4 uFilterParams;
 uniform vec2 uTextureSize;
 
-varying vec2 vColorTexCoord;
-varying vec2 vMaskTexCoord;
+IN_VARYING vec2 vColorTexCoord;
+IN_VARYING vec2 vMaskTexCoord;
+
+DEFINE_FRAG_COLOR_OUTPUT;
 
 vec3 rgbToHsv(vec3 c) {
     float value = max(max(c.r, c.g), c.b);
@@ -73,7 +73,7 @@ vec4 Blur(float radius, vec2 direction) {
             texCoord.x <= 1.0 &&
             texCoord.y >= 0.0 &&
             texCoord.y <= 1.0 ?
-            texture2D(sDiffuse, texCoord) :
+            TEXTURE(sDiffuse, texCoord) :
             vec4(0.0);
         color += x * gauss(offsetF, sigma);
     }
@@ -127,7 +127,7 @@ void main(void)
         // Gaussian blur is specially handled:
         result = Blur(amount, uFilterParams.zw);
     } else {
-        vec4 Cs = texture2D(sDiffuse, vColorTexCoord);
+        vec4 Cs = TEXTURE(sDiffuse, vColorTexCoord);
 
         if (filterOp == 1) {
             result = Contrast(Cs, amount);
@@ -144,6 +144,6 @@ void main(void)
         }
     }
 
-    gl_FragColor = result;
+    FRAG_COLOR = result;
 }
 

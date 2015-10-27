@@ -7,8 +7,10 @@ uniform sampler2D sDiffuse;
 uniform vec4 uPosition;
 uniform vec4 uRadii;
 
-varying vec4 vColor;
-varying vec2 vPosition;
+IN_VARYING vec4 vColor;
+IN_VARYING vec2 vPosition;
+
+DEFINE_FRAG_COLOR_OUTPUT;
 
 /*
     Ellipse equation:
@@ -36,8 +38,8 @@ void main(void)
 
     if ((outer_dx + outer_dy <= 1.0) &&
         (inner_dx + inner_dy >= 1.0)) {
-        gl_FragColor = vec4(1.0);
+        FRAG_COLOR = vec4(1.0);
     } else {
-        gl_FragColor = vec4(0.0);
+        FRAG_COLOR = vec4(0.0);
     }
 }
