@@ -23,7 +23,7 @@ resolution=300x300,device-pixel-ratio=2 != pixel_snapping_position_a.html pixel_
 # == position_fixed_static_y_a.html position_fixed_static_y_b.html
 # text_decoration_propagation_a.html text_decoration_propagation_b.html
 != text_overflow_a.html text_overflow_ref.html
-flaky_cpu,prefs:"layout.writing-mode.enabled" == vertical-lr-blocks.html vertical-lr-blocks_ref.html
+flaky_cpu,flaky_webrender,prefs:"layout.writing-mode.enabled" == vertical-lr-blocks.html vertical-lr-blocks_ref.html
 resolution=800x600 == viewport_percentage_vmin_vmax.html viewport_percentage_vmin_vmax_a.html
 # resolution=600x800 == viewport_percentage_vmin_vmax.html viewport_percentage_vmin_vmax_b.html
 resolution=800x600 == viewport_percentage_vw_vh.html viewport_percentage_vw_vh_a.html

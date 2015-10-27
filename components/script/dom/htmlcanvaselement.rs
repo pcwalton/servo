@@ -204,7 +204,8 @@ impl HTMLCanvasElement {
             let msg = CanvasMsg::FromLayout(FromLayoutMsg::SendPixelContents(sender));
             renderer.send(msg).unwrap();
 
-            receiver.recv().unwrap().to_vec()
+            let pixel_data = receiver.recv().unwrap();
+            pixel_data.image_data.to_vec()
         } else {
             repeat(0xffu8).take((size.height as usize) * (size.width as usize) * 4).collect()
         };

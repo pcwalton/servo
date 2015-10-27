@@ -34,6 +34,9 @@ features = ["texture_surface"]
 [dependencies.plugins]
 path = "../plugins"
 
+[dependencies.webrender_traits]
+git = "https://github.com/glennw/webrender_traits"
+
 [dependencies]
 app_units = {version = "0.1", features = ["plugins"]}
 bitflags = "0.3"
@@ -45,7 +48,7 @@ serde_macros = "0.6"
 url = "0.5"
 
 [target.x86_64-apple-darwin.dependencies]
-core-foundation = "0.1"
+core-foundation = "0.2"
 
 [target.x86_64-apple-darwin.dependencies.io-surface]
 git = "https://github.com/servo/io-surface-rs"

@@ -2,8 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use canvas_traits::{CanvasCommonMsg, CanvasMsg, CanvasWebGLMsg, FromLayoutMsg, FromPaintMsg};
-use canvas_traits::{WebGLFramebufferBindingRequest, WebGLShaderParameter};
+use canvas_traits::{CanvasCommonMsg, CanvasMsg, CanvasPixelData, CanvasWebGLMsg, FromLayoutMsg};
+use canvas_traits::{FromPaintMsg, WebGLFramebufferBindingRequest, WebGLShaderParameter};
 use core::nonzero::NonZero;
 use euclid::size::Size2D;
 use gleam::gl;
@@ -341,7 +341,7 @@ impl WebGLPaintTask {
         chan.send(location).unwrap();
     }
 
-    fn send_pixel_contents(&mut self, chan: IpcSender<IpcSharedMemory>) {
+    fn send_pixel_contents(&mut self, chan: IpcSender<CanvasPixelData>) {
         // FIXME(#5652, dmarcos) Instead of a readback strategy we have
         // to layerize the canvas.
         // TODO(pcwalton): We'd save a copy if we had an `IpcSharedMemoryBuilder` abstraction that
@@ -365,7 +365,13 @@ impl WebGLPaintTask {
 
         // rgba -> bgra
         byte_swap(&mut pixels);
-        chan.send(IpcSharedMemory::from_bytes(&pixels[..])).unwrap();
+
+        let pixel_data = CanvasPixelData {
+            image_data: IpcSharedMemory::from_bytes(&pixels[..]),
+            image_key: None,
+        };
+
+        chan.send(pixel_data).unwrap();
     }
 
     fn send_native_surface(&self, _: Sender<NativeSurface>) {

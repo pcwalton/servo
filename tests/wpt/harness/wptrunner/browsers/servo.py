@@ -48,7 +48,7 @@ def env_options():
 
 
 def render_arg(render_backend):
-    return {"cpu": "--cpu"}[render_backend]
+    return {"cpu": "--cpu", "webrender": "-w"}[render_backend]
 
 
 class ServoBrowser(NullBrowser):

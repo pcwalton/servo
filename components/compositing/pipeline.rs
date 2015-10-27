@@ -37,6 +37,7 @@ use util::geometry::{PagePx, ViewportPx};
 use util::ipc::OptionalIpcSender;
 use util::opts::{self, Opts};
 use util::prefs;
+use webrender_traits;
 
 /// A uniquely-identifiable pipeline of script task, layout task, and paint task.
 pub struct Pipeline {
@@ -113,6 +114,8 @@ pub struct InitialPipelineState {
     pub load_data: LoadData,
     /// The ID of the pipeline namespace for this script thread.
     pub pipeline_namespace_id: PipelineNamespaceId,
+    /// Optional webrender api (if enabled).
+    pub webrender_api_sender: Option<webrender_traits::RenderApiSender>,
 }
 
 impl Pipeline {
@@ -224,6 +227,7 @@ impl Pipeline {
             layout_content_process_shutdown_port: layout_content_process_shutdown_port,
             script_content_process_shutdown_chan: script_content_process_shutdown_chan,
             script_content_process_shutdown_port: script_content_process_shutdown_port,
+            webrender_api_sender: state.webrender_api_sender,
         };
 
         let privileged_pipeline_content = PrivilegedPipelineContent {
@@ -374,6 +378,7 @@ pub struct UnprivilegedPipelineContent {
     layout_content_process_shutdown_port: IpcReceiver<()>,
     script_content_process_shutdown_chan: IpcSender<()>,
     script_content_process_shutdown_port: IpcReceiver<()>,
+    webrender_api_sender: Option<webrender_traits::RenderApiSender>,
 }
 
 impl UnprivilegedPipelineContent {
@@ -416,7 +421,8 @@ impl UnprivilegedPipelineContent {
                                   self.time_profiler_chan,
                                   self.mem_profiler_chan,
                                   self.layout_shutdown_chan,
-                                  self.layout_content_process_shutdown_chan.clone());
+                                  self.layout_content_process_shutdown_chan.clone(),
+                                  self.webrender_api_sender);
 
         if wait_for_completion {
             self.script_content_process_shutdown_port.recv().unwrap();

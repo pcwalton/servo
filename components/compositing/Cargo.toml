@@ -67,6 +67,12 @@ features = ["texture_surface"]
 [dependencies.gaol]
 git = "https://github.com/pcwalton/gaol"
 
+[dependencies.webrender_traits]
+git = "https://github.com/glennw/webrender_traits"
+
+[dependencies.webrender]
+git = "https://github.com/glennw/webrender"
+
 [dependencies]
 app_units = {version = "0.1", features = ["plugins"]}
 image = "0.5.0"

@@ -20,6 +20,7 @@ extern crate layers;
 extern crate offscreen_gl_context;
 extern crate serde;
 extern crate util;
+extern crate webrender_traits;
 
 use azure::azure::{AzColor, AzFloat};
 use azure::azure_hl::{CapStyle, CompositionOp, JoinStyle};
@@ -58,8 +59,14 @@ pub enum CanvasCommonMsg {
 }
 
 #[derive(Clone, Deserialize, Serialize)]
+pub struct CanvasPixelData {
+    pub image_data: IpcSharedMemory,
+    pub image_key: Option<webrender_traits::ImageKey>,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
 pub enum FromLayoutMsg {
-    SendPixelContents(IpcSender<IpcSharedMemory>),
+    SendPixelContents(IpcSender<CanvasPixelData>),
 }
 
 #[derive(Clone)]

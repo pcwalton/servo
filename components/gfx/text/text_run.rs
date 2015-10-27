@@ -12,6 +12,7 @@ use std::sync::Arc;
 use text::glyph::{CharIndex, GlyphStore};
 use util::range::Range;
 use util::vec::{Comparator, FullBinarySearchMethods};
+use webrender_traits;
 
 /// A single "paragraph" of text in one font size and style.
 #[derive(Clone, Deserialize, Serialize)]
@@ -21,6 +22,7 @@ pub struct TextRun {
     pub font_template: Arc<FontTemplateData>,
     pub actual_pt_size: Au,
     pub font_metrics: FontMetrics,
+    pub font_key: Option<webrender_traits::FontKey>,
     /// The glyph runs that make up this text run.
     pub glyphs: Arc<Vec<GlyphRun>>,
     pub bidi_level: u8,
@@ -158,6 +160,7 @@ impl<'a> TextRun {
             text: Arc::new(text),
             font_metrics: font.metrics.clone(),
             font_template: font.handle.template(),
+            font_key: font.font_key,
             actual_pt_size: font.actual_pt_size,
             glyphs: Arc::new(glyphs),
             bidi_level: bidi_level,

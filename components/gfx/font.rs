@@ -21,6 +21,7 @@ use text::glyph::{GlyphId, GlyphStore};
 use text::shaping::ShaperMethods;
 use unicode_script::Script;
 use util::cache::HashCache;
+use webrender_traits;
 
 // FontHandle encapsulates access to the platform's font API,
 // e.g. quartz, FreeType. It provides access to metrics and tables
@@ -95,6 +96,7 @@ pub struct Font {
     pub shaper: Option<Shaper>,
     pub shape_cache: HashCache<ShapeCacheEntry, Arc<GlyphStore>>,
     pub glyph_advance_cache: HashCache<u32, FractionalPixel>,
+    pub font_key: Option<webrender_traits::FontKey>,
 }
 
 bitflags! {

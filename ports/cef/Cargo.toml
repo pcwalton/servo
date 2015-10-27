@@ -68,7 +68,7 @@ git = "https://github.com/servo/rust-stb-image"
 [target.x86_64-apple-darwin.dependencies]
 objc = "0.1"
 cocoa = "0.1"
-core-foundation = "0.1"
+core-foundation = "0.2"
 core-graphics = "0.1"
 cgl = "0.1"
 

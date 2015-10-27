@@ -25,6 +25,7 @@ use util::cursor::Cursor;
 use util::geometry::{PagePx, ViewportPx};
 use util::mem::HeapSizeOf;
 use webdriver_msg::{LoadStatus, WebDriverScriptCommand};
+use webrender_traits;
 
 #[derive(Deserialize, Serialize)]
 pub struct ConstellationChan<T: Deserialize + Serialize>(pub IpcSender<T>);
@@ -296,6 +297,7 @@ pub enum ScriptMsg {
     NewFavicon(Url),
     /// Status message to be displayed in the chrome, eg. a link URL on mouseover.
     NodeStatus(Option<String>),
+    ActivateDocument(PipelineId),
     /// Notification that this iframe should be removed.
     RemoveIFrame(PipelineId),
     ScriptLoadedURLInIFrame(IframeLoadInfo),
@@ -386,7 +388,7 @@ pub enum WebDriverCommandMsg {
     TakeScreenshot(PipelineId, IpcSender<Option<Image>>),
 }
 
-#[derive(Deserialize, Eq, PartialEq, Serialize, HeapSizeOf)]
+#[derive(Clone, Copy, Deserialize, Eq, PartialEq, Serialize, HeapSizeOf)]
 pub enum PixelFormat {
     K8,         // Luminance channel only
     KA8,        // Luminance + alpha
@@ -401,6 +403,7 @@ pub struct Image {
     pub format: PixelFormat,
     #[ignore_heap_size_of = "Defined in ipc-channel"]
     pub bytes: IpcSharedMemory,
+    pub id: Option<webrender_traits::ImageKey>,
 }
 
 /// Similar to net::resource_task::LoadData
