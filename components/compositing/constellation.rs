@@ -1139,13 +1139,14 @@ impl<LTF: LayoutTaskFactory, STF: ScriptTaskFactory> Constellation<LTF, STF> {
             size: &Size2D<i32>,
             attributes: GLContextAttributes,
             response_sender: IpcSender<Result<(IpcSender<CanvasMsg>, usize), String>>) {
-        let response = match WebGLPaintTask::start(*size, attributes) {
+        let webrender_api = self.webrender_api_sender.clone();
+        let response = match WebGLPaintTask::start(*size, attributes, webrender_api) {
             Ok((out_of_process_sender, in_process_sender)) => {
                 let id = self.webgl_paint_tasks.len();
                 self.webgl_paint_tasks.push(in_process_sender);
                 Ok((out_of_process_sender, id))
             },
-            Err(msg) => Err(msg.to_owned()),
+            Err(msg) => Err(msg),
         };
 
         response_sender.send(response).unwrap()

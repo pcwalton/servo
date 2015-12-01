@@ -196,8 +196,8 @@ impl<'a> CanvasPaintTask<'a> {
                     },
                     CanvasMsg::FromLayout(message) => {
                         match message {
-                            FromLayoutMsg::SendPixelContents(chan) => {
-                                painter.send_pixel_contents(chan)
+                            FromLayoutMsg::SendData(chan) => {
+                                painter.send_data(chan)
                             }
                         }
                     }
@@ -517,7 +517,7 @@ impl<'a> CanvasPaintTask<'a> {
         self.drawtarget = CanvasPaintTask::create(size);
     }
 
-    fn send_pixel_contents(&mut self, chan: IpcSender<CanvasPixelData>) {
+    fn send_data(&mut self, chan: IpcSender<CanvasData>) {
         self.drawtarget.snapshot().get_data_surface().with_data(|element| {
             if let Some(ref webrender_api) = self.webrender_api {
                 let size = self.drawtarget.get_size();
@@ -534,7 +534,7 @@ impl<'a> CanvasPaintTask<'a> {
                 image_data: IpcSharedMemory::from_bytes(element),
                 image_key: self.webrender_image_key,
             };
-            chan.send(pixel_data).unwrap();
+            chan.send(CanvasData::Pixels(pixel_data)).unwrap();
         })
     }
 

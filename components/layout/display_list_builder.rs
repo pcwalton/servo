@@ -13,7 +13,7 @@
 use app_units::{Au, AU_PER_PX};
 use azure::azure_hl::Color;
 use block::BlockFlow;
-use canvas_traits::{CanvasMsg, CanvasPixelData, FromLayoutMsg};
+use canvas_traits::{CanvasMsg, CanvasPixelData, CanvasData, FromLayoutMsg};
 use context::LayoutContext;
 use euclid::num::Zero;
 use euclid::{Matrix4, Point2D, Point3D, Rect, SideOffsets2D, Size2D};
@@ -26,7 +26,7 @@ use gfx::display_list::{BLUR_INFLATION_FACTOR, BaseDisplayItem, BorderDisplayIte
 use gfx::display_list::{BorderRadii, BoxShadowClipMode, BoxShadowDisplayItem, ClippingRegion};
 use gfx::display_list::{DisplayItem, DisplayItemMetadata, DisplayList};
 use gfx::display_list::{GradientDisplayItem};
-use gfx::display_list::{GradientStop, IframeDisplayItem, ImageDisplayItem, LayeredItem, LayerInfo};
+use gfx::display_list::{GradientStop, IframeDisplayItem, ImageDisplayItem, WebGLDisplayItem, LayeredItem, LayerInfo};
 use gfx::display_list::{LineDisplayItem, OpaqueNode, SolidColorDisplayItem};
 use gfx::display_list::{StackingContext, TextDisplayItem, TextOrientation};
 use gfx::paint_task::THREAD_TINT_COLORS;
@@ -1152,7 +1152,6 @@ impl FragmentDisplayListBuilding for Fragment {
                 }
             }
             SpecificFragmentInfo::Canvas(ref canvas_fragment_info) => {
-                // TODO(ecoal95): make the canvas with a renderer use the custom layer
                 let width = canvas_fragment_info.replaced_image_fragment_info
                     .computed_inline_size.map_or(0, |w| w.to_px() as usize);
                 let height = canvas_fragment_info.replaced_image_fragment_info
@@ -1164,7 +1163,7 @@ impl FragmentDisplayListBuilding for Fragment {
                             let ipc_renderer = ipc_renderer.lock().unwrap();
                             let (sender, receiver) = ipc::channel().unwrap();
                             ipc_renderer.send(CanvasMsg::FromLayout(
-                                FromLayoutMsg::SendPixelContents(sender))).unwrap();
+                                FromLayoutMsg::SendData(sender))).unwrap();
                             let data = receiver.recv().unwrap();
 
                             // Propagate the layer and the renderer to the paint task.
@@ -1173,27 +1172,42 @@ impl FragmentDisplayListBuilding for Fragment {
 
                             data
                         },
-                        None => CanvasPixelData {
+                        None => CanvasData::Pixels(CanvasPixelData {
                             image_data: IpcSharedMemory::from_byte(0xFFu8, width * height * 4),
                             image_key: None,
-                        },
-                    };
-                    let display_item = DisplayItem::ImageClass(box ImageDisplayItem {
-                        base: BaseDisplayItem::new(stacking_relative_content_box,
-                                                   DisplayItemMetadata::new(self.node,
-                                                                            &*self.style,
-                                                                            Cursor::DefaultCursor),
-                                                   (*clip).clone()),
-                        image: Arc::new(Image {
-                            width: width as u32,
-                            height: height as u32,
-                            format: PixelFormat::RGBA8,
-                            bytes: canvas_data.image_data,
-                            id: canvas_data.image_key,
                         }),
-                        stretch_size: stacking_relative_content_box.size,
-                        image_rendering: image_rendering::T::Auto,
-                    });
+                    };
+
+                    let display_item = match canvas_data {
+                        CanvasData::Pixels(canvas_data) => {
+                            DisplayItem::ImageClass(box ImageDisplayItem {
+                                base: BaseDisplayItem::new(stacking_relative_content_box,
+                                                           DisplayItemMetadata::new(self.node,
+                                                                                    &*self.style,
+                                                                                    Cursor::DefaultCursor),
+                                                           (*clip).clone()),
+                                image: Arc::new(Image {
+                                    width: width as u32,
+                                    height: height as u32,
+                                    format: PixelFormat::RGBA8,
+                                    bytes: canvas_data.image_data,
+                                    id: canvas_data.image_key,
+                                }),
+                                stretch_size: stacking_relative_content_box.size,
+                                image_rendering: image_rendering::T::Auto,
+                            })
+                        }
+                        CanvasData::WebGL(context_id) => {
+                            DisplayItem::WebGLClass(box WebGLDisplayItem {
+                                base: BaseDisplayItem::new(stacking_relative_content_box,
+                                                           DisplayItemMetadata::new(self.node,
+                                                                                    &*self.style,
+                                                                                    Cursor::DefaultCursor),
+                                                           (*clip).clone()),
+                                context_id: context_id,
+                            })
+                        }
+                    };
 
                     if opts::get().use_webrender {
                         display_list.content.push_back(display_item);
@@ -2432,6 +2446,12 @@ impl WebRenderDisplayItemConverter for DisplayItem {
                                            id);
                     }
                 }
+            }
+            DisplayItem::WebGLClass(ref item) => {
+                builder.push_webgl_canvas(level,
+                                          item.base.bounds.to_rectf(),
+                                          item.base.clip.to_clip_region(),
+                                          item.context_id);
             }
             DisplayItem::BorderClass(ref item) => {
                 let rect = item.base.bounds.to_rectf();

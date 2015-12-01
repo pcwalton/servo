@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use canvas_traits::{CanvasCommonMsg, CanvasMsg, CanvasPixelData, CanvasWebGLMsg, FromLayoutMsg};
+use canvas_traits::{CanvasCommonMsg, CanvasMsg, CanvasPixelData, CanvasData, CanvasWebGLMsg, FromLayoutMsg};
 use canvas_traits::{FromPaintMsg, WebGLFramebufferBindingRequest, WebGLShaderParameter};
 use core::nonzero::NonZero;
 use euclid::size::Size2D;
@@ -11,17 +11,22 @@ use gleam::gl::types::{GLsizei};
 use ipc_channel::ipc::{self, IpcSender, IpcSharedMemory};
 use ipc_channel::router::ROUTER;
 use layers::platform::surface::NativeSurface;
-use offscreen_gl_context::{ColorAttachmentType, GLContext, GLContextAttributes};
+use offscreen_gl_context::{ColorAttachmentType, GLContext, GLContextAttributes, NativeGLContext};
 use std::borrow::ToOwned;
 use std::slice::bytes::copy_memory;
 use std::sync::mpsc::{Sender, channel};
 use util::task::spawn_named;
 use util::vec::byte_swap;
+use webrender_traits;
+
+enum WebGLPaintTaskData {
+    WebRender(webrender_traits::RenderApi, webrender_traits::WebGLContextId),
+    Servo(GLContext<NativeGLContext>),
+}
 
 pub struct WebGLPaintTask {
     size: Size2D<i32>,
-    original_context_size: Size2D<i32>,
-    gl_context: GLContext,
+    data: WebGLPaintTaskData,
 }
 
 // This allows trying to create the PaintTask
@@ -29,21 +34,33 @@ pub struct WebGLPaintTask {
 unsafe impl Send for WebGLPaintTask {}
 
 impl WebGLPaintTask {
-    fn new(size: Size2D<i32>, attrs: GLContextAttributes) -> Result<WebGLPaintTask, &'static str> {
-        let context = try!(
-            GLContext::create_offscreen_with_color_attachment(
-                size, attrs, ColorAttachmentType::TextureWithSurface));
-
-        // NOTE: As of right now this is always equal to the size parameter,
-        // but this doesn't have to be true. Firefox after failing with
-        // the requested size, tries with the nearest powers of two, for example.
-        let real_size = context.borrow_draw_buffer().unwrap().size();
+    fn new(size: Size2D<i32>,
+           attrs: GLContextAttributes,
+           webrender_api_sender: Option<webrender_traits::RenderApiSender>) -> Result<WebGLPaintTask, String> {
+        let data = if let Some(sender) = webrender_api_sender {
+            let webrender_api = sender.create_api();
+            let id = try!(webrender_api.request_webgl_context(&size, attrs));
+            WebGLPaintTaskData::WebRender(webrender_api, id)
+        } else {
+            let context = try!(GLContext::<NativeGLContext>::new(size, attrs, ColorAttachmentType::Texture, None));
+            WebGLPaintTaskData::Servo(context)
+        };
 
         Ok(WebGLPaintTask {
-            size: real_size,
-            original_context_size: real_size,
-            gl_context: context
+            size: size,
+            data: data,
         })
+    }
+
+    pub fn handle_webgl_message(&self, message: CanvasWebGLMsg) {
+        match self.data {
+            WebGLPaintTaskData::WebRender(ref api, id) => {
+                api.send_webgl_command(id, message.to_webrender_webgl_command());
+            }
+            WebGLPaintTaskData::Servo(_) => {
+                self.handle_servo_webgl_message(message);
+            }
+        }
     }
 
     /// In this function the gl commands are called.
@@ -52,7 +69,7 @@ impl WebGLPaintTask {
     ///
     /// NB: Not gl-related validations (names, lengths, accepted parameters...) are
     /// done in the corresponding DOM interfaces
-    pub fn handle_webgl_message(&self, message: CanvasWebGLMsg) {
+    pub fn handle_servo_webgl_message(&self, message: CanvasWebGLMsg) {
         match message {
             CanvasWebGLMsg::GetContextAttributes(sender) =>
                 self.context_attributes(sender),
@@ -173,12 +190,14 @@ impl WebGLPaintTask {
 
     /// Creates a new `WebGLPaintTask` and returns the out-of-process sender and the in-process
     /// sender for it.
-    pub fn start(size: Size2D<i32>, attrs: GLContextAttributes)
-                 -> Result<(IpcSender<CanvasMsg>, Sender<CanvasMsg>), &'static str> {
+    pub fn start(size: Size2D<i32>,
+                 attrs: GLContextAttributes,
+                 webrender_api_sender: Option<webrender_traits::RenderApiSender>)
+                 -> Result<(IpcSender<CanvasMsg>, Sender<CanvasMsg>), String> {
         let (out_of_process_chan, out_of_process_port) = ipc::channel::<CanvasMsg>().unwrap();
         let (in_process_chan, in_process_port) = channel();
         ROUTER.route_ipc_receiver_to_mpsc_sender(out_of_process_port, in_process_chan.clone());
-        let mut painter = try!(WebGLPaintTask::new(size, attrs));
+        let mut painter = try!(WebGLPaintTask::new(size, attrs, webrender_api_sender));
         spawn_named("WebGLTask".to_owned(), move || {
             painter.init();
             loop {
@@ -193,8 +212,8 @@ impl WebGLPaintTask {
                     },
                     CanvasMsg::FromLayout(message) => {
                         match message {
-                            FromLayoutMsg::SendPixelContents(chan) =>
-                                painter.send_pixel_contents(chan),
+                            FromLayoutMsg::SendData(chan) =>
+                                painter.send_data(chan),
                         }
                     }
                     CanvasMsg::FromPaint(message) => {
@@ -210,10 +229,14 @@ impl WebGLPaintTask {
 
         Ok((out_of_process_chan, in_process_chan))
     }
-
     #[inline]
     fn context_attributes(&self, sender: IpcSender<GLContextAttributes>) {
-        sender.send(*self.gl_context.borrow_attributes()).unwrap()
+        match self.data {
+            WebGLPaintTaskData::Servo(ref context) =>
+                sender.send(*context.borrow_attributes()).unwrap(),
+            WebGLPaintTaskData::WebRender(_, _) =>
+                unimplemented!(), // TODO
+        }
     }
 
     #[inline]
@@ -291,7 +314,7 @@ impl WebGLPaintTask {
         let id = match request {
             WebGLFramebufferBindingRequest::Explicit(id) => id,
             WebGLFramebufferBindingRequest::Default =>
-                self.gl_context.borrow_draw_buffer().unwrap().get_framebuffer(),
+                unimplemented!(), // self.gl_context.borrow_draw_buffer().unwrap().get_framebuffer(),
         };
 
         gl::bind_framebuffer(target, id);
@@ -341,37 +364,41 @@ impl WebGLPaintTask {
         chan.send(location).unwrap();
     }
 
-    fn send_pixel_contents(&mut self, chan: IpcSender<CanvasPixelData>) {
-        // FIXME(#5652, dmarcos) Instead of a readback strategy we have
-        // to layerize the canvas.
-        // TODO(pcwalton): We'd save a copy if we had an `IpcSharedMemoryBuilder` abstraction that
-        // allowed you to mutate in-place before freezing the object for sending.
-        let width = self.size.width as usize;
-        let height = self.size.height as usize;
+    fn send_data(&mut self, chan: IpcSender<CanvasData>) {
+        match self.data {
+            WebGLPaintTaskData::Servo(_) => {
+                let width = self.size.width as usize;
+                let height = self.size.height as usize;
 
-        let mut pixels = gl::read_pixels(0, 0,
-                                         self.size.width as gl::GLsizei,
-                                         self.size.height as gl::GLsizei,
-                                         gl::RGBA, gl::UNSIGNED_BYTE);
-        // flip image vertically (texture is upside down)
-        let orig_pixels = pixels.clone();
-        let stride = width * 4;
-        for y in 0..height {
-            let dst_start = y * stride;
-            let src_start = (height - y - 1) * stride;
-            let src_slice = &orig_pixels[src_start .. src_start + stride];
-            copy_memory(&src_slice[..stride], &mut pixels[dst_start .. dst_start + stride]);
+                let mut pixels = gl::read_pixels(0, 0,
+                                                 width as gl::GLsizei,
+                                                 height as gl::GLsizei,
+                                                 gl::RGBA, gl::UNSIGNED_BYTE);
+
+                // flip image vertically (texture is upside down)
+                let orig_pixels = pixels.clone();
+                let stride = width * 4;
+                for y in 0..height {
+                    let dst_start = y * stride;
+                    let src_start = (height - y - 1) * stride;
+                    let src_slice = &orig_pixels[src_start .. src_start + stride];
+                    copy_memory(&src_slice[..stride], &mut pixels[dst_start .. dst_start + stride]);
+                }
+
+                // rgba -> bgra
+                byte_swap(&mut pixels);
+
+                let pixel_data = CanvasPixelData {
+                    image_data: IpcSharedMemory::from_bytes(&pixels[..]),
+                    image_key: None,
+                };
+
+                chan.send(CanvasData::Pixels(pixel_data)).unwrap();
+            }
+            WebGLPaintTaskData::WebRender(_, id) => {
+                chan.send(CanvasData::WebGL(id)).unwrap();
+            }
         }
-
-        // rgba -> bgra
-        byte_swap(&mut pixels);
-
-        let pixel_data = CanvasPixelData {
-            image_data: IpcSharedMemory::from_bytes(&pixels[..]),
-            image_key: None,
-        };
-
-        chan.send(pixel_data).unwrap();
     }
 
     fn send_native_surface(&self, _: Sender<NativeSurface>) {
@@ -381,18 +408,28 @@ impl WebGLPaintTask {
     }
 
     fn recreate(&mut self, size: Size2D<i32>) -> Result<(), &'static str> {
-        if size.width > self.original_context_size.width ||
-           size.height > self.original_context_size.height {
-            try!(self.gl_context.resize(size));
-            self.size = self.gl_context.borrow_draw_buffer().unwrap().size();
-        } else {
-            self.size = size;
-            unsafe { gl::Scissor(0, 0, size.width, size.height); }
+        match self.data {
+            WebGLPaintTaskData::Servo(ref mut context) => {
+                if size.width > self.size.width ||
+                   size.height > self.size.height {
+                    try!(context.resize(size));
+                    self.size = context.borrow_draw_buffer().unwrap().size();
+                } else {
+                    self.size = size;
+                    unsafe { gl::Scissor(0, 0, size.width, size.height); }
+                }
+            }
+            WebGLPaintTaskData::WebRender(_, _) => {
+                // TODO
+            }
         }
+
         Ok(())
     }
 
     fn init(&mut self) {
-        self.gl_context.make_current().unwrap();
+        if let WebGLPaintTaskData::Servo(ref context) = self.data {
+            context.make_current().unwrap();
+        }
     }
 }
