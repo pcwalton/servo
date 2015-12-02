@@ -67,6 +67,7 @@ use compositing::sandboxing;
 use compositing::windowing::WindowEvent;
 use compositing::windowing::WindowMethods;
 use compositing::{CompositorProxy, CompositorTask, Constellation};
+use euclid::size::Size2D;
 use gaol::sandbox::{ChildSandbox, ChildSandboxMethods};
 use gfx::font_cache_task::FontCacheTask;
 use ipc_channel::ipc::{self, IpcSender};
@@ -155,18 +156,22 @@ impl Browser {
             let size = opts::get().initial_window_size.to_untyped();
 
             // TODO(gw): Duplicates device_pixels_per_screen_px from compositor. Tidy up!
+            let hidpi_factor = window.as_ref()
+                                     .map(|window| window.hidpi_factor().get())
+                                     .unwrap_or(1.0);
             let device_pixel_ratio = match opts.device_pixels_per_px {
                 Some(device_pixels_per_px) => device_pixels_per_px,
                 None => match opts.output_file {
                     Some(_) => 1.0,
-                    None => {
-                        window.as_ref().map(|window| window.hidpi_factor().get()).unwrap_or(1.0)
-                    }
+                    None => hidpi_factor,
                 }
             };
+            let framebuffer_size = Size2D::new((size.width as f32 * hidpi_factor) as u32,
+                                               (size.height as f32 * hidpi_factor) as u32);
 
             let (webrender, webrender_sender) = webrender::Renderer::new(size.width,
                                                                          size.height,
+                                                                         &framebuffer_size,
                                                                          device_pixel_ratio,
                                                                          resource_path,
                                                                          opts.enable_text_antialiasing,
