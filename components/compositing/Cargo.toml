@@ -62,7 +62,7 @@ git = "https://github.com/servo/ipc-channel"
 
 [dependencies.offscreen_gl_context]
 git = "https://github.com/ecoal95/rust-offscreen-rendering-context"
-features = ["texture_surface"]
+branch = "webrender"
 
 [dependencies.gaol]
 git = "https://github.com/pcwalton/gaol"

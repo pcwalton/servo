@@ -42,6 +42,7 @@ use std::default::Default;
 use std::str::FromStr;
 use std::sync::mpsc::Sender;
 use util::mem::HeapSizeOf;
+use webrender_traits::{WebGLCommand, WebGLContextId};
 
 #[derive(Clone, Deserialize, Serialize)]
 pub enum CanvasMsg {
@@ -59,6 +60,12 @@ pub enum CanvasCommonMsg {
 }
 
 #[derive(Clone, Deserialize, Serialize)]
+pub enum CanvasData {
+    Pixels(CanvasPixelData),
+    WebGL(WebGLContextId),
+}
+
+#[derive(Clone, Deserialize, Serialize)]
 pub struct CanvasPixelData {
     pub image_data: IpcSharedMemory,
     pub image_key: Option<webrender_traits::ImageKey>,
@@ -66,7 +73,7 @@ pub struct CanvasPixelData {
 
 #[derive(Clone, Deserialize, Serialize)]
 pub enum FromLayoutMsg {
-    SendPixelContents(IpcSender<CanvasPixelData>),
+    SendData(IpcSender<CanvasData>),
 }
 
 #[derive(Clone)]
@@ -183,6 +190,18 @@ pub enum CanvasWebGLMsg {
     TexParameterf(u32, u32, f32),
     DrawingBufferWidth(IpcSender<i32>),
     DrawingBufferHeight(IpcSender<i32>),
+}
+
+impl CanvasWebGLMsg {
+    pub fn to_webrender_webgl_command(&self) -> WebGLCommand {
+        match *self {
+            CanvasWebGLMsg::ClearColor(r, g, b, a)
+                => WebGLCommand::ClearColor(r, g, b, a),
+            CanvasWebGLMsg::Clear(what)
+                => WebGLCommand::Clear(what),
+            _ => unimplemented!(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Deserialize, Serialize, HeapSizeOf)]

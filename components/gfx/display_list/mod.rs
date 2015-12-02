@@ -49,6 +49,7 @@ use util::mem::HeapSizeOf;
 use util::opts;
 use util::print_tree::PrintTree;
 use util::range::Range;
+use webrender_traits::WebGLContextId;
 
 // It seems cleaner to have layout code not mention Azure directly, so let's just reexport this for
 // layout to use.
@@ -985,6 +986,7 @@ pub enum DisplayItem {
     SolidColorClass(Box<SolidColorDisplayItem>),
     TextClass(Box<TextDisplayItem>),
     ImageClass(Box<ImageDisplayItem>),
+    WebGLClass(Box<WebGLDisplayItem>),
     BorderClass(Box<BorderDisplayItem>),
     GradientClass(Box<GradientDisplayItem>),
     LineClass(Box<LineDisplayItem>),
@@ -1238,6 +1240,13 @@ pub struct ImageDisplayItem {
     pub image_rendering: image_rendering::T,
 }
 
+#[derive(Clone, HeapSizeOf, Deserialize, Serialize)]
+pub struct WebGLDisplayItem {
+    pub base: BaseDisplayItem,
+    #[ignore_heap_size_of = "Defined in webrender_traits"]
+    pub context_id: WebGLContextId,
+}
+
 
 /// Paints an iframe.
 #[derive(Clone, HeapSizeOf, Deserialize, Serialize)]
@@ -1474,6 +1483,10 @@ impl DisplayItem {
                                          image_item.image_rendering.clone());
             }
 
+            DisplayItem::WebGLClass(_) => {
+                panic!("Shouldn't be here, WebGL display items are created just with webrender");
+            }
+
             DisplayItem::BorderClass(ref border) => {
                 paint_context.draw_border(&border.base.bounds,
                                           &border.border_widths,
@@ -1532,6 +1545,7 @@ impl DisplayItem {
             DisplayItem::SolidColorClass(ref solid_color) => Some(&solid_color.base),
             DisplayItem::TextClass(ref text) => Some(&text.base),
             DisplayItem::ImageClass(ref image_item) => Some(&image_item.base),
+            DisplayItem::WebGLClass(ref webgl_item) => Some(&webgl_item.base),
             DisplayItem::BorderClass(ref border) => Some(&border.base),
             DisplayItem::GradientClass(ref gradient) => Some(&gradient.base),
             DisplayItem::LineClass(ref line) => Some(&line.base),
@@ -1589,6 +1603,7 @@ impl fmt::Debug for DisplayItem {
                             solid_color.color.a),
                 DisplayItem::TextClass(_) => "Text".to_owned(),
                 DisplayItem::ImageClass(_) => "Image".to_owned(),
+                DisplayItem::WebGLClass(_) => "WebGL".to_owned(),
                 DisplayItem::BorderClass(_) => "Border".to_owned(),
                 DisplayItem::GradientClass(_) => "Gradient".to_owned(),
                 DisplayItem::LineClass(_) => "Line".to_owned(),
