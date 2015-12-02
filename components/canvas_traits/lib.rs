@@ -42,7 +42,9 @@ use std::default::Default;
 use std::str::FromStr;
 use std::sync::mpsc::Sender;
 use util::mem::HeapSizeOf;
-use webrender_traits::{WebGLCommand, WebGLContextId};
+
+pub use webrender_traits::{WebGLFramebufferBindingRequest, WebGLError, WebGLShaderParameter, WebGLResult, WebGLContextId};
+pub use webrender_traits::WebGLCommand as CanvasWebGLMsg;
 
 #[derive(Clone, Deserialize, Serialize)]
 pub enum CanvasMsg {
@@ -129,103 +131,6 @@ pub enum Canvas2dMsg {
     SetShadowOffsetY(f64),
     SetShadowBlur(f64),
     SetShadowColor(RGBA),
-}
-
-#[derive(Clone, Deserialize, Serialize)]
-pub enum CanvasWebGLMsg {
-    GetContextAttributes(IpcSender<GLContextAttributes>),
-    ActiveTexture(u32),
-    BlendColor(f32, f32, f32, f32),
-    BlendEquation(u32),
-    BlendEquationSeparate(u32, u32),
-    BlendFunc(u32, u32),
-    BlendFuncSeparate(u32, u32, u32, u32),
-    AttachShader(u32, u32),
-    BufferData(u32, Vec<f32>, u32),
-    Clear(u32),
-    ClearColor(f32, f32, f32, f32),
-    ClearDepth(f64),
-    ClearStencil(i32),
-    ColorMask(bool, bool, bool, bool),
-    CullFace(u32),
-    FrontFace(u32),
-    DepthFunc(u32),
-    DepthMask(bool),
-    DepthRange(f64, f64),
-    Enable(u32),
-    Disable(u32),
-    CompileShader(u32, String),
-    CreateBuffer(IpcSender<Option<NonZero<u32>>>),
-    CreateFramebuffer(IpcSender<Option<NonZero<u32>>>),
-    CreateRenderbuffer(IpcSender<Option<NonZero<u32>>>),
-    CreateTexture(IpcSender<Option<NonZero<u32>>>),
-    CreateProgram(IpcSender<Option<NonZero<u32>>>),
-    CreateShader(u32, IpcSender<Option<NonZero<u32>>>),
-    DeleteBuffer(u32),
-    DeleteFramebuffer(u32),
-    DeleteRenderbuffer(u32),
-    DeleteTexture(u32),
-    DeleteProgram(u32),
-    DeleteShader(u32),
-    BindBuffer(u32, u32),
-    BindFramebuffer(u32, WebGLFramebufferBindingRequest),
-    BindRenderbuffer(u32, u32),
-    BindTexture(u32, u32),
-    DrawArrays(u32, i32, i32),
-    EnableVertexAttribArray(u32),
-    GetShaderParameter(u32, u32, IpcSender<WebGLShaderParameter>),
-    GetAttribLocation(u32, String, IpcSender<Option<i32>>),
-    GetUniformLocation(u32, String, IpcSender<Option<i32>>),
-    PolygonOffset(f32, f32),
-    Hint(u32, u32),
-    LineWidth(f32),
-    PixelStorei(u32, i32),
-    LinkProgram(u32),
-    Uniform4fv(i32, Vec<f32>),
-    UseProgram(u32),
-    VertexAttribPointer2f(u32, i32, bool, i32, u32),
-    Viewport(i32, i32, i32, i32),
-    TexImage2D(u32, i32, i32, i32, i32, u32, u32, Vec<u8>),
-    TexParameteri(u32, u32, i32),
-    TexParameterf(u32, u32, f32),
-    DrawingBufferWidth(IpcSender<i32>),
-    DrawingBufferHeight(IpcSender<i32>),
-}
-
-impl CanvasWebGLMsg {
-    pub fn to_webrender_webgl_command(&self) -> WebGLCommand {
-        match *self {
-            CanvasWebGLMsg::ClearColor(r, g, b, a)
-                => WebGLCommand::ClearColor(r, g, b, a),
-            CanvasWebGLMsg::Clear(what)
-                => WebGLCommand::Clear(what),
-            _ => unimplemented!(),
-        }
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Deserialize, Serialize, HeapSizeOf)]
-pub enum WebGLError {
-    InvalidEnum,
-    InvalidOperation,
-    InvalidValue,
-    OutOfMemory,
-    ContextLost,
-}
-
-pub type WebGLResult<T> = Result<T, WebGLError>;
-
-#[derive(Clone, Deserialize, Serialize)]
-pub enum WebGLFramebufferBindingRequest {
-    Explicit(u32),
-    Default,
-}
-
-#[derive(Clone, Deserialize, Serialize)]
-pub enum WebGLShaderParameter {
-    Int(i32),
-    Bool(bool),
-    Invalid,
 }
 
 #[derive(Clone, Deserialize, Serialize, HeapSizeOf)]
