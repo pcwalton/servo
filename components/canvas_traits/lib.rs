@@ -19,6 +19,7 @@ extern crate layers;
 extern crate offscreen_gl_context;
 extern crate serde;
 extern crate util;
+extern crate webrender_traits;
 
 use azure::azure::{AzColor, AzFloat};
 use azure::azure_hl::{CapStyle, CompositionOp, JoinStyle};
@@ -40,6 +41,9 @@ use std::default::Default;
 use std::str::FromStr;
 use std::sync::mpsc::Sender;
 use util::mem::HeapSizeOf;
+
+pub use webrender_traits::{WebGLFramebufferBindingRequest, WebGLError, WebGLShaderParameter, WebGLResult, WebGLContextId};
+pub use webrender_traits::WebGLCommand as CanvasWebGLMsg;
 
 #[derive(Clone, Deserialize, Serialize)]
 pub enum FillRule {
@@ -63,8 +67,20 @@ pub enum CanvasCommonMsg {
 }
 
 #[derive(Clone, Deserialize, Serialize)]
+pub enum CanvasData {
+    Pixels(CanvasPixelData),
+    WebGL(WebGLContextId),
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+pub struct CanvasPixelData {
+    pub image_data: IpcSharedMemory,
+    pub image_key: Option<webrender_traits::ImageKey>,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
 pub enum FromLayoutMsg {
-    SendPixelContents(IpcSender<IpcSharedMemory>),
+    SendData(IpcSender<CanvasData>),
 }
 
 #[derive(Clone)]
@@ -123,6 +139,7 @@ pub enum Canvas2dMsg {
     SetShadowColor(RGBA),
 }
 
+/*
 #[derive(Clone, Deserialize, Serialize)]
 pub enum CanvasWebGLMsg {
     GetContextAttributes(IpcSender<GLContextAttributes>),
@@ -207,7 +224,7 @@ pub type WebGLResult<T> = Result<T, WebGLError>;
 pub enum WebGLFramebufferBindingRequest {
     Explicit(u32),
     Default,
-}
+}*/
 
 #[derive(Clone, Deserialize, Serialize)]
 pub enum WebGLParameter {

@@ -2,8 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#![feature(clone_from_slice)]
-#![feature(nonzero)]
 #![feature(plugin)]
 #![plugin(plugins)]
 
@@ -21,6 +19,7 @@ extern crate log;
 extern crate num;
 extern crate offscreen_gl_context;
 extern crate util;
+extern crate webrender_traits;
 
 pub mod canvas_paint_task;
 mod premultiplytable;

@@ -188,6 +188,10 @@ pub struct Opts {
 
     /// Enable vsync in the compositor
     pub enable_vsync: bool,
+
+    /// True to enable the webrender painting backend.
+    pub use_webrender: bool,
+    pub webrender_stats: bool,
 }
 
 fn print_usage(app: &str, opts: &Options) {
@@ -280,6 +284,9 @@ pub struct DebugOptions {
 
     /// Disable vsync in the compositor
     pub disable_vsync: bool,
+
+    /// Show webrender profiling stats on screen.
+    pub webrender_stats: bool,
 }
 
 
@@ -316,6 +323,7 @@ impl DebugOptions {
                 "gc-profile" => debug_options.gc_profile = true,
                 "load-webfonts-synchronously" => debug_options.load_webfonts_synchronously = true,
                 "disable-vsync" => debug_options.disable_vsync = true,
+                "wr-stats" => debug_options.webrender_stats = true,
                 "" => {},
                 _ => return Err(option)
             };
@@ -364,6 +372,8 @@ pub fn print_debug_usage(app: &str) -> ! {
                  "Load web fonts synchronously to avoid non-deterministic network-driven reflows");
     print_option("disable-vsync",
                  "Disable vsync mode in the compositor to allow profiling at more than monitor refresh rate");
+    print_option("wr-stats",
+                 "Show WebRender profiler on screen.");
 
     println!("");
 
@@ -494,6 +504,8 @@ pub fn default_opts() -> Opts {
         exit_after_load: false,
         no_native_titlebar: false,
         enable_vsync: true,
+        use_webrender: false,
+        webrender_stats: false,
     }
 }
 
@@ -537,6 +549,7 @@ pub fn from_cmdline_args(args: &[String]) -> ArgumentParsingResult {
     opts.optmulti("", "pref",
                   "A preference to set to enable", "dom.mozbrowser.enabled");
     opts.optflag("b", "no-native-titlebar", "Do not use native titlebar");
+    opts.optflag("w", "webrender", "Use webrender backend");
 
     let opt_match = match opts.parse(args) {
         Ok(m) => m,
@@ -676,6 +689,8 @@ pub fn from_cmdline_args(args: &[String]) -> ArgumentParsingResult {
         (contents, url)
     }).collect();
 
+    let use_webrender = opt_match.opt_present("w") && !opt_match.opt_present("z");
+
     let opts = Opts {
         is_running_problem_test: is_running_problem_test,
         url: Some(url),
@@ -726,6 +741,8 @@ pub fn from_cmdline_args(args: &[String]) -> ArgumentParsingResult {
         exit_after_load: opt_match.opt_present("x"),
         no_native_titlebar: opt_match.opt_present("b"),
         enable_vsync: !debug_options.disable_vsync,
+        use_webrender: use_webrender,
+        webrender_stats: debug_options.webrender_stats,
     };
 
     set_defaults(opts);

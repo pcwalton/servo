@@ -62,6 +62,7 @@ use util::cursor::Cursor;
 use util::geometry::PagePx;
 use util::task::spawn_named;
 use util::{opts, prefs};
+use webrender_traits;
 
 #[derive(Debug, PartialEq)]
 enum ReadyToSave {
@@ -180,6 +181,9 @@ pub struct Constellation<LTF, STF> {
 
     /// Document states for loaded pipelines (used only when writing screenshots).
     document_states: HashMap<PipelineId, DocumentState>,
+
+    // Webrender interface, if enabled.
+    webrender_api_sender: Option<webrender_traits::RenderApiSender>,
 }
 
 /// State needed to construct a constellation.
@@ -202,6 +206,8 @@ pub struct InitialConstellationState {
     pub mem_profiler_chan: mem::ProfilerChan,
     /// Whether the constellation supports the clipboard.
     pub supports_clipboard: bool,
+    /// Optional webrender API reference (if enabled).
+    pub webrender_api_sender: Option<webrender_traits::RenderApiSender>,
 }
 
 /// Stores the navigation context for a single frame in the frame tree.
@@ -345,6 +351,7 @@ impl<LTF: LayoutTaskFactory, STF: ScriptTaskFactory> Constellation<LTF, STF> {
                 scheduler_chan: TimerScheduler::start(),
                 child_processes: Vec::new(),
                 document_states: HashMap::new(),
+                webrender_api_sender: state.webrender_api_sender,
             };
             let namespace_id = constellation.next_pipeline_namespace_id();
             PipelineNamespace::install(namespace_id);
@@ -397,6 +404,7 @@ impl<LTF: LayoutTaskFactory, STF: ScriptTaskFactory> Constellation<LTF, STF> {
                 load_data: load_data,
                 device_pixel_ratio: self.window_size.device_pixel_ratio,
                 pipeline_namespace_id: self.next_pipeline_namespace_id(),
+                webrender_api_sender: self.webrender_api_sender.clone(),
             });
 
         if spawning_paint_only {
@@ -723,7 +731,8 @@ impl<LTF: LayoutTaskFactory, STF: ScriptTaskFactory> Constellation<LTF, STF> {
             // Notification that painting has finished and is requesting permission to paint.
             Request::Paint(FromPaintMsg::Failure(Failure { pipeline_id, parent_info })) => {
                 debug!("handling paint failure message from pipeline {:?}, {:?}", pipeline_id, parent_info);
-                self.handle_failure_msg(pipeline_id, parent_info);
+                panic!("todo - unused in WR");
+                //self.handle_failure_msg(pipeline_id, parent_info);
             }
 
         }
@@ -1176,7 +1185,9 @@ impl<LTF: LayoutTaskFactory, STF: ScriptTaskFactory> Constellation<LTF, STF> {
             size: &Size2D<i32>,
             response_sender: IpcSender<(IpcSender<CanvasMsg>, usize)>) {
         let id = self.canvas_paint_tasks.len();
-        let (out_of_process_sender, in_process_sender) = CanvasPaintTask::start(*size);
+        let webrender_api = self.webrender_api_sender.clone();
+        let (out_of_process_sender, in_process_sender) = CanvasPaintTask::start(*size,
+                                                                                webrender_api);
         self.canvas_paint_tasks.push(in_process_sender);
         response_sender.send((out_of_process_sender, id)).unwrap()
     }
@@ -1186,13 +1197,14 @@ impl<LTF: LayoutTaskFactory, STF: ScriptTaskFactory> Constellation<LTF, STF> {
             size: &Size2D<i32>,
             attributes: GLContextAttributes,
             response_sender: IpcSender<Result<(IpcSender<CanvasMsg>, usize), String>>) {
-        let response = match WebGLPaintTask::start(*size, attributes) {
+        let webrender_api = self.webrender_api_sender.clone();
+        let response = match WebGLPaintTask::start(*size, attributes, webrender_api) {
             Ok((out_of_process_sender, in_process_sender)) => {
                 let id = self.webgl_paint_tasks.len();
                 self.webgl_paint_tasks.push(in_process_sender);
                 Ok((out_of_process_sender, id))
             },
-            Err(msg) => Err(msg.to_owned()),
+            Err(msg) => Err(msg),
         };
 
         response_sender.send(response).unwrap()

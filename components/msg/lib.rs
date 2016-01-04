@@ -22,6 +22,7 @@ extern crate rustc_serialize;
 extern crate serde;
 extern crate url;
 extern crate util;
+extern crate webrender_traits;
 
 pub mod compositor_msg;
 pub mod constellation_msg;

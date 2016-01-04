@@ -49,6 +49,8 @@ extern crate time;
 extern crate url;
 #[macro_use]
 extern crate util;
+extern crate webrender;
+extern crate webrender_traits;
 
 pub use compositor_task::{CompositorEventListener, CompositorProxy, CompositorTask};
 pub use constellation::Constellation;

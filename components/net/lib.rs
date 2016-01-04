@@ -5,6 +5,7 @@
 #![feature(box_syntax)]
 #![feature(fnbox)]
 #![feature(mpsc_select)]
+#![feature(vec_push_all)]
 #![feature(plugin)]
 #![feature(plugin)]
 #![plugin(plugins)]
@@ -28,6 +29,7 @@ extern crate url;
 extern crate util;
 extern crate uuid;
 extern crate websocket;
+extern crate webrender_traits;
 
 pub mod about_loader;
 pub mod cookie;
