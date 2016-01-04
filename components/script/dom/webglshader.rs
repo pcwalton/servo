@@ -133,12 +133,9 @@ impl WebGLShader {
 
     /// glGetParameter
     pub fn parameter(&self, param_id: u32) -> WebGLResult<WebGLParameter> {
-        panic!("todo");
-        /*
         let (sender, receiver) = ipc::channel().unwrap();
         self.renderer.send(CanvasMsg::WebGL(CanvasWebGLMsg::GetShaderParameter(self.id, param_id, sender))).unwrap();
         receiver.recv().unwrap()
-        */
     }
 
     /// Get the shader source

@@ -105,13 +105,10 @@ impl WebGLProgram {
             return Err(WebGLError::InvalidOperation);
         }
 
-        panic!("todo");
-        /*
         self.renderer
             .send(CanvasMsg::WebGL(CanvasWebGLMsg::BindAttribLocation(self.id, index, String::from(name))))
             .unwrap();
         Ok(())
-        */
     }
 
     /// glGetAttribLocation
@@ -152,12 +149,9 @@ impl WebGLProgram {
 
     /// glGetProgramParameter
     pub fn parameter(&self, param_id: u32) -> WebGLResult<WebGLParameter> {
-        panic!("todo");
-        /*
         let (sender, receiver) = ipc::channel().unwrap();
         self.renderer.send(CanvasMsg::WebGL(CanvasWebGLMsg::GetProgramParameter(self.id, param_id, sender))).unwrap();
         receiver.recv().unwrap()
-        */
     }
 }
 
