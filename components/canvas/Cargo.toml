@@ -29,9 +29,13 @@ path = "../gfx_traits"
 
 [dependencies.offscreen_gl_context]
 git = "https://github.com/ecoal95/rust-offscreen-rendering-context"
+branch = "webrender"
 
 [dependencies.ipc-channel]
 git = "https://github.com/servo/ipc-channel"
+
+[dependencies.webrender_traits]
+git = "https://github.com/glennw/webrender_traits"
 
 [dependencies]
 log = "0.3"

@@ -13,7 +13,7 @@ use azure::azure::AzColor;
 use canvas_traits::CanvasMsg;
 use construct::ConstructionResult;
 use context::{SharedLayoutContext, heap_size_of_local_context};
-use display_list_builder::ToGfxColor;
+use display_list_builder::{ToGfxColor, WebRenderStackingContextConverter};
 use euclid::Matrix4;
 use euclid::point::Point2D;
 use euclid::rect::Rect;
@@ -80,6 +80,9 @@ use util::thread;
 use util::thread_state;
 use util::workqueue::WorkQueue;
 use wrapper::{LayoutNode, NonOpaqueStyleAndLayoutData, ServoLayoutNode, ThreadSafeLayoutNode};
+//use wrapper::{LayoutDocument, LayoutElement, LayoutNode};
+//use wrapper::{ServoLayoutNode, ThreadSafeLayoutNode};
+use webrender_traits;
 
 /// The number of screens of data we're allowed to generate display lists for in each direction.
 pub const DISPLAY_PORT_SIZE_FACTOR: i32 = 8;
@@ -220,6 +223,8 @@ pub struct LayoutThread {
     /// The CSS error reporter for all CSS loaded in this layout thread
     error_reporter: CSSErrorReporter,
 
+    // Webrender interface, if enabled.
+    webrender_api: Option<webrender_traits::RenderApi>,
 }
 
 impl LayoutThreadFactory for LayoutThread {
@@ -239,7 +244,8 @@ impl LayoutThreadFactory for LayoutThread {
               time_profiler_chan: time::ProfilerChan,
               mem_profiler_chan: mem::ProfilerChan,
               shutdown_chan: IpcSender<()>,
-              content_process_shutdown_chan: IpcSender<()>) {
+              content_process_shutdown_chan: IpcSender<()>,
+              webrender_api_sender: Option<webrender_traits::RenderApiSender>) {
         let ConstellationChan(con_chan) = constellation_chan.clone();
         thread::spawn_named_with_send_on_failure(format!("LayoutThread {:?}", id),
                                                thread_state::LAYOUT,
@@ -257,7 +263,8 @@ impl LayoutThreadFactory for LayoutThread {
                                              image_cache_thread,
                                              font_cache_thread,
                                              time_profiler_chan,
-                                             mem_profiler_chan.clone());
+                                             mem_profiler_chan.clone(),
+                                             webrender_api_sender);
 
                 let reporter_name = format!("layout-reporter-{}", id);
                 mem_profiler_chan.run_with_memory_reporting(|| {
@@ -366,7 +373,8 @@ impl LayoutThread {
            image_cache_thread: ImageCacheThread,
            font_cache_thread: FontCacheThread,
            time_profiler_chan: time::ProfilerChan,
-           mem_profiler_chan: mem::ProfilerChan)
+           mem_profiler_chan: mem::ProfilerChan,
+           webrender_api_sender: Option<webrender_traits::RenderApiSender>)
            -> LayoutThread {
         let device = Device::new(
             MediaType::Screen,
@@ -436,6 +444,7 @@ impl LayoutThread {
             expired_animations: Arc::new(RwLock::new(HashMap::new())),
             epoch: Epoch(0),
             viewport_size: Size2D::new(Au(0), Au(0)),
+            webrender_api: webrender_api_sender.map(|wr| wr.create_api()),
             rw_data: Arc::new(Mutex::new(
                 LayoutThreadData {
                     constellation_chan: constellation_chan,
@@ -701,7 +710,8 @@ impl LayoutThread {
                                   self.time_profiler_chan.clone(),
                                   self.mem_profiler_chan.clone(),
                                   info.layout_shutdown_chan,
-                                  info.content_process_shutdown_chan);
+                                  info.content_process_shutdown_chan,
+                                  self.webrender_api.as_ref().map(|wr| wr.clone_sender()));
     }
 
     /// Enters a quiescent state in which no new messages will be processed until an `ExitNow` is
@@ -904,9 +914,32 @@ impl LayoutThread {
                 debug!("Layout done!");
 
                 self.epoch.next();
-                self.paint_chan
-                    .send(LayoutToPaintMsg::PaintInit(self.epoch, paint_layer))
-                    .unwrap();
+
+                if opts::get().use_webrender {
+                    let api = self.webrender_api.as_ref().unwrap();
+                    // TODO: Avoid the temporary conversion and build webrender sc/dl directly!
+                    let Epoch(epoch_number) = self.epoch;
+                    let epoch = webrender_traits::Epoch(epoch_number);
+                    let pipeline_id = unsafe { transmute(self.id) };
+
+                    // TODO(gw) For now only create a root scrolling layer!
+                    let root_scroll_layer_id = webrender_traits::ScrollLayerId::new(pipeline_id, 0);
+                    let sc_id = rw_data.stacking_context.as_ref()
+                                                        .unwrap()
+                                                        .convert_to_webrender(&self.webrender_api.as_ref().unwrap(),
+                                                                               pipeline_id,
+                                                                               epoch,
+                                                                               Some(root_scroll_layer_id));
+                    let root_background_color = webrender_traits::ColorF::new(root_background_color.r,
+                                                                       root_background_color.g,
+                                                                       root_background_color.b,
+                                                                       root_background_color.a);
+                    api.set_root_stacking_context(sc_id, root_background_color, epoch, pipeline_id);
+                } else {
+                    self.paint_chan
+                        .send(LayoutToPaintMsg::PaintInit(self.epoch, paint_layer))
+                        .unwrap();
+                }
             }
         });
     }

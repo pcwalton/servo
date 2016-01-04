@@ -72,6 +72,7 @@ pub struct WebGLRenderingContext {
     #[ignore_heap_size_of = "Defined in ipc-channel"]
     ipc_renderer: IpcSender<CanvasMsg>,
     canvas: JS<HTMLCanvasElement>,
+    #[ignore_heap_size_of = "Defined in webrender_traits"]
     last_error: Cell<Option<WebGLError>>,
     texture_unpacking_settings: Cell<TextureUnpacking>,
     bound_texture_2d: MutNullableHeap<JS<WebGLTexture>>,
@@ -462,6 +463,7 @@ impl WebGLRenderingContextMethods for WebGLRenderingContext {
             Some(data) => data,
             None => return self.webgl_error(InvalidValue),
         };
+
         if offset < 0 {
             return self.webgl_error(InvalidValue);
         }
@@ -944,9 +946,12 @@ impl WebGLRenderingContextMethods for WebGLRenderingContext {
             _ => return self.webgl_error(InvalidOperation),
         };
 
+        panic!("WR TODO");
+        /*
         self.ipc_renderer
             .send(CanvasMsg::WebGL(CanvasWebGLMsg::Uniform1f(uniform.id(), val)))
             .unwrap()
+            */
     }
 
     // https://www.khronos.org/registry/webgl/specs/latest/1.0/#5.14.10
@@ -974,9 +979,12 @@ impl WebGLRenderingContextMethods for WebGLRenderingContext {
             _ => return self.webgl_error(InvalidOperation),
         };
 
+        panic!("WR TODO");
+        /*
         self.ipc_renderer
             .send(CanvasMsg::WebGL(CanvasWebGLMsg::Uniform4f(uniform.id(), x, y, z, w)))
             .unwrap()
+            */
     }
 
     // https://www.khronos.org/registry/webgl/specs/latest/1.0/#5.14.10
