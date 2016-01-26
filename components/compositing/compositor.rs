@@ -2196,19 +2196,37 @@ impl<Window> CompositorEventListener for IOCompositor<Window> where Window: Wind
     ///
     /// This is used when resizing the window.
     fn repaint_synchronously(&mut self) {
-        while self.shutdown_state != ShutdownState::ShuttingDown {
-            let msg = self.port.recv_compositor_msg();
-            let received_new_buffers = match msg {
-                Msg::AssignPaintedBuffers(..) => true,
-                _ => false,
-            };
-            let keep_going = self.handle_browser_message(msg);
-            if received_new_buffers {
-                self.composite();
-                break
+        if self.webrender.is_none() {
+            while self.shutdown_state != ShutdownState::ShuttingDown {
+                let msg = self.port.recv_compositor_msg();
+                let received_new_buffers = match msg {
+                    Msg::AssignPaintedBuffers(..) => true,
+                    _ => false,
+                };
+                let keep_going = self.handle_browser_message(msg);
+                if received_new_buffers {
+                    self.composite();
+                    break
+                }
+                if !keep_going {
+                    break
+                }
             }
-            if !keep_going {
-                break
+        } else {
+            while self.shutdown_state != ShutdownState::ShuttingDown {
+                let msg = self.port.recv_compositor_msg();
+                let need_recomposite = match msg {
+                    Msg::RecompositeAfterScroll => true,
+                    _ => false,
+                };
+                let keep_going = self.handle_browser_message(msg);
+                if need_recomposite {
+                    self.composite();
+                    break
+                }
+                if !keep_going {
+                    break
+                }
             }
         }
     }
