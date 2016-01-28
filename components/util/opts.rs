@@ -189,6 +189,9 @@ pub struct Opts {
 
     /// True to show webrender profiling stats on screen.
     pub webrender_stats: bool,
+
+    /// True if WebRender should use multisample antialiasing.
+    pub use_msaa: bool,
 }
 
 fn print_usage(app: &str, opts: &Options) {
@@ -281,6 +284,9 @@ pub struct DebugOptions {
 
     /// Show webrender profiling stats on screen.
     pub webrender_stats: bool,
+
+    /// Use multisample antialiasing in WebRender.
+    pub use_msaa: bool,
 }
 
 
@@ -317,6 +323,7 @@ impl DebugOptions {
                 "load-webfonts-synchronously" => debug_options.load_webfonts_synchronously = true,
                 "disable-vsync" => debug_options.disable_vsync = true,
                 "wr-stats" => debug_options.webrender_stats = true,
+                "msaa" => debug_options.use_msaa = true,
                 "" => {},
                 _ => return Err(option)
             };
@@ -364,8 +371,8 @@ pub fn print_debug_usage(app: &str) -> ! {
                  "Load web fonts synchronously to avoid non-deterministic network-driven reflows");
     print_option("disable-vsync",
                  "Disable vsync mode in the compositor to allow profiling at more than monitor refresh rate");
-    print_option("wr-stats",
-                 "Show WebRender profiler on screen.");
+    print_option("wr-stats", "Show WebRender profiler on screen.");
+    print_option("msaa", "Use multisample antialiasing in WebRender.");
 
     println!("");
 
@@ -497,6 +504,7 @@ pub fn default_opts() -> Opts {
         enable_vsync: true,
         use_webrender: false,
         webrender_stats: false,
+        use_msaa: false,
     }
 }
 
@@ -733,6 +741,7 @@ pub fn from_cmdline_args(args: &[String]) -> ArgumentParsingResult {
         enable_vsync: !debug_options.disable_vsync,
         use_webrender: use_webrender,
         webrender_stats: debug_options.webrender_stats,
+        use_msaa: debug_options.use_msaa,
     };
 
     set_defaults(opts);

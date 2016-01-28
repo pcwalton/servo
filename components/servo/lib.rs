@@ -166,10 +166,14 @@ impl Browser {
                 }
             };
 
-            let (webrender, webrender_sender) = webrender::Renderer::new(device_pixel_ratio,
-                                                                         resource_path,
-                                                                         opts.enable_text_antialiasing,
-                                                                         opts.webrender_stats);
+            let (webrender, webrender_sender) =
+                webrender::Renderer::new(webrender::RendererOptions {
+                    device_pixel_ratio: device_pixel_ratio,
+                    resource_path: resource_path,
+                    enable_aa: opts.enable_text_antialiasing,
+                    enable_msaa: opts.use_msaa,
+                    enable_profiler: opts.webrender_stats,
+                });
             (Some(webrender), Some(webrender_sender))
         } else {
             (None, None)
