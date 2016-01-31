@@ -20,6 +20,9 @@ git = "https://github.com/servo/ipc-channel"
 [dependencies.plugins]
 path = "../plugins"
 
+[dependencies.webrender_traits]
+git = "https://github.com/glennw/webrender_traits"
+
 [dependencies]
 cssparser = { version = "0.5", features = [ "serde-serialization" ] }
 bitflags = "0.3"

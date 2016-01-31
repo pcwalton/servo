@@ -144,7 +144,11 @@ impl Window {
 
     #[cfg(not(target_os = "android"))]
     fn gl_version() -> GlRequest {
-        GlRequest::Specific(Api::OpenGl, (2, 1))
+        if opts::get().use_webrender {
+            GlRequest::Specific(Api::OpenGl, (3, 2))
+        } else {
+            GlRequest::Specific(Api::OpenGl, (2, 1))
+        }
     }
 
     #[cfg(target_os = "android")]
@@ -305,32 +309,49 @@ impl Window {
         use std::thread;
         use std::time::Duration;
 
-        // TODO(gw): This is an awful hack to work around the
-        // broken way we currently call X11 from multiple threads.
-        //
-        // On some (most?) X11 implementations, blocking here
-        // with XPeekEvent results in the paint thread getting stuck
-        // in XGetGeometry randomly. When this happens the result
-        // is that until you trigger the XPeekEvent to return
-        // (by moving the mouse over the window) the paint thread
-        // never completes and you don't see the most recent
-        // results.
-        //
-        // For now, poll events and sleep for ~1 frame if there
-        // are no events. This means we don't spin the CPU at
-        // 100% usage, but is far from ideal!
-        //
-        // See https://github.com/servo/servo/issues/5780
-        //
-        let first_event = self.window.poll_events().next();
-
-        match first_event {
-            Some(event) => {
-                self.handle_window_event(event)
+        // WebRender can use the normal blocking event check and proper vsync,
+        // because it doesn't call X11 functions from another thread, so doesn't
+        // hit the same issues explained below.
+        if opts::get().use_webrender {
+            let event = self.window.wait_events().next().unwrap();
+            let mut close = self.handle_window_event(event);
+            if !close {
+                while let Some(event) = self.window.poll_events().next() {
+                    if self.handle_window_event(event) {
+                        close = true;
+                        break
+                    }
+                }
             }
-            None => {
-                thread::sleep(Duration::from_millis(16));
-                false
+            close
+        } else {
+            // TODO(gw): This is an awful hack to work around the
+            // broken way we currently call X11 from multiple threads.
+            //
+            // On some (most?) X11 implementations, blocking here
+            // with XPeekEvent results in the paint thread getting stuck
+            // in XGetGeometry randomly. When this happens the result
+            // is that until you trigger the XPeekEvent to return
+            // (by moving the mouse over the window) the paint thread
+            // never completes and you don't see the most recent
+            // results.
+            //
+            // For now, poll events and sleep for ~1 frame if there
+            // are no events. This means we don't spin the CPU at
+            // 100% usage, but is far from ideal!
+            //
+            // See https://github.com/servo/servo/issues/5780
+            //
+            let first_event = self.window.poll_events().next();
+
+            match first_event {
+                Some(event) => {
+                    self.handle_window_event(event)
+                }
+                None => {
+                    thread::sleep(Duration::from_millis(16));
+                    false
+                }
             }
         }
     }

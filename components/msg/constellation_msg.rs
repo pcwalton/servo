@@ -18,6 +18,7 @@ use url::Url;
 use util::geometry::{PagePx, ViewportPx};
 use util::mem::HeapSizeOf;
 use webdriver_msg::{LoadStatus, WebDriverScriptCommand};
+use webrender_traits;
 
 #[derive(Deserialize, Serialize)]
 pub struct ConstellationChan<T: Deserialize + Serialize>(pub IpcSender<T>);
@@ -208,7 +209,7 @@ pub enum WebDriverCommandMsg {
     TakeScreenshot(PipelineId, IpcSender<Option<Image>>),
 }
 
-#[derive(Deserialize, Eq, PartialEq, Serialize, HeapSizeOf)]
+#[derive(Clone, Copy, Deserialize, Eq, PartialEq, Serialize, HeapSizeOf)]
 pub enum PixelFormat {
     K8,         // Luminance channel only
     KA8,        // Luminance + alpha
@@ -229,6 +230,7 @@ pub struct Image {
     pub format: PixelFormat,
     #[ignore_heap_size_of = "Defined in ipc-channel"]
     pub bytes: IpcSharedMemory,
+    pub id: Option<webrender_traits::ImageKey>,
 }
 
 /// Similar to net::resource_thread::LoadData
@@ -354,3 +356,28 @@ impl fmt::Display for PipelineId {
 
 #[derive(Clone, PartialEq, Eq, Copy, Hash, Debug, Deserialize, Serialize, HeapSizeOf)]
 pub struct SubpageId(pub u32);
+
+pub trait ConvertPipelineIdToWebRender {
+    fn to_webrender(&self) -> webrender_traits::PipelineId;
+}
+
+pub trait ConvertPipelineIdFromWebRender {
+    fn from_webrender(&self) -> PipelineId;
+}
+
+impl ConvertPipelineIdToWebRender for PipelineId {
+    fn to_webrender(&self) -> webrender_traits::PipelineId {
+        let PipelineNamespaceId(namespace_id) = self.namespace_id;
+        let PipelineIndex(index) = self.index;
+        webrender_traits::PipelineId(namespace_id, index)
+    }
+}
+
+impl ConvertPipelineIdFromWebRender for webrender_traits::PipelineId {
+    fn from_webrender(&self) -> PipelineId {
+        PipelineId {
+            namespace_id: PipelineNamespaceId(self.0),
+            index: PipelineIndex(self.1),
+        }
+    }
+}
