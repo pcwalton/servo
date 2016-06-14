@@ -1303,6 +1303,8 @@ impl Document {
 
     /// https://html.spec.whatwg.org/multipage/#run-the-animation-frame-callbacks
     pub fn run_the_animation_frame_callbacks(&self) {
+        let before_time = time::precise_time_ns();
+
         let mut animation_frame_list =
             mem::replace(&mut *self.animation_frame_list.borrow_mut(), vec![]);
         self.running_animation_callbacks.set(true);
@@ -1312,6 +1314,7 @@ impl Document {
 
         for (_, callback) in animation_frame_list.drain(..) {
             if let Some(callback) = callback {
+                //println!("... running callback");
                 callback(*timing);
             }
         }
@@ -1329,6 +1332,11 @@ impl Document {
         }
 
         self.running_animation_callbacks.set(false);
+
+        let after_time = time::precise_time_ns();
+        let elapsed_time = after_time - before_time;
+        println!("run_the_animation_frame_callbacks(): {:?}ms elapsed",
+                 (elapsed_time as f64) / 1000000.0);
 
         self.window.reflow(ReflowGoal::ForDisplay,
                            ReflowQueryType::NoQuery,
