@@ -35,10 +35,15 @@ void main(void) {
     vTopColor = border.top_color;
     vBottomColor = border.bottom_color;
 
-    vCorner_TL = border.local_rect.xy + border.widths.xy;
-    vCorner_TR = border.local_rect.xy + vec2(border.local_rect.z, 0) + vec2(-border.widths.z, border.widths.y);
-    vCorner_BL = border.local_rect.xy + vec2(0, border.local_rect.w) + vec2(border.widths.x, -border.widths.w);
-    vCorner_BR = border.local_rect.xy + border.local_rect.zw - border.widths.zw;
+    vec4 widths = vec4(max(border.clip.top_left.outer_inner_radius.x, border.widths.x),
+                       max(border.clip.top_left.outer_inner_radius.x, border.widths.y),
+                       max(border.clip.top_left.outer_inner_radius.x, border.widths.z),
+                       max(border.clip.top_left.outer_inner_radius.x, border.widths.w));
+
+    vCorner_TL = border.local_rect.xy + widths.xy;
+    vCorner_TR = border.local_rect.xy + vec2(border.local_rect.z, 0) + vec2(-widths.z, widths.y);
+    vCorner_BL = border.local_rect.xy + vec2(0, border.local_rect.w) + vec2(widths.x, -widths.w);
+    vCorner_BR = border.local_rect.xy + border.local_rect.zw - widths.zw;
     vRect = vec4(border.local_rect.xy, border.local_rect.xy + border.local_rect.zw);
 
     vClipRect = vec4(border.clip.rect.xy, border.clip.rect.xy + border.clip.rect.zw);
