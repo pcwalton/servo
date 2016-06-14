@@ -6,10 +6,11 @@ bool point_above_line(vec2 p, vec2 p0, vec2 p1) {
     return (p.x - p0.x) * (p1.y - p0.y) - (p.y - p0.y) * (p1.x - p0.x) > 0.0;
 }
 
-bool do_corner_clip(vec2 pos, vec2 ref, float outer_radius, float inner_radius) {
-    float d = distance(pos, ref);
-
-    return outer_radius > 0.0 && (d > outer_radius || d < inner_radius);
+bool point_in_rect(vec2 p, vec2 p0, vec2 p1) {
+    return p.x >= p0.x &&
+           p.y >= p0.y &&
+           p.x <= p1.x &&
+           p.y <= p1.y;
 }
 
 void main(void) {
@@ -21,12 +22,7 @@ void main(void) {
     //           for the common case of equal border widths.
     //           Investigate a fast path for this case!
 
-    bool in_top = point_above_line(vLayerPos.xy, vCorner_TL, vCorner_TR);
-    bool in_bottom = point_above_line(vLayerPos.xy, vCorner_BR, vCorner_BL);
-    bool in_left = point_above_line(vLayerPos.xy, vCorner_BL, vCorner_TL);
-    bool in_right = point_above_line(vLayerPos.xy, vCorner_TR, vCorner_BR);
-
-    if (in_top && in_left) {
+    if (all(lessThan(vLayerPos.xy, vCorner_TL))) {
         vec2 ref = vClipRect.xy + vClipInfo.xy;
         if (vLayerPos.x < ref.x && vLayerPos.y < ref.y) {
             float d = distance(vLayerPos.xy, ref);
@@ -40,7 +36,7 @@ void main(void) {
         } else {
             oFragColor = vLeftColor;
         }
-    } else if (in_top && in_right) {
+    } else if (vLayerPos.x > vCorner_TR.x && vLayerPos.y < vCorner_TR.y) {
         vec2 ref = vClipRect.zy + vec2(-vClipInfo.x, vClipInfo.y);
         if (vLayerPos.x > ref.x && vLayerPos.y < ref.y) {
             float d = distance(vLayerPos.xy, ref);
@@ -54,7 +50,7 @@ void main(void) {
         } else {
             oFragColor = vTopColor;
         }
-    } else if (in_left && in_bottom) {
+    } else if (vLayerPos.x < vCorner_BL.x && vLayerPos.y > vCorner_BL.y) {
         vec2 ref = vClipRect.xw + vec2(vClipInfo.x, -vClipInfo.y);
         if (vLayerPos.x < ref.x && vLayerPos.y > ref.y) {
             float d = distance(vLayerPos.xy, ref);
@@ -68,7 +64,7 @@ void main(void) {
         } else {
             oFragColor = vBottomColor;
         }
-    } else if (in_right && in_bottom) {
+    } else if (all(greaterThan(vLayerPos.xy, vCorner_BR))) {
         vec2 ref = vClipRect.zw - vClipInfo.xy;
         if (vLayerPos.x > ref.x && vLayerPos.y > ref.y) {
             float d = distance(vLayerPos.xy, ref);
@@ -82,15 +78,15 @@ void main(void) {
         } else {
             oFragColor = vRightColor;
         }
-    } else if (in_top) {
-        oFragColor = vTopColor;
-    } else if (in_left) {
+    } else if (vLayerPos.x < vRect.x + vWidths.x) {
         oFragColor = vLeftColor;
-    } else if (in_right) {
+    } else if (vLayerPos.x > vRect.z - vWidths.z) {
         oFragColor = vRightColor;
-    } else if (in_bottom) {
+    } else if (vLayerPos.y < vRect.y + vWidths.y) {
+        oFragColor = vTopColor;
+    } else if (vLayerPos.y > vRect.w - vWidths.w) {
         oFragColor = vBottomColor;
-    } else {
+    } else {      
         discard;
     }
 }

@@ -44,6 +44,7 @@ void main(void) {
     vCorner_TR = border.local_rect.xy + vec2(border.local_rect.z, 0) + vec2(-widths.z, widths.y);
     vCorner_BL = border.local_rect.xy + vec2(0, border.local_rect.w) + vec2(widths.x, -widths.w);
     vCorner_BR = border.local_rect.xy + border.local_rect.zw - widths.zw;
+    vWidths = border.widths;
     vRect = vec4(border.local_rect.xy, border.local_rect.xy + border.local_rect.zw);
 
     vClipRect = vec4(border.clip.rect.xy, border.clip.rect.xy + border.clip.rect.zw);

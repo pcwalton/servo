@@ -14,6 +14,7 @@ flat varying vec2 vCorner_TR;
 flat varying vec2 vCorner_BL;
 flat varying vec2 vCorner_BR;
 
+flat varying vec4 vWidths;
 flat varying vec4 vRect;
 
 flat varying vec4 vClipRect;
