@@ -6,13 +6,6 @@ bool point_above_line(vec2 p, vec2 p0, vec2 p1) {
     return (p.x - p0.x) * (p1.y - p0.y) - (p.y - p0.y) * (p1.x - p0.x) > 0.0;
 }
 
-bool point_in_rect(vec2 p, vec2 p0, vec2 p1) {
-    return p.x >= p0.x &&
-           p.y >= p0.y &&
-           p.x <= p1.x &&
-           p.y <= p1.y;
-}
-
 void main(void) {
     // TODO(gw): Check compiled GLSL assembly and see if this
     //           gets turned into something reasonable...

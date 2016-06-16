@@ -53,7 +53,7 @@ vec4 untransform(vec2 ref, vec3 n, vec3 a, mat4 inv_transform) {
     vec3 c = p + d * t;
 
     vec4 r = inv_transform * vec4(c, 1.0);
-    return vec4(r.xyz / r.w, r.w);
+    return r;
 }
 
 vec3 get_layer_pos(vec2 pos, uint layer_index) {
@@ -88,4 +88,11 @@ float do_clip(vec2 pos, vec4 clip_rect, float radius) {
     } else {
         return 1.0;
     }
+}
+
+bool point_in_rect(vec2 p, vec2 p0, vec2 p1) {
+    return p.x >= p0.x &&
+           p.y >= p0.y &&
+           p.x <= p1.x &&
+           p.y <= p1.y;
 }
