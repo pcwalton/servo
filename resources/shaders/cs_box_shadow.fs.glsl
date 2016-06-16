@@ -148,6 +148,27 @@ void main(void) {
     }
 
     vec2 radii = vBorderRadii;
+
+    vec2 ref_tl = vSrcRect.xy + radii;
+    if (distance(pos, ref_tl) > radii.x && pos.x < ref_tl.x && pos.y < ref_tl.y) {
+        discard;
+    }
+
+    vec2 ref_tr = vSrcRect.zy + vec2(-radii.x, radii.y);
+    if (distance(pos, ref_tr) > radii.x && pos.x > ref_tr.x && pos.y < ref_tr.y) {
+        discard;
+    }
+
+    vec2 ref_bl = vSrcRect.xw + vec2(radii.x, -radii.y);
+    if (distance(pos, ref_bl) > radii.x && pos.x < ref_bl.x && pos.y > ref_bl.y) {
+        discard;
+    }
+
+    vec2 ref_br = vSrcRect.zw - radii;
+    if (distance(pos, ref_br) > radii.x && pos.x > ref_br.x && pos.y > ref_br.y) {
+        discard;
+    }
+
     float sigma = vBlurRadius / 2.0;
 	float value = color(pos, p0Rect, p1Rect, radii, sigma);
     if (vInverted == 1) {
