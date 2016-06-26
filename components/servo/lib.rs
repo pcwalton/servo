@@ -143,6 +143,7 @@ impl<Window> Browser<Window> where Window: WindowMethods + 'static {
                     enable_msaa: opts.use_msaa,
                     enable_profiler: opts.webrender_stats,
                     debug: opts.webrender_debug,
+                    stencil_routing: opts.webrender_stencil_routing,
                 });
             (Some(webrender), Some(webrender_sender))
         } else {

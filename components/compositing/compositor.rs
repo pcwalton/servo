@@ -395,6 +395,10 @@ impl webrender_traits::RenderNotifier for RenderNotifier {
         self.compositor_proxy.recomposite(CompositingReason::NewWebRenderFrame);
     }
 
+    fn new_scroll_frame_ready(&mut self, _: bool) {
+        self.compositor_proxy.recomposite(CompositingReason::NewWebRenderFrame);
+    }
+
     fn pipeline_size_changed(&mut self,
                              pipeline_id: webrender_traits::PipelineId,
                              size: Option<Size2D<f32>>) {

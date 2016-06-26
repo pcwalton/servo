@@ -193,6 +193,9 @@ pub struct Opts {
     /// True to show webrender debug on screen.
     pub webrender_debug: bool,
 
+    /// Use stencil routing for tile assignment in WebRender.
+    pub webrender_stencil_routing: bool,
+
     /// True if WebRender should use multisample antialiasing.
     pub use_msaa: bool,
 
@@ -291,6 +294,9 @@ pub struct DebugOptions {
     /// Show webrender debug on screen.
     pub webrender_debug: bool,
 
+    /// Use stencil routing for tile assignment in WebRender.
+    pub webrender_stencil_routing: bool,
+
     /// Use multisample antialiasing in WebRender.
     pub use_msaa: bool,
 
@@ -331,6 +337,7 @@ impl DebugOptions {
                 "disable-vsync" => debug_options.disable_vsync = true,
                 "wr-stats" => debug_options.webrender_stats = true,
                 "wr-debug" => debug_options.webrender_debug = true,
+                "wr-stencil-routing" => debug_options.webrender_stencil_routing = true,
                 "msaa" => debug_options.use_msaa = true,
                 "full-backtraces" => debug_options.full_backtraces = true,
                 "" => {},
@@ -512,6 +519,7 @@ pub fn default_opts() -> Opts {
         config_dir: None,
         full_backtraces: false,
         webrender_debug: false,
+        webrender_stencil_routing: false,
     }
 }
 
@@ -814,6 +822,7 @@ pub fn from_cmdline_args(args: &[String]) -> ArgumentParsingResult {
         config_dir: opt_match.opt_str("config-dir"),
         full_backtraces: debug_options.full_backtraces,
         webrender_debug: debug_options.webrender_debug,
+        webrender_stencil_routing: debug_options.webrender_stencil_routing,
     };
 
     set_defaults(opts);
