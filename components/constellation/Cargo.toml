@@ -1,0 +1,44 @@
+[package]
+name = "constellation"
+version = "0.0.1"
+authors = ["The Servo Project Developers"]
+license = "MPL-2.0"
+publish = false
+
+[lib]
+name = "constellation"
+path = "lib.rs"
+
+[dependencies]
+backtrace = "0.2.1"
+canvas = {path = "../canvas"}
+canvas_traits = {path = "../canvas_traits"}
+compositing = {path = "../compositing"}
+devtools_traits = {path = "../devtools_traits"}
+euclid = "0.7.1"
+gfx = {path = "../gfx"}
+gfx_traits = {path = "../gfx_traits"}
+ipc-channel = {git = "https://github.com/servo/ipc-channel"}
+layers = {git = "https://github.com/servo/rust-layers", features = ["plugins"]}
+layout_traits = {path = "../layout_traits"}
+log = "0.3.5"
+msg = {path = "../msg"}
+net_traits = {path = "../net_traits"}
+offscreen_gl_context = "0.1.2"
+plugins = {path = "../plugins"}
+profile_traits = {path = "../profile_traits"}
+rand = "0.3"
+script_traits = {path = "../script_traits"}
+serde = "0.7.11"
+serde_macros = "0.7.11"
+style_traits = {path = "../style_traits"}
+url = {version = "1.0.0", features = ["heap_size"]}
+util = {path = "../util"}
+
+[dependencies.webrender_traits]
+git = "https://github.com/servo/webrender_traits"
+default_features = false
+features = ["serde_macros"]
+
+[target.'cfg(not(target_os = "windows"))'.dependencies]
+gaol = {git = "https://github.com/servo/gaol"}

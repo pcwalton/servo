@@ -1,0 +1,76 @@
+[package]
+name = "script"
+version = "0.0.1"
+authors = ["The Servo Project Developers"]
+license = "MPL-2.0"
+publish = false
+
+build = "build.rs"
+
+[lib]
+name = "script"
+path = "lib.rs"
+
+[features]
+debugmozjs = ['js/debugmozjs']
+
+[target.'cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))'.dependencies]
+tinyfiledialogs = {git = "https://github.com/jdm/tinyfiledialogs"}
+
+[dependencies]
+angle = {git = "https://github.com/servo/angle", branch = "servo"}
+app_units = "0.2.5"
+bitflags = "0.7"
+canvas_traits = {path = "../canvas_traits"}
+caseless = "0.1.0"
+cookie = { version = "0.2.5", features = ["serialize-serde", "serialize-rustc" ] }
+cssparser = {version = "0.5.4", features = ["heap_size", "serde-serialization"]}
+devtools_traits = {path = "../devtools_traits"}
+encoding = "0.2"
+euclid = "0.7.1"
+fnv = "1.0"
+gfx_traits = {path = "../gfx_traits"}
+heapsize = "0.3.6"
+heapsize_plugin = "0.1.2"
+html5ever = {version = "0.5.1", features = ["heap_size", "unstable"]}
+hyper = {version = "0.9.9", features = ["serde-serialization"]}
+image = "0.10"
+ipc-channel = {git = "https://github.com/servo/ipc-channel"}
+js = {git = "https://github.com/servo/rust-mozjs"}
+libc = "0.2"
+log = "0.3.5"
+mime = "0.2.1"
+mime_guess = "1.8.0"
+msg = {path = "../msg"}
+net_traits = {path = "../net_traits"}
+num-traits = "0.1.32"
+offscreen_gl_context = "0.1.2"
+open = "1.1.1"
+phf = "0.7.13"
+phf_macros = "0.7.13"
+plugins = {path = "../plugins"}
+profile_traits = {path = "../profile_traits"}
+rand = "0.3"
+range = {path = "../range"}
+ref_filter_map = "1.0"
+ref_slice = "1.0"
+regex = "0.1.43"
+rustc-serialize = "0.3"
+script_layout_interface = {path = "../script_layout_interface"}
+script_traits = {path = "../script_traits"}
+selectors = {version = "0.7", features = ["heap_size"]}
+serde = "0.7.11"
+smallvec = "0.1"
+string_cache = {version = "0.2.20", features = ["heap_size", "unstable"]}
+style = {path = "../style"}
+time = "0.1.12"
+url = {version = "1.0.0", features = ["heap_size", "query_encoding"]}
+util = {path = "../util"}
+uuid = {version = "0.2", features = ["v4"]}
+websocket = "0.17"
+xml5ever = {version = "0.1.2", features = ["unstable"]}
+
+[dependencies.webrender_traits]
+git = "https://github.com/servo/webrender_traits"
+default_features = false
+features = ["nightly", "serde_macros"]

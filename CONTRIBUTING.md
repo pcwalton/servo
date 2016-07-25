@@ -12,7 +12,18 @@ pull requests. Each pull request will be reviewed by a core contributor
 given feedback for changes that would be required. All contributions should
 follow this format, even those from core contributors.
 
-If you're looking for easy bugs, have a look at the [E-Easy issue tag](https://github.com/mozilla/servo/issues?labels=E-easy&page=1&state=open) on GitHub.
+Should you wish to work on an issue, please claim it first by commenting on
+the GitHub issue that you want to work on it. This is to prevent duplicated
+efforts from contributors on the same issue.
+
+Head over to [Servo Starters](http://servo.github.io/servo-starters/) to find
+good tasks to start with. If you come across words or jargon that do not make
+sense, please check [the glossary](docs/glossary.md) first. If there's no
+matching entry, please make a pull request to add one with the content `TODO`
+so we can correct that!
+
+See [`HACKING_QUICKSTART.md`](docs/HACKING_QUICKSTART.md) for more information
+on how to start working on Servo.
 
 ## Pull Request Checklist
 
@@ -20,22 +31,22 @@ If you're looking for easy bugs, have a look at the [E-Easy issue tag](https://g
   branch before submitting your pull request. If it doesn't merge cleanly with
   master you may be asked to rebase your changes.
 
-- Don't put submodule updates in your pull request unless they are to landed
-  commits.
+- Commits should be as small as possible, while ensuring that each commit is
+  correct independently (i.e., each commit should compile and pass tests). 
 
 - If your patch is not getting reviewed or you need a specific person to review
   it, you can @-reply a reviewer asking for a review in the pull request or a
   comment, or you can ask for a review in `#servo` on `irc.mozilla.org`.
 
 - Add tests relevant to the fixed bug or new feature.  For a DOM change this
-  will usually be a content test; for layout, a reftest.  See our [testing
-  guide](https://github.com/mozilla/servo/wiki/Testing) for more information.
+  will usually be a web platform test; for layout, a reftest.  See our [testing
+  guide](https://github.com/servo/servo/wiki/Testing) for more information.
 
-For specific git instructions, see [GitHub & Critic PR handling 101](https://github.com/mozilla/servo/wiki/Github-&-Critic-PR-handling-101).
+For specific git instructions, see [GitHub workflow 101](https://github.com/servo/servo/wiki/Github-workflow).
 
 ## Conduct
 
-We follow the [Rust Code of Conduct](https://github.com/mozilla/rust/wiki/Note-development-policy#wiki-conduct).
+In all Servo-related forums, we follow the [Rust Code of Conduct](http://www.rust-lang.org/conduct.html). For escalation or moderation issues, please contact Jack (jmoffitt@mozilla.com) and Lars (larsberg@mozilla.com) instead of the Rust moderation team.
 
 
 ## Communication

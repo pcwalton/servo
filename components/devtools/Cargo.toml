@@ -1,0 +1,23 @@
+[package]
+name = "devtools"
+version = "0.0.1"
+authors = ["The Servo Project Developers"]
+license = "MPL-2.0"
+publish = false
+
+[lib]
+name = "devtools"
+path = "lib.rs"
+
+[dependencies]
+devtools_traits = {path = "../devtools_traits"}
+hyper = { version = "0.9.9", features = [ "serde-serialization" ] }
+ipc-channel = {git = "https://github.com/servo/ipc-channel"}
+log = "0.3.5"
+msg = {path = "../msg"}
+plugins = {path = "../plugins"}
+serde = "0.7.11"
+serde_json = "0.7"
+serde_macros = "0.7.11"
+time = "0.1"
+util = {path = "../util"}

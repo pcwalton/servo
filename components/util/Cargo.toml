@@ -1,0 +1,34 @@
+[package]
+name = "util"
+version = "0.0.1"
+authors = ["The Servo Project Developers"]
+license = "MPL-2.0"
+publish = false
+
+[lib]
+name = "util"
+path = "lib.rs"
+
+[features]
+# servo as opposed to geckolib
+servo = ["serde", "serde_macros", "ipc-channel", "app_units/plugins",
+         "euclid/plugins", "euclid/unstable", "url/heap_size", "url/serde", "plugins"]
+
+[dependencies]
+app_units = "0.2.5"
+bitflags = "0.7"
+euclid = "0.7.1"
+getopts = "0.2.11"
+heapsize = "0.3.0"
+ipc-channel = {git = "https://github.com/servo/ipc-channel", optional = true}
+lazy_static = "0.2"
+log = "0.3.5"
+num_cpus = "0.2.2"
+rustc-serialize = "0.3"
+serde = {version = "0.7.11", optional = true}
+serde_macros = {version = "0.7.11", optional = true}
+url = "1.0.0"
+plugins = {path = "../plugins", optional = true}
+
+[target.'cfg(all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android")))'.dependencies]
+xdg = "2.0"

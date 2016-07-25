@@ -1,3 +1,13 @@
+/.servo
+/.cargo
+/.servobuild
+/target
+/ports/android/bin
+/ports/android/libs
+/ports/android/local.properties
+/ports/android/obj
+/python/_virtualenv
+/python/tidy/servo_tidy.egg-info
 *~
 *#
 *.o
@@ -10,18 +20,18 @@
 *.pyc
 *.swp
 *.swo
+*.csv
 .DS_Store
 servo-test
 Servo.app
 .config.mk.last
-build*
-objdir
-parser.out
-src/components/script/dom/bindings/codegen/*.rs
-src/components/script/dom/bindings/codegen/_cache/
-src/components/script/dom/bindings/codegen/Bindings/
-src/components/script/dom/bindings/codegen/test/*.rs
-src/components/script/dom/bindings/codegen/RegisterBindings.cpp
-src/components/script/dom/bindings/codegen/PrototypeList.h
-src/components/script/dom/bindings/codegen/UnionTypes.h
-src/components/script/dom/bindings/codegen/UnionConversions.h
+/glfw
+
+# Editors
+
+# IntelliJ
+.idea
+*.iws
+
+# VSCode
+.vscode

@@ -1,0 +1,27 @@
+[package]
+name = "webdriver_server"
+version = "0.0.1"
+authors = ["The Servo Project Developers"]
+license = "MPL-2.0"
+publish = false
+
+[lib]
+name = "webdriver_server"
+path = "lib.rs"
+
+[dependencies]
+euclid = "0.7.1"
+hyper = "0.9.9"
+image = "0.10"
+ipc-channel = {git = "https://github.com/servo/ipc-channel"}
+log = "0.3.5"
+msg = {path = "../msg"}
+plugins = {path = "../plugins"}
+regex = "0.1.55"
+rustc-serialize = "0.3.4"
+script_traits = {path = "../script_traits"}
+url = {version = "1.0.0", features = ["heap_size"]}
+util = {path = "../util"}
+uuid = { version = "0.2", features = ["v4"] }
+webdriver = "0.9"
+cookie = { version = "0.2.5", features = ["serialize-serde", "serialize-rustc" ] }
