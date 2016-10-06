@@ -115,7 +115,12 @@ impl Flow for ListItemFlow {
                                              marker.style.get_font_arc());
             let line_height = text::line_height_from_style(&*marker.style, &font_metrics);
             let item_inline_metrics = InlineMetrics::from_font_metrics(&font_metrics, line_height);
-            let marker_inline_metrics = marker.inline_metrics(layout_context);
+            // FIXME(pcwalton): Factor out `compute_minimum_ascent_and_descent` from `InlineFlow`
+            // into `Fragment` and use it here for minimum ascent and descent.
+            let marker_inline_metrics = marker.aligned_inline_metrics(layout_context,
+                                                                      Au(0),
+                                                                      Au(0),
+                                                                      None);
             marker.border_box.start.b = item_inline_metrics.block_size_above_baseline -
                 marker_inline_metrics.ascent;
             marker.border_box.size.block = marker_inline_metrics.ascent +

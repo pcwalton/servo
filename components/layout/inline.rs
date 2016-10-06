@@ -37,13 +37,8 @@ use style::computed_values::{text_overflow, vertical_align, white_space};
 use style::context::{SharedStyleContext, StyleContext};
 use style::logical_geometry::{LogicalRect, LogicalSize, WritingMode};
 use style::properties::ServoComputedValues;
-use style::values::computed::LengthOrPercentage;
 use text;
 use unicode_bidi;
-
-// From gfxFontConstants.h in Firefox
-static FONT_SUBSCRIPT_OFFSET_RATIO: f32 = 0.20;
-static FONT_SUPERSCRIPT_OFFSET_RATIO: f32 = 0.34;
 
 /// `Line`s are represented as offsets into the child list, rather than
 /// as an object that "owns" fragments. Choosing a different set of line
@@ -193,7 +188,12 @@ impl Line {
     fn new_inline_metrics(&self, new_fragment: &Fragment, layout_context: &LayoutContext)
                           -> InlineMetrics {
         if !new_fragment.is_vertically_aligned_to_top_or_middle_or_bottom() {
-            let fragment_inline_metrics = new_fragment.inline_metrics(layout_context);
+            let fragment_inline_metrics = new_fragment.aligned_inline_metrics(
+                layout_context,
+                self.minimum_block_size_above_baseline,
+                self.minimum_depth_below_baseline,
+                None);
+            //println!("fragment inline metrics={:?}", fragment_inline_metrics);
             self.inline_metrics.max(&fragment_inline_metrics)
         } else {
             self.inline_metrics
@@ -209,7 +209,10 @@ impl Line {
                       layout_context: &LayoutContext)
                       -> Au {
         let new_block_size = if new_fragment.is_vertically_aligned_to_top_or_middle_or_bottom() {
-            max(new_fragment.inline_metrics(layout_context).block_size(),
+            max(new_fragment.aligned_inline_metrics(layout_context,
+                                                    self.minimum_block_size_above_baseline,
+                                                    self.minimum_depth_below_baseline,
+                                                    None).block_size(),
                 self.minimum_block_size_above_baseline + self.minimum_depth_below_baseline)
         } else {
             new_inline_metrics.block_size()
@@ -1054,84 +1057,38 @@ impl InlineFlow {
                                     minimum_depth_below_baseline: Au,
                                     layout_context: &LayoutContext) {
         for fragment_index in line.range.each_index() {
-            // If any of the inline styles say `top` or `bottom`, adjust the vertical align
-            // appropriately.
-            //
-            // FIXME(#5624, pcwalton): This passes our current reftests but isn't the right thing
-            // to do.
             let fragment = fragments.get_mut(fragment_index.to_usize());
-            let fragment_inline_metrics = fragment.inline_metrics(layout_context);
-            let line_block_metrics = LineBlockMetrics::new(line, fragment, layout_context);
-            let mut block_start = line_block_metrics.start +
-                line_block_metrics.size_above_baseline -
-                fragment_inline_metrics.ascent;
+            let line_block_metrics =
+                LineBlockMetrics::for_line_and_fragment(line, fragment, layout_context);
+            //println!("line block metrics={:?}", line_block_metrics);
+            let inline_metrics = fragment.aligned_inline_metrics(layout_context,
+                                                                 minimum_block_size_above_baseline,
+                                                                 minimum_depth_below_baseline,
+                                                                 Some(&line_block_metrics));
 
-            for style in fragment.inline_styles() {
-                match style.get_box().vertical_align {
-                    vertical_align::T::baseline => {}
-                    vertical_align::T::middle => {
-                        // This is easier to understand if you think of it as:
-                        //
-                        //    block_start = line_block_metrics.start +
-                        //      line_block_metrics.size / 2 -
-                        //      (fragment_inline_metrics.ascent +
-                        //       fragment_inline_metrics.depth_below_baseline) / 2
-                        //
-                        // (That is, subtract out the pre-existing `block_start` value.)
-                        block_start = block_start -
-                            line_block_metrics.size_above_baseline +
-                            line_block_metrics.size.scale_by(0.5) +
-                            fragment_inline_metrics.ascent.scale_by(0.5) -
-                            fragment_inline_metrics.depth_below_baseline.scale_by(0.5)
-                    }
-                    vertical_align::T::sub => {
-                        let sub_offset =
-                            (minimum_block_size_above_baseline +
-                             minimum_depth_below_baseline).scale_by(FONT_SUBSCRIPT_OFFSET_RATIO);
-                        block_start = block_start + sub_offset
-                    }
-                    vertical_align::T::super_ => {
-                        let super_offset =
-                            (minimum_block_size_above_baseline +
-                             minimum_depth_below_baseline).scale_by(FONT_SUPERSCRIPT_OFFSET_RATIO);
-                        block_start = block_start - super_offset
-                    }
-                    vertical_align::T::text_top => {
-                        block_start = line_block_metrics.start +
-                            line_block_metrics.size_above_baseline -
-                            minimum_block_size_above_baseline
-                    }
-                    vertical_align::T::text_bottom => {
-                        block_start = line_block_metrics.start +
-                            line_block_metrics.size_above_baseline +
-                            minimum_depth_below_baseline -
-                            fragment.border_box.size.block
-                    }
-                    vertical_align::T::top => {
-                        block_start = line_block_metrics.start
-                    }
-                    vertical_align::T::bottom => {
-                        block_start = line_block_metrics.start + line_block_metrics.size -
-                            fragment.border_box.size.block
-                    }
-                    vertical_align::T::LengthOrPercentage(LengthOrPercentage::Length(length)) => {
-                        block_start = block_start - length
-                    }
-                    vertical_align::T::LengthOrPercentage(LengthOrPercentage::Percentage(
-                            percentage)) => {
-                        let line_height = fragment.calculate_line_height(layout_context);
-                        let length = line_height.scale_by(percentage);
-                        block_start = block_start - length
-                    }
-                    vertical_align::T::LengthOrPercentage(LengthOrPercentage::Calc(calc)) => {
-                        let line_height = fragment.calculate_line_height(layout_context);
-                        let percentage_length = line_height.scale_by(calc.percentage());
-                        block_start = block_start - percentage_length - calc.length()
-                    }
-                }
+            // Align the top of the fragment's border box with its ascent above the baseline.
+            fragment.border_box.start.b =
+                line.bounds.start.b +
+                inline_metrics.block_size_above_baseline -
+                inline_metrics.ascent;
+
+            // CSS 2.1 § 10.8: "The height of each inline-level box in the line box is
+            // calculated. For replaced elements, inline-block elements, and inline-table
+            // elements, this is the height of their margin box; for inline boxes, this is their
+            // 'line-height'."
+            //
+            // CSS 2.1 § 10.8.1: "Although margins, borders, and padding of non-replaced elements
+            // do not enter into the line box calculation, they are still rendered around inline
+            // boxes."
+            //
+            // Effectively, if the fragment is a non-replaced element (excluding inline-block), we
+            // need to align its ascent above the baseline with the top of the *content box*, not
+            // the border box. Since the code above has already aligned it to the border box, we
+            // simply need to adjust it in this case.
+            if !fragment.is_replaced_or_inline_block() {
+                fragment.border_box.start.b -= fragment.border_padding.block_start
             }
 
-            fragment.border_box.start.b = block_start;
             fragment.update_late_computed_block_position_if_necessary();
         }
     }
@@ -1919,19 +1876,20 @@ enum LineFlushMode {
     Flush,
 }
 
-struct LineBlockMetrics {
-    start: Au,
-    size: Au,
-    size_above_baseline: Au,
+#[derive(Copy, Clone, Debug)]
+pub struct LineBlockMetrics {
+    pub block_size_above_baseline: Au,
+    pub depth_below_baseline: Au,
 }
 
 impl LineBlockMetrics {
-    fn new(line: &Line, fragment: &Fragment, layout_context: &LayoutContext) -> LineBlockMetrics {
+    fn for_line_and_fragment(line: &Line, fragment: &Fragment, layout_context: &LayoutContext)
+                             -> LineBlockMetrics {
         if !fragment.is_hypothetical() {
+            let block_size_above_baseline = line.inline_metrics.block_size_above_baseline;
             return LineBlockMetrics {
-                start: line.bounds.start.b,
-                size: line.bounds.size.block,
-                size_above_baseline: line.inline_metrics.block_size_above_baseline,
+                block_size_above_baseline: block_size_above_baseline,
+                depth_below_baseline: line.bounds.size.block - block_size_above_baseline,
             }
         }
 
@@ -1939,10 +1897,11 @@ impl LineBlockMetrics {
         let hypothetical_block_size = line.new_block_size(fragment,
                                                           &hypothetical_inline_metrics,
                                                           layout_context);
+        let hypothetical_block_size_above_baseline =
+            hypothetical_inline_metrics.block_size_above_baseline;
         LineBlockMetrics {
-            start: line.bounds.start.b,
-            size: hypothetical_block_size,
-            size_above_baseline: hypothetical_inline_metrics.block_size_above_baseline,
+            block_size_above_baseline: hypothetical_block_size_above_baseline,
+            depth_below_baseline: hypothetical_block_size - hypothetical_block_size_above_baseline,
         }
     }
 }
