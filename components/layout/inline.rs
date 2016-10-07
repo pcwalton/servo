@@ -1071,7 +1071,6 @@ impl InlineFlow {
             // Align the top of the fragment's border box with its ascent above the baseline.
             fragment.border_box.start.b =
                 line.bounds.start.b +
-                //inline_metrics.block_size_above_baseline -
                 line_block_metrics.block_size_above_baseline -
                 inline_metrics.ascent;
 

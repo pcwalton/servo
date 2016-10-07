@@ -2149,7 +2149,7 @@ impl Fragment {
                                  minimum_depth_below_baseline: Au,
                                  actual_line_metrics: Option<&LineBlockMetrics>)
                                  -> Au {
-        // TODO(pcwalton): Cache `self.content_inline_metrics()` if we need it multiple times?
+        // FIXME(pcwalton): Cache `self.content_inline_metrics()` if we need it multiple times?
         let mut offset = Au(0);
         for style in self.inline_styles() {
             // If any of the inline styles say `top` or `bottom`, adjust the vertical align
@@ -2160,7 +2160,13 @@ impl Fragment {
             match style.get_box().vertical_align {
                 vertical_align::T::baseline => {}
                 vertical_align::T::middle => {
-                    // TODO(pcwalton)
+                    let content_inline_metrics = self.content_inline_metrics(layout_context);
+                    let font_metrics =
+                        text::font_metrics_for_style(&mut layout_context.font_context(),
+                                                     style.get_font_arc());
+                    offset += (content_inline_metrics.ascent -
+                               content_inline_metrics.depth_below_baseline -
+                               font_metrics.x_height).scale_by(0.5)
                 }
                 vertical_align::T::sub => {
                     let height = minimum_block_size_above_baseline + minimum_depth_below_baseline;
@@ -2795,15 +2801,13 @@ impl Fragment {
     /// `vertical-align` set to `top`, `middle`, or `bottom`.
     pub fn is_vertically_aligned_to_top_or_middle_or_bottom(&self) -> bool {
         match self.style.get_box().vertical_align {
-            vertical_align::T::top | vertical_align::T::middle |
-            vertical_align::T::bottom => return true,
+            vertical_align::T::top | vertical_align::T::bottom => return true,
             _ => {}
         }
         if let Some(ref inline_context) = self.inline_context {
             for node in &inline_context.nodes {
                 match node.style.get_box().vertical_align {
-                    vertical_align::T::top | vertical_align::T::middle |
-                    vertical_align::T::bottom => return true,
+                    vertical_align::T::top | vertical_align::T::bottom => return true,
                     _ => {}
                 }
             }
