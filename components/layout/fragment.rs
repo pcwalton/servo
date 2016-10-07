@@ -1139,13 +1139,6 @@ impl Fragment {
         }
     }
 
-    pub fn calculate_line_height(&self, layout_context: &LayoutContext) -> Au {
-        let font_style = self.style.get_font_arc();
-        let font_metrics = text::font_metrics_for_style(&mut layout_context.font_context(),
-                                                        font_style);
-        text::line_height_from_style(&*self.style, &font_metrics)
-    }
-
     /// Returns the sum of the inline-sizes of all the borders of this fragment. Note that this
     /// can be expensive to compute, so if possible use the `border_padding` field instead.
     #[inline]
@@ -2093,7 +2086,10 @@ impl Fragment {
                     return InlineMetrics::new(Au(0), Au(0), Au(0));
                 }
                 // See CSS 2.1 § 10.8.1.
-                let line_height = self.calculate_line_height(layout_context);
+                let font_metrics = text::font_metrics_for_style(&mut layout_context.font_context(),
+                                                                self.style.get_font_arc());
+                let line_height = text::line_height_from_style(&*self.style, &font_metrics);
+                //println!("ScannedText font metrics={:?}", info.run.font_metrics);
                 InlineMetrics::from_font_metrics(&info.run.font_metrics, line_height)
             }
             SpecificFragmentInfo::InlineBlock(ref info) => {
@@ -2219,6 +2215,9 @@ impl Fragment {
     /// If `actual_line_metrics` is supplied, then these metrics are used to determine the
     /// displacement of the fragment when `top` or `bottom` `vertical-align` values are
     /// encountered. If this is not supplied, then `top` and `bottom` values are ignored.
+    ///
+    /// FIXME(pcwalton): `block_size_above_baseline` is not useful if `actual_line_metrics` is
+    /// present; refactor
     pub fn aligned_inline_metrics(&self,
                                   layout_context: &LayoutContext,
                                   minimum_block_size_above_baseline: Au,
@@ -2231,15 +2230,18 @@ impl Fragment {
                                            minimum_block_size_above_baseline,
                                            minimum_depth_below_baseline,
                                            actual_line_metrics);
-        // FIXME(pcwalton): max this with the new ascent?
-        let ascent = content_inline_metrics.ascent - vertical_alignment_offset;
+        //let ascent = content_inline_metrics.block_size_above_baseline - vertical_alignment_offset;
         let mut block_size_above_baseline = match actual_line_metrics {
             None => content_inline_metrics.block_size_above_baseline,
             Some(actual_line_metrics) => actual_line_metrics.block_size_above_baseline,
         };
-        block_size_above_baseline = max(ascent, block_size_above_baseline);
+        //block_size_above_baseline = max(ascent, block_size_above_baseline);
+        block_size_above_baseline = max(Au(0),
+                                        block_size_above_baseline - vertical_alignment_offset);
         let depth_below_baseline =
             max(Au(0), content_inline_metrics.depth_below_baseline + vertical_alignment_offset);
+        let ascent =
+            max(Au(0), content_inline_metrics.ascent - vertical_alignment_offset);
         InlineMetrics::new(block_size_above_baseline, depth_below_baseline, ascent)
     }
 

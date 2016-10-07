@@ -193,7 +193,10 @@ impl Line {
                 self.minimum_block_size_above_baseline,
                 self.minimum_depth_below_baseline,
                 None);
-            //println!("fragment inline metrics={:?}", fragment_inline_metrics);
+            /*println!("fragment={:?} inline_metrics={:?} existing line inline_metrics={:?}",
+                     new_fragment,
+                     fragment_inline_metrics,
+                     self.inline_metrics);*/
             self.inline_metrics.max(&fragment_inline_metrics)
         } else {
             self.inline_metrics
@@ -1060,7 +1063,6 @@ impl InlineFlow {
             let fragment = fragments.get_mut(fragment_index.to_usize());
             let line_block_metrics =
                 LineBlockMetrics::for_line_and_fragment(line, fragment, layout_context);
-            //println!("line block metrics={:?}", line_block_metrics);
             let inline_metrics = fragment.aligned_inline_metrics(layout_context,
                                                                  minimum_block_size_above_baseline,
                                                                  minimum_depth_below_baseline,
@@ -1069,7 +1071,8 @@ impl InlineFlow {
             // Align the top of the fragment's border box with its ascent above the baseline.
             fragment.border_box.start.b =
                 line.bounds.start.b +
-                inline_metrics.block_size_above_baseline -
+                //inline_metrics.block_size_above_baseline -
+                line_block_metrics.block_size_above_baseline -
                 inline_metrics.ascent;
 
             // CSS 2.1 § 10.8: "The height of each inline-level box in the line box is
@@ -1111,6 +1114,11 @@ impl InlineFlow {
         let font_metrics = text::font_metrics_for_style(font_context, font_style);
         let line_height = text::line_height_from_style(style, &font_metrics);
         let inline_metrics = InlineMetrics::from_font_metrics(&font_metrics, line_height);
+        /*println!("compute_minimum_ascent_and_descent font_metrics={:?} line_height={:?} \
+                 inline_metrics={:?}",
+                 font_metrics,
+                 line_height,
+                 inline_metrics);*/
 
         let mut block_size_above_baseline = Au(0);
         let mut depth_below_baseline = Au(i32::MIN);
@@ -1157,6 +1165,9 @@ impl InlineFlow {
             max(depth_below_baseline,
                 largest_block_size_for_top_fragments - block_size_above_baseline);
 
+        /*println!("... compute_minimum_ascent_and_descent result=({:?},{:?})",
+                 block_size_above_baseline,
+                 depth_below_baseline);*/
         return (block_size_above_baseline, depth_below_baseline);
 
         fn update_inline_metrics(inline_metrics: &InlineMetrics,
@@ -1844,16 +1855,23 @@ impl InlineMetrics {
     #[inline]
     pub fn from_font_metrics(font_metrics: &FontMetrics, line_height: Au) -> InlineMetrics {
         let leading = line_height - (font_metrics.ascent + font_metrics.descent);
+        /*println!("InlineMetrics::from_font_metrics(): leading={:?} font_metrics={:?} \
+                  line_height={:?}",
+                 leading,
+                 font_metrics,
+                 line_height);*/
         // Calculating the half leading here and then using leading - half_leading
         // below ensure that we don't introduce any rounding accuracy issues here.
         // The invariant is that the resulting total line height must exactly
         // equal the requested line_height.
         let half_leading = leading.scale_by(0.5);
-        InlineMetrics {
+        let inline_metrics = InlineMetrics {
             block_size_above_baseline: font_metrics.ascent + half_leading,
             depth_below_baseline: font_metrics.descent + leading - half_leading,
             ascent: font_metrics.ascent,
-        }
+        };
+        //println!("... inline_metrics={:?}", inline_metrics);
+        inline_metrics
     }
 
     pub fn block_size(&self) -> Au {
