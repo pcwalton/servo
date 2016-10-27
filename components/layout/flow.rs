@@ -704,7 +704,7 @@ impl FlowFlags {
 }
 
 /// Absolutely-positioned descendants of this flow.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct AbsoluteDescendants {
     /// Links to every descendant. This must be private because it is unsafe to leak `FlowRef`s to
     /// layout.
@@ -758,7 +758,7 @@ impl AbsoluteDescendants {
 }
 
 /// Information about each absolutely-positioned descendant of the given flow.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct AbsoluteDescendantInfo {
     /// The absolute descendant flow in question.
     flow: FlowRef,

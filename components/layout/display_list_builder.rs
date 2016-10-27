@@ -1247,6 +1247,7 @@ impl FragmentDisplayListBuilding for Fragment {
             SpecificFragmentInfo::InlineBlock(_) |
             SpecificFragmentInfo::InlineAbsoluteHypothetical(_) |
             SpecificFragmentInfo::InlineAbsolute(_) |
+            SpecificFragmentInfo::InlineFloatCeiling(_) |
             SpecificFragmentInfo::Svg(_) => {
                 if opts::get().show_debug_fragment_borders {
                     self.build_debug_borders_around_fragment(state,
@@ -1877,6 +1878,10 @@ impl InlineFlowDisplayListBuilding for InlineFlow {
                     block_flow.collect_stacking_contexts(parent);
                 }
                 SpecificFragmentInfo::InlineAbsoluteHypothetical(ref mut block_flow) => {
+                    let block_flow = flow_ref::deref_mut(&mut block_flow.flow_ref);
+                    block_flow.collect_stacking_contexts(parent);
+                }
+                SpecificFragmentInfo::InlineFloatCeiling(ref mut block_flow) => {
                     let block_flow = flow_ref::deref_mut(&mut block_flow.flow_ref);
                     block_flow.collect_stacking_contexts(parent);
                 }

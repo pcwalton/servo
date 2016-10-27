@@ -169,6 +169,9 @@ pub enum SpecificFragmentInfo {
     /// a positioned inline fragment).
     InlineAbsolute(InlineAbsoluteFragmentInfo),
 
+    /// A placeholder box that marks the ceiling of a float (see CSS 2.1 § 9.5.1, rules 5 and 6).
+    InlineFloatCeiling(InlineFloatCeilingInfo),
+
     ScannedText(Box<ScannedTextFragmentInfo>),
     Table,
     TableCell,
@@ -202,6 +205,7 @@ impl SpecificFragmentInfo {
                 SpecificFragmentInfo::InlineAbsoluteHypothetical(ref info) => &info.flow_ref,
                 SpecificFragmentInfo::InlineAbsolute(ref info) => &info.flow_ref,
                 SpecificFragmentInfo::InlineBlock(ref info) => &info.flow_ref,
+                SpecificFragmentInfo::InlineFloatCeiling(ref info) => &info.flow_ref,
             };
 
         flow::base(&**flow).restyle_damage
@@ -219,6 +223,9 @@ impl SpecificFragmentInfo {
                 "SpecificFragmentInfo::InlineAbsoluteHypothetical"
             }
             SpecificFragmentInfo::InlineBlock(_) => "SpecificFragmentInfo::InlineBlock",
+            SpecificFragmentInfo::InlineFloatCeiling(_) => {
+                "SpecificFragmentInfo::InlineFloatCeiling"
+            }
             SpecificFragmentInfo::ScannedText(_) => "SpecificFragmentInfo::ScannedText",
             SpecificFragmentInfo::Svg(_) => "SpecificFragmentInfo::Svg",
             SpecificFragmentInfo::Table => "SpecificFragmentInfo::Table",
@@ -315,6 +322,23 @@ pub struct InlineAbsoluteFragmentInfo {
 impl InlineAbsoluteFragmentInfo {
     pub fn new(flow_ref: FlowRef) -> InlineAbsoluteFragmentInfo {
         InlineAbsoluteFragmentInfo {
+            flow_ref: flow_ref,
+        }
+    }
+}
+
+/// A placeholder box that marks the ceiling of a float (see CSS 2.1 § 9.5.1, rules 5 and 6).
+///
+/// FIXME(pcwalton): Stop leaking this `FlowRef` to layout; that is not memory safe because layout
+/// can clone it.
+#[derive(Clone)]
+pub struct InlineFloatCeilingInfo {
+    pub flow_ref: FlowRef,
+}
+
+impl InlineFloatCeilingInfo {
+    pub fn new(flow_ref: FlowRef) -> InlineFloatCeilingInfo {
+        InlineFloatCeilingInfo {
             flow_ref: flow_ref,
         }
     }
@@ -897,7 +921,10 @@ impl TableColumnFragmentInfo {
 
 impl Fragment {
     /// Constructs a new `Fragment` instance.
-    pub fn new<N: ThreadSafeLayoutNode>(node: &N, specific: SpecificFragmentInfo, ctx: &LayoutContext) -> Fragment {
+    pub fn new<N: ThreadSafeLayoutNode>(node: &N,
+                                        specific: SpecificFragmentInfo,
+                                        ctx: &LayoutContext)
+                                        -> Fragment {
         let style_context = ctx.style_context();
         let style = node.style(style_context);
         let writing_mode = style.writing_mode;
@@ -1113,6 +1140,7 @@ impl Fragment {
             SpecificFragmentInfo::TableColumn(_) |
             SpecificFragmentInfo::UnscannedText(_) |
             SpecificFragmentInfo::InlineAbsoluteHypothetical(_) |
+            SpecificFragmentInfo::InlineFloatCeiling(_) |
             SpecificFragmentInfo::InlineBlock(_) |
             SpecificFragmentInfo::MulticolColumn => {
                 QuantitiesIncludedInIntrinsicInlineSizes::empty()
@@ -1267,7 +1295,8 @@ impl Fragment {
             SpecificFragmentInfo::TableCell |
             SpecificFragmentInfo::TableRow |
             SpecificFragmentInfo::TableColumn(_) |
-            SpecificFragmentInfo::InlineAbsoluteHypothetical(_) => {
+            SpecificFragmentInfo::InlineAbsoluteHypothetical(_) |
+            SpecificFragmentInfo::InlineFloatCeiling(_) => {
                 self.margin.inline_start = Au(0);
                 self.margin.inline_end = Au(0);
                 return
@@ -1528,7 +1557,8 @@ impl Fragment {
             SpecificFragmentInfo::TableWrapper |
             SpecificFragmentInfo::Multicol |
             SpecificFragmentInfo::MulticolColumn |
-            SpecificFragmentInfo::InlineAbsoluteHypothetical(_) => {}
+            SpecificFragmentInfo::InlineAbsoluteHypothetical(_) |
+            SpecificFragmentInfo::InlineFloatCeiling(_) => {}
             SpecificFragmentInfo::InlineBlock(ref info) => {
                 let block_flow = info.flow_ref.as_block();
                 result.union_block(&block_flow.base.intrinsic_inline_sizes)
@@ -1680,7 +1710,8 @@ impl Fragment {
             SpecificFragmentInfo::MulticolColumn |
             SpecificFragmentInfo::InlineBlock(_) |
             SpecificFragmentInfo::InlineAbsoluteHypothetical(_) |
-            SpecificFragmentInfo::InlineAbsolute(_) => Au(0),
+            SpecificFragmentInfo::InlineAbsolute(_) |
+            SpecificFragmentInfo::InlineFloatCeiling(_) => Au(0),
             SpecificFragmentInfo::Canvas(ref canvas_fragment_info) => {
                 canvas_fragment_info.replaced_image_fragment_info.computed_inline_size()
             }
@@ -1976,6 +2007,7 @@ impl Fragment {
             SpecificFragmentInfo::InlineBlock(_) |
             SpecificFragmentInfo::InlineAbsoluteHypothetical(_) |
             SpecificFragmentInfo::InlineAbsolute(_) |
+            SpecificFragmentInfo::InlineFloatCeiling(_) |
             SpecificFragmentInfo::ScannedText(_) |
             SpecificFragmentInfo::Svg(_) => {}
         };
@@ -1990,6 +2022,16 @@ impl Fragment {
                     block_flow.base.intrinsic_inline_sizes.preferred_inline_size;
 
                 // This is a hypothetical box, so it takes up no space.
+                self.border_box.size.inline = Au(0);
+            }
+            SpecificFragmentInfo::InlineFloatCeiling(ref mut info) => {
+                let block_flow = flow_ref::deref_mut(&mut info.flow_ref).as_mut_block();
+                block_flow.base.block_container_inline_size =
+                    max(block_flow.base.intrinsic_inline_sizes.minimum_inline_size,
+                        block_flow.base.intrinsic_inline_sizes.preferred_inline_size);
+                block_flow.base.block_container_writing_mode = self.style.writing_mode;
+
+                // This is essentially a hypothetical box, so it takes up no space.
                 self.border_box.size.inline = Au(0);
             }
             SpecificFragmentInfo::InlineBlock(ref mut info) => {
@@ -2085,6 +2127,7 @@ impl Fragment {
             SpecificFragmentInfo::InlineBlock(_) |
             SpecificFragmentInfo::InlineAbsoluteHypothetical(_) |
             SpecificFragmentInfo::InlineAbsolute(_) |
+            SpecificFragmentInfo::InlineFloatCeiling(_) |
             SpecificFragmentInfo::ScannedText(_) |
             SpecificFragmentInfo::Svg(_) => {}
         }
@@ -2148,6 +2191,11 @@ impl Fragment {
                 self.border_box.size.block = block_flow.base.position.size.block +
                     block_flow.fragment.margin.block_start_end()
             }
+            SpecificFragmentInfo::InlineFloatCeiling(ref mut info) => {
+                // Not the primary fragment, so we do not take the noncontent size into account.
+                let block_flow = flow_ref::deref_mut(&mut info.flow_ref).as_block();
+                self.border_box.size.block = block_flow.base.position.size.block;
+            }
             SpecificFragmentInfo::Iframe(ref info) => {
                 self.border_box.size.block =
                     info.calculate_replaced_block_size(style, containing_block_block_size) +
@@ -2169,6 +2217,7 @@ impl Fragment {
             SpecificFragmentInfo::Generic |
             SpecificFragmentInfo::GeneratedContent(_) |
             SpecificFragmentInfo::InlineAbsolute(_) |
+            SpecificFragmentInfo::InlineFloatCeiling(_) |
             SpecificFragmentInfo::Table |
             SpecificFragmentInfo::TableCell |
             SpecificFragmentInfo::TableColumn(_) |
@@ -2221,6 +2270,9 @@ impl Fragment {
                 inline_metrics_of_block(&info.flow_ref, &*self.style)
             }
             SpecificFragmentInfo::InlineAbsoluteHypothetical(ref info) => {
+                inline_metrics_of_block(&info.flow_ref, &*self.style)
+            }
+            SpecificFragmentInfo::InlineFloatCeiling(ref info) => {
                 inline_metrics_of_block(&info.flow_ref, &*self.style)
             }
             SpecificFragmentInfo::InlineAbsolute(_) => {
@@ -2373,7 +2425,8 @@ impl Fragment {
     /// Returns true if this fragment is a hypothetical box. See CSS 2.1 § 10.3.7.
     pub fn is_hypothetical(&self) -> bool {
         match self.specific {
-            SpecificFragmentInfo::InlineAbsoluteHypothetical(_) => true,
+            SpecificFragmentInfo::InlineAbsoluteHypothetical(_) |
+            SpecificFragmentInfo::InlineFloatCeiling(_) => true,
             _ => false,
         }
     }
@@ -2458,6 +2511,7 @@ impl Fragment {
             SpecificFragmentInfo::InlineBlock(_) |
             SpecificFragmentInfo::InlineAbsoluteHypothetical(_) |
             SpecificFragmentInfo::InlineAbsolute(_) |
+            SpecificFragmentInfo::InlineFloatCeiling(_) |
             SpecificFragmentInfo::MulticolColumn |
             SpecificFragmentInfo::TableWrapper => false,
             SpecificFragmentInfo::Canvas(_) |
@@ -2935,6 +2989,7 @@ impl Fragment {
             SpecificFragmentInfo::InlineAbsolute(_) |
             SpecificFragmentInfo::InlineAbsoluteHypothetical(_) |
             SpecificFragmentInfo::InlineBlock(_) |
+            SpecificFragmentInfo::InlineFloatCeiling(_) |
             SpecificFragmentInfo::Multicol |
             SpecificFragmentInfo::MulticolColumn |
             SpecificFragmentInfo::Table |
@@ -2949,6 +3004,13 @@ impl Fragment {
             SpecificFragmentInfo::ScannedText(_) |
             SpecificFragmentInfo::Svg(_) |
             SpecificFragmentInfo::UnscannedText(_) => true
+        }
+    }
+
+    pub fn is_inline_float_ceiling(&self) -> bool {
+        match self.specific {
+            SpecificFragmentInfo::InlineFloatCeiling(_) => true,
+            _ => false,
         }
     }
 }

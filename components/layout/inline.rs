@@ -34,7 +34,7 @@ use style::arc_ptr_eq;
 use style::computed_values::{display, overflow_x, position, text_align, text_justify};
 use style::computed_values::{text_overflow, vertical_align, white_space};
 use style::context::{SharedStyleContext, StyleContext};
-use style::logical_geometry::{LogicalRect, LogicalSize, WritingMode};
+use style::logical_geometry::{LogicalPoint, LogicalRect, LogicalSize, WritingMode};
 use style::properties::ServoComputedValues;
 use text;
 use unicode_bidi;
@@ -517,6 +517,29 @@ impl LineBreaker {
         false
     }
 
+    fn place_float(&mut self, mut fragment: Fragment, layout_context: &LayoutContext) {
+        match fragment.specific {
+            SpecificFragmentInfo::InlineFloatCeiling(ref mut info) => {
+                let mut kid = flow_ref::deref_mut(&mut info.flow_ref);
+
+                {
+                    let kid_block = kid.as_mut_block();
+                    debug_assert!(kid_block.base.flags.is_float());
+                    kid_block.base.floats = self.floats.clone();
+                    kid_block.base.position.start =
+                        LogicalPoint::new(kid_block.fragment.style.writing_mode, Au(0), Au(0));
+                    kid_block.float.as_mut().unwrap().float_ceiling = self.cur_b
+                }
+
+                kid.place_float_if_applicable();
+                self.floats = flow::mut_base(kid).floats.clone()
+            } 
+            _ => unreachable!("place_float(): Not an inline float ceiling fragment!"),
+        };
+
+        self.push_fragment_to_line(layout_context, fragment, LineFlushMode::No);
+    }
+
     /// Tries to append the given fragment to the line, splitting it if necessary. Commits the
     /// current line if needed.
     fn reflow_fragment(&mut self,
@@ -525,6 +548,11 @@ impl LineBreaker {
                        layout_context: &LayoutContext) {
         // Undo any whitespace stripping from previous reflows.
         fragment.reset_text_range_and_inline_size();
+
+        if fragment.is_inline_float_ceiling() {
+            self.place_float(fragment, layout_context);
+            return
+        }
 
         // Determine initial placement for the fragment if we need to.
         //
@@ -540,7 +568,7 @@ impl LineBreaker {
         };
 
         debug!("LineBreaker: trying to append to line {} (fragment size: {:?}, green zone: {:?}): \
-               {:?}",
+                {:?}",
                self.lines.len(),
                fragment.border_box.size,
                self.pending_line.green_zone,
@@ -595,7 +623,8 @@ impl LineBreaker {
         // If the wrapping mode prevents us from splitting, then back up and split at the last
         // known good split point.
         if !fragment.white_space().allow_wrap() {
-            debug!("LineBreaker: fragment can't split; falling back to last known good split point");
+            debug!("LineBreaker: fragment can't split; falling back to last known good split \
+                    point");
             self.split_line_at_last_known_good_position(layout_context, fragment, line_flush_mode);
             return;
         }
@@ -642,7 +671,8 @@ impl LineBreaker {
                         node.flags.remove(LAST_FRAGMENT_OF_ELEMENT);
                     }
                 }
-                inline_start_fragment.border_box.size.inline += inline_start_fragment.border_padding.inline_start;
+                inline_start_fragment.border_box.size.inline +=
+                    inline_start_fragment.border_padding.inline_start;
 
                 inline_end_fragment.border_padding.inline_start = Au(0);
                 if let Some(ref mut inline_context) = inline_end_fragment.inline_context {
@@ -650,7 +680,8 @@ impl LineBreaker {
                         node.flags.remove(FIRST_FRAGMENT_OF_ELEMENT);
                     }
                 }
-                inline_end_fragment.border_box.size.inline += inline_end_fragment.border_padding.inline_end;
+                inline_end_fragment.border_box.size.inline +=
+                    inline_end_fragment.border_padding.inline_end;
 
                 self.push_fragment_to_line(layout_context,
                                            inline_start_fragment,
@@ -671,7 +702,7 @@ impl LineBreaker {
 
     /// Pushes a fragment to the current line unconditionally, possibly truncating it and placing
     /// an ellipsis based on the value of `text-overflow`. If `flush_line` is `Flush`, then flushes
-    /// the line afterward;
+    /// the line afterward.
     fn push_fragment_to_line(&mut self,
                              layout_context: &LayoutContext,
                              fragment: Fragment,
@@ -1194,6 +1225,9 @@ impl InlineFlow {
                         ref inline_absolute_hypothetical) => {
                     OpaqueFlow::from_flow(&*inline_absolute_hypothetical.flow_ref) == opaque_flow
                 }
+                SpecificFragmentInfo::InlineFloatCeiling(ref inline_float_ceiling) => {
+                    OpaqueFlow::from_flow(&*inline_float_ceiling.flow_ref) == opaque_flow
+                }
                 _ => false,
             }
         }) {
@@ -1547,6 +1581,9 @@ impl Flow for InlineFlow {
             let stacking_relative_content_box =
                 fragment.stacking_relative_content_box(&stacking_relative_border_box);
 
+            let container_size_for_children =
+                self.base.position.size.to_physical(self.base.writing_mode);
+
             let is_positioned = fragment.is_positioned();
             match fragment.specific {
                 SpecificFragmentInfo::InlineBlock(ref mut info) => {
@@ -1579,6 +1616,27 @@ impl Flow for InlineFlow {
 
                     block_flow.base.stacking_relative_position =
                         stacking_relative_border_box.origin;
+
+                    // As above, this is in our coordinate system for now.
+                    block_flow.base.clip = self.base.clip.clone()
+                }
+                SpecificFragmentInfo::InlineFloatCeiling(ref mut info) => {
+                    let flow = flow_ref::deref_mut(&mut info.flow_ref);
+                    let block_flow = flow.as_mut_block();
+                    block_flow.base.late_absolute_position_info =
+                        self.base.late_absolute_position_info;
+
+                    let origin_for_children = self.base.stacking_relative_position;
+                    let physical_position =
+                        block_flow.base.position.start.to_physical(block_flow.base.writing_mode,
+                                                                   container_size_for_children);
+                    /*println!("origin_for_children={:?} physical_position={:?}",
+                             origin_for_children,
+                             physical_position);*/
+                    block_flow.base.stacking_relative_position = origin_for_children +
+                        physical_position;
+                    /*block_flow.base.stacking_relative_position =
+                        stacking_relative_border_box.origin;*/
 
                     // As above, this is in our coordinate system for now.
                     block_flow.base.clip = self.base.clip.clone()
