@@ -522,6 +522,15 @@ impl LineBreaker {
             SpecificFragmentInfo::InlineFloatCeiling(ref mut info) => {
                 let mut kid = flow_ref::deref_mut(&mut info.flow_ref);
 
+                if self.pending_line.bounds.size.inline > Au(0) {
+                    self.floats.add_float(&PlacementInfo {
+                        size: self.pending_line.bounds.size,
+                        ceiling: self.pending_line.bounds.start.b,
+                        max_inline_size: self.pending_line.green_zone.inline,
+                        kind: FloatKind::Left,
+                    })
+                }
+
                 {
                     let kid_block = kid.as_mut_block();
                     debug_assert!(kid_block.base.flags.is_float());

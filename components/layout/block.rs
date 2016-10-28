@@ -1132,12 +1132,17 @@ impl BlockFlow {
         let inline_size_for_float_placement = self.base.position.size.inline +
             min(Au(0), self.fragment.margin.inline_start_end());
 
+        let block_margin = max(Au(0), self.fragment.margin.block_start) +
+            /*max(Au(0), */self.fragment.margin.block_end/*)*/;
         let info = PlacementInfo {
-            size: LogicalSize::new(
-                self.fragment.style.writing_mode,
-                inline_size_for_float_placement,
-                block_size + self.fragment.margin.block_start_end())
-                      .convert(self.fragment.style.writing_mode, self.base.floats.writing_mode),
+            size: LogicalSize::new(self.fragment.style.writing_mode,
+                                   inline_size_for_float_placement,
+                                   block_size + block_margin).convert(self.fragment
+                                                                          .style
+                                                                          .writing_mode,
+                                                                      self.base
+                                                                          .floats
+                                                                          .writing_mode),
             ceiling: clearance + float_info.float_ceiling,
             max_inline_size: float_info.containing_inline_size,
             kind: float_info.float_kind,
@@ -1157,10 +1162,17 @@ impl BlockFlow {
                                                     self.base.writing_mode,
                                                     container_size)
                                            .start;
-        let margin_offset = LogicalPoint::new(self.base.writing_mode,
-                                              Au(0),
-                                              self.fragment.margin.block_start);
 
+        let mut margin_block_offset = self.fragment.margin.block_start;
+        /*if self.fragment.margin.block_end < Au(0) {
+            margin_block_offset += self.fragment.margin.block_end
+        }*/
+        //let mut margin_block_offset = Au(0);
+        /*println!("flow margin={:?} margin_block_offset={:?}",
+                 self.fragment.margin,
+                 margin_block_offset);*/
+
+        let margin_offset = LogicalPoint::new(self.base.writing_mode, Au(0), margin_block_offset);
         let mut origin = LogicalPoint::new(self.base.writing_mode,
                                            self.base.position.start.i,
                                            self.base.position.start.b);
