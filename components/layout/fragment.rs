@@ -1557,13 +1557,16 @@ impl Fragment {
             SpecificFragmentInfo::TableWrapper |
             SpecificFragmentInfo::Multicol |
             SpecificFragmentInfo::MulticolColumn |
-            SpecificFragmentInfo::InlineAbsoluteHypothetical(_) |
-            SpecificFragmentInfo::InlineFloatCeiling(_) => {}
+            SpecificFragmentInfo::InlineAbsoluteHypothetical(_) => {}
             SpecificFragmentInfo::InlineBlock(ref info) => {
                 let block_flow = info.flow_ref.as_block();
                 result.union_block(&block_flow.base.intrinsic_inline_sizes)
             }
             SpecificFragmentInfo::InlineAbsolute(ref info) => {
+                let block_flow = info.flow_ref.as_block();
+                result.union_block(&block_flow.base.intrinsic_inline_sizes)
+            }
+            SpecificFragmentInfo::InlineFloatCeiling(ref info) => {
                 let block_flow = info.flow_ref.as_block();
                 result.union_block(&block_flow.base.intrinsic_inline_sizes)
             }

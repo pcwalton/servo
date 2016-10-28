@@ -1292,8 +1292,15 @@ impl Flow for InlineFlow {
         let mut intrinsic_sizes_for_flow = IntrinsicISizesContribution::new();
         let mut intrinsic_sizes_for_inline_run = IntrinsicISizesContribution::new();
         let mut intrinsic_sizes_for_nonbroken_run = IntrinsicISizesContribution::new();
+        let mut intrinsic_sizes_for_floats = IntrinsicISizesContribution::new();
         for fragment in &mut self.fragments.fragments {
             let intrinsic_sizes_for_fragment = fragment.compute_intrinsic_inline_sizes().finish();
+            if fragment.is_inline_float_ceiling() {
+                // FIXME(pcwalton): This should probably take `clear` into account.
+                intrinsic_sizes_for_floats.union_block(&intrinsic_sizes_for_fragment);
+                continue
+            }
+
             match fragment.style.get_inheritedtext().white_space {
                 white_space::T::nowrap => {
                     intrinsic_sizes_for_nonbroken_run.union_nonbreaking_inline(
@@ -1353,9 +1360,10 @@ impl Flow for InlineFlow {
             }
         }
 
-        // Flush any remaining nonbroken-run and inline-run intrinsic sizes.
+        // Flush any remaining nonbroken-run, inline-run, and float intrinsic sizes.
         intrinsic_sizes_for_inline_run.union_inline(&intrinsic_sizes_for_nonbroken_run.finish());
         intrinsic_sizes_for_flow.union_block(&intrinsic_sizes_for_inline_run.finish());
+        intrinsic_sizes_for_flow.union_block(&intrinsic_sizes_for_floats.finish());
 
         // Finish up the computation.
         self.base.intrinsic_inline_sizes = intrinsic_sizes_for_flow.finish()
