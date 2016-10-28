@@ -232,6 +232,8 @@ struct LineBreaker {
     first_line_indentation: Au,
     /// The minimum metrics for each line, as specified by the line height and font style.
     minimum_metrics: LineMetrics,
+    /// The inline size of the last red zone added.
+    last_red_zone_size: Au,
 }
 
 impl LineBreaker {
@@ -248,6 +250,7 @@ impl LineBreaker {
             last_known_line_breaking_opportunity: None,
             first_line_indentation: first_line_indentation,
             minimum_metrics: *minimum_line_metrics,
+            last_red_zone_size: Au(0),
         }
     }
 
@@ -262,6 +265,7 @@ impl LineBreaker {
     /// Reinitializes the pending line to blank data.
     fn reset_line(&mut self) -> Line {
         self.last_known_line_breaking_opportunity = None;
+        self.last_red_zone_size = Au(0);
         mem::replace(&mut self.pending_line,
                      Line::new(self.floats.writing_mode, &self.minimum_metrics))
     }
@@ -521,22 +525,27 @@ impl LineBreaker {
         match fragment.specific {
             SpecificFragmentInfo::InlineFloatCeiling(ref mut info) => {
                 let mut kid = flow_ref::deref_mut(&mut info.flow_ref);
+                let writing_mode = flow::base(kid).writing_mode;
 
-                if self.pending_line.bounds.size.inline > Au(0) {
+                if self.pending_line.bounds.size.inline > self.last_red_zone_size {
+                    let next_red_zone_size = self.pending_line.bounds.size.inline -
+                        self.last_red_zone_size;
                     self.floats.add_float(&PlacementInfo {
-                        size: self.pending_line.bounds.size,
+                        size: LogicalSize::new(writing_mode,
+                                               next_red_zone_size,
+                                               self.pending_line.bounds.size.block),
                         ceiling: self.pending_line.bounds.start.b,
                         max_inline_size: self.pending_line.green_zone.inline,
                         kind: FloatKind::Left,
-                    })
+                    });
+                    self.last_red_zone_size = self.pending_line.bounds.size.inline
                 }
 
                 {
                     let kid_block = kid.as_mut_block();
                     debug_assert!(kid_block.base.flags.is_float());
                     kid_block.base.floats = self.floats.clone();
-                    kid_block.base.position.start =
-                        LogicalPoint::new(kid_block.fragment.style.writing_mode, Au(0), Au(0));
+                    kid_block.base.position.start = LogicalPoint::new(writing_mode, Au(0), Au(0));
                     kid_block.float.as_mut().unwrap().float_ceiling = self.cur_b
                 }
 
