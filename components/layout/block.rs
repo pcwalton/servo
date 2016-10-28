@@ -32,7 +32,7 @@ use context::{LayoutContext, SharedLayoutContext};
 use display_list_builder::{BorderPaintingMode, DisplayListBuildState, FragmentDisplayListBuilding};
 use display_list_builder::BlockFlowDisplayListBuilding;
 use euclid::{Point2D, Size2D};
-use floats::{ClearType, FloatKind, Floats, PlacementInfo};
+use floats::{ClearType, FloatIntrinsicSizeAccumulator, FloatKind, Floats, PlacementInfo};
 use flow::{self, BaseFlow, EarlyAbsolutePositionInfo, Flow, FlowClass, ForceNonfloatedFlag};
 use flow::{BLOCK_POSITION_IS_STATIC, CLEARS_LEFT, CLEARS_RIGHT};
 use flow::{CONTAINS_TEXT_OR_REPLACED_FRAGMENTS, INLINE_POSITION_IS_STATIC};
@@ -1635,13 +1635,14 @@ impl BlockFlow {
         // FIXME(pcwalton): This doesn't exactly follow that algorithm at the moment.
         // FIXME(pcwalton): This should consider all float descendants, not just children.
         let mut computation = self.fragment.compute_intrinsic_inline_sizes();
-        let (mut left_float_width, mut right_float_width) = (Au(0), Au(0));
-        let (mut left_float_width_accumulator, mut right_float_width_accumulator) = (Au(0), Au(0));
+        let mut float_accumulator = FloatIntrinsicSizeAccumulator::new();
         let mut preferred_inline_size_of_children_without_text_or_replaced_fragments = Au(0);
         for kid in self.base.child_iter_mut() {
             if flow::base(kid).flags.contains(IS_ABSOLUTELY_POSITIONED) || !consult_children {
                 continue
             }
+
+            float_accumulator.union_block(kid);
 
             let child_base = flow::mut_base(kid);
             let float_kind = child_base.flags.float_kind();
@@ -1649,43 +1650,20 @@ impl BlockFlow {
                 max(computation.content_intrinsic_sizes.minimum_inline_size,
                     child_base.intrinsic_inline_sizes.minimum_inline_size);
 
-            if child_base.flags.contains(CLEARS_LEFT) {
-                left_float_width = max(left_float_width, left_float_width_accumulator);
-                left_float_width_accumulator = Au(0)
-            }
-            if child_base.flags.contains(CLEARS_RIGHT) {
-                right_float_width = max(right_float_width, right_float_width_accumulator);
-                right_float_width_accumulator = Au(0)
-            }
-
-            match (float_kind, child_base.flags.contains(CONTAINS_TEXT_OR_REPLACED_FRAGMENTS)) {
-                (float::T::none, true) => {
+            if !child_base.flags.is_float() {
+                if child_base.flags.contains(CONTAINS_TEXT_OR_REPLACED_FRAGMENTS) {
                     computation.content_intrinsic_sizes.preferred_inline_size =
                         max(computation.content_intrinsic_sizes.preferred_inline_size,
-                            child_base.intrinsic_inline_sizes.preferred_inline_size);
-                }
-                (float::T::none, false) => {
-                    preferred_inline_size_of_children_without_text_or_replaced_fragments = max(
-                        preferred_inline_size_of_children_without_text_or_replaced_fragments,
-                        child_base.intrinsic_inline_sizes.preferred_inline_size)
-                }
-                (float::T::left, _) => {
-                    left_float_width_accumulator = left_float_width_accumulator +
-                        child_base.intrinsic_inline_sizes.preferred_inline_size;
-                }
-                (float::T::right, _) => {
-                    right_float_width_accumulator = right_float_width_accumulator +
-                        child_base.intrinsic_inline_sizes.preferred_inline_size;
+                            child_base.intrinsic_inline_sizes.preferred_inline_size)
+                } else {
+                    preferred_inline_size_of_children_without_text_or_replaced_fragments =
+                        max(preferred_inline_size_of_children_without_text_or_replaced_fragments,
+                            child_base.intrinsic_inline_sizes.preferred_inline_size)
                 }
             }
         }
 
-        left_float_width = max(left_float_width, left_float_width_accumulator);
-        right_float_width = max(right_float_width, right_float_width_accumulator);
-
-        computation.content_intrinsic_sizes.preferred_inline_size =
-            computation.content_intrinsic_sizes.preferred_inline_size + left_float_width +
-            right_float_width;
+        float_accumulator.finish(&mut computation.content_intrinsic_sizes.preferred_inline_size);
         computation.content_intrinsic_sizes.preferred_inline_size =
             max(computation.content_intrinsic_sizes.preferred_inline_size,
                 preferred_inline_size_of_children_without_text_or_replaced_fragments);

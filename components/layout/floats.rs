@@ -4,7 +4,7 @@
 
 use app_units::Au;
 use block::FormattingContextType;
-use flow::{self, CLEARS_LEFT, CLEARS_RIGHT, Flow, ImmutableFlowUtils};
+use flow::{self, CLEARS_LEFT, CLEARS_RIGHT, FLOATS_LEFT, FLOATS_RIGHT, Flow, ImmutableFlowUtils};
 use persistent_list::PersistentList;
 use std::cmp::{max, min};
 use std::fmt;
@@ -551,6 +551,59 @@ impl SpeculatedFloatPlacement {
         }
 
         placement
+    }
+}
+
+pub struct FloatIntrinsicSizeAccumulator {
+    left_float_inline_size: Au,
+    right_float_inline_size: Au,
+    left_float_inline_size_accumulator: Au,
+    right_float_inline_size_accumulator: Au,
+}
+
+impl FloatIntrinsicSizeAccumulator {
+    pub fn new() -> FloatIntrinsicSizeAccumulator {
+        FloatIntrinsicSizeAccumulator {
+            left_float_inline_size: Au(0),
+            right_float_inline_size: Au(0),
+            left_float_inline_size_accumulator: Au(0),
+            right_float_inline_size_accumulator: Au(0),
+        }
+    }
+
+    pub fn union_block(&mut self, flow: &Flow) {
+        let base_flow = flow::base(flow);
+        let float_kind = base_flow.flags.float_kind();
+
+        if base_flow.flags.contains(CLEARS_LEFT) {
+            self.left_float_inline_size = max(self.left_float_inline_size,
+                                              self.left_float_inline_size_accumulator);
+            self.left_float_inline_size_accumulator = Au(0)
+        }
+        if base_flow.flags.contains(CLEARS_RIGHT) {
+            self.right_float_inline_size = max(self.right_float_inline_size,
+                                               self.right_float_inline_size_accumulator);
+            self.right_float_inline_size_accumulator = Au(0)
+        }
+
+        if base_flow.flags.contains(FLOATS_LEFT) {
+            self.left_float_inline_size_accumulator += base_flow.intrinsic_inline_sizes
+                                                                .preferred_inline_size
+        }
+        if base_flow.flags.contains(FLOATS_RIGHT) {
+            self.right_float_inline_size_accumulator += base_flow.intrinsic_inline_sizes
+                                                                 .preferred_inline_size
+        }
+    }
+
+    pub fn finish(mut self, parent_flow_preferred_inline_size: &mut Au) {
+        self.left_float_inline_size = max(self.left_float_inline_size,
+                                          self.left_float_inline_size_accumulator);
+        self.right_float_inline_size = max(self.right_float_inline_size,
+                                           self.right_float_inline_size_accumulator);
+
+        *parent_flow_preferred_inline_size += self.left_float_inline_size +
+            self.right_float_inline_size
     }
 }
 

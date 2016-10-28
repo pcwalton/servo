@@ -9,7 +9,7 @@ use block::AbsoluteAssignBSizesTraversal;
 use context::{LayoutContext, SharedLayoutContext};
 use display_list_builder::{DisplayListBuildState, InlineFlowDisplayListBuilding};
 use euclid::{Point2D, Size2D};
-use floats::{FloatKind, Floats, PlacementInfo};
+use floats::{FloatIntrinsicSizeAccumulator, FloatKind, Floats, PlacementInfo};
 use flow::{self, BaseFlow, Flow, FlowClass, ForceNonfloatedFlag, IS_ABSOLUTELY_POSITIONED};
 use flow::{CONTAINS_TEXT_OR_REPLACED_FRAGMENTS, EarlyAbsolutePositionInfo, MutableFlowUtils};
 use flow::OpaqueFlow;
@@ -1301,12 +1301,12 @@ impl Flow for InlineFlow {
         let mut intrinsic_sizes_for_flow = IntrinsicISizesContribution::new();
         let mut intrinsic_sizes_for_inline_run = IntrinsicISizesContribution::new();
         let mut intrinsic_sizes_for_nonbroken_run = IntrinsicISizesContribution::new();
+        let mut float_intrinsic_size_accumulator = FloatIntrinsicSizeAccumulator::new();
         let mut intrinsic_sizes_for_floats = IntrinsicISizesContribution::new();
         for fragment in &mut self.fragments.fragments {
             let intrinsic_sizes_for_fragment = fragment.compute_intrinsic_inline_sizes().finish();
-            if fragment.is_inline_float_ceiling() {
-                // FIXME(pcwalton): This should probably take `clear` into account.
-                intrinsic_sizes_for_floats.union_block(&intrinsic_sizes_for_fragment);
+            if let SpecificFragmentInfo::InlineFloatCeiling(ref info) = fragment.specific {
+                float_intrinsic_size_accumulator.union_block(&*info.flow_ref);
                 continue
             }
 
@@ -1372,10 +1372,12 @@ impl Flow for InlineFlow {
         // Flush any remaining nonbroken-run, inline-run, and float intrinsic sizes.
         intrinsic_sizes_for_inline_run.union_inline(&intrinsic_sizes_for_nonbroken_run.finish());
         intrinsic_sizes_for_flow.union_block(&intrinsic_sizes_for_inline_run.finish());
-        intrinsic_sizes_for_flow.union_block(&intrinsic_sizes_for_floats.finish());
 
         // Finish up the computation.
-        self.base.intrinsic_inline_sizes = intrinsic_sizes_for_flow.finish()
+        self.base.intrinsic_inline_sizes = intrinsic_sizes_for_flow.finish();
+        float_intrinsic_size_accumulator.finish(&mut self.base
+                                                         .intrinsic_inline_sizes
+                                                         .preferred_inline_size)
     }
 
     /// Recursively (top-down) determines the actual inline-size of child contexts and fragments.
