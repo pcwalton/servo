@@ -181,11 +181,11 @@ impl Floats {
 
         // Find the float collisions for the given range in the block direction.
         for float in list.floats.iter() {
-            debug!("available_rect: Checking for collision against float");
+            //println!("available_rect: Checking for collision against float");
             let float_pos = float.bounds.start;
             let float_size = float.bounds.size;
 
-            debug!("float_pos: {:?}, float_size: {:?}", float_pos, float_size);
+            //println!("float_pos: {:?}, float_size: {:?}", float_pos, float_size);
             match float.kind {
                 FloatKind::Left if float_pos.i + float_size.inline > max_inline_start &&
                         float_pos.b + float_size.block > block_start &&

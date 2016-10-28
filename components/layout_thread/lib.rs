@@ -1402,6 +1402,10 @@ impl LayoutThread {
                     self.time_profiler_chan.clone(),
                     || sequential::guess_float_placement(flow_ref::deref_mut(&mut root_flow)));
 
+            if opts::get().dump_flow_tree {
+                root_flow.print("Pre layout flow tree".to_owned());
+            }
+
             // Perform the primary layout passes over the flow tree to compute the locations of all
             // the boxes.
             if flow::base(&*root_flow).restyle_damage.intersects(REFLOW | REFLOW_OUT_OF_FLOW) {

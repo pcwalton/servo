@@ -530,11 +530,27 @@ impl LineBreaker {
                 if self.pending_line.bounds.size.inline > self.last_red_zone_size {
                     let next_red_zone_size = self.pending_line.bounds.size.inline -
                         self.last_red_zone_size;
+
+                    // If this line is full, the float can't go here, even if it has zero size.
+                    //
+                    // FIXME(pcwalton): This is a nasty hack to make `stack-floats-003.htm` in the
+                    // WPT tests pass. Does CSS 2.1 say what to do here?
+                    let ceiling = if self.pending_line.bounds.size.inline <
+                            self.pending_line.green_zone.inline ||
+                            self.pending_line.green_zone.inline == Au(0) {
+                        self.pending_line.bounds.start.b
+                    } else {
+                        self.pending_line.bounds.start.b + self.pending_line.bounds.size.block
+                    };
+                    /*println!("pending line bounds={:?} green zone bounds={:?}",
+                             self.pending_line.bounds,
+                             self.pending_line.green_zone);*/
+
                     self.floats.add_float(&PlacementInfo {
                         size: LogicalSize::new(writing_mode,
                                                next_red_zone_size,
                                                self.pending_line.bounds.size.block),
-                        ceiling: self.pending_line.bounds.start.b,
+                        ceiling: ceiling,
                         max_inline_size: self.pending_line.green_zone.inline,
                         kind: FloatKind::Left,
                     });

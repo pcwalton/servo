@@ -403,6 +403,7 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
             for kid in inline_block_flows.drain(..) {
                 legalizer.add_child(&self.style_context().stylist, flow, kid)
             }
+            absolute_descendants.push_descendants(fragments.absolute_descendants);
             return
         }
 
