@@ -168,6 +168,15 @@ svg > * {
   display: none;
 }
 
+*|*::-servo-inline-float-ceiling {
+    display: inline;
+    margin: 0;
+    border: none;
+    padding: 0;
+    width: 0;
+    height: 0;
+}
+
 *|*::-servo-input-text {
     margin: 0;
 }

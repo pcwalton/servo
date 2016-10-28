@@ -2195,9 +2195,7 @@ impl Fragment {
                     block_flow.fragment.margin.block_start_end()
             }
             SpecificFragmentInfo::InlineFloatCeiling(ref mut info) => {
-                // Not the primary fragment, so we do not take the noncontent size into account.
-                let block_flow = flow_ref::deref_mut(&mut info.flow_ref).as_block();
-                self.border_box.size.block = block_flow.base.position.size.block;
+                self.border_box.size.block = Au(0)
             }
             SpecificFragmentInfo::Iframe(ref info) => {
                 self.border_box.size.block =

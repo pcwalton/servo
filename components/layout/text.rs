@@ -7,6 +7,7 @@
 #![deny(unsafe_code)]
 
 use app_units::Au;
+use construct;
 use fragment::{Fragment, REQUIRES_LINE_BREAK_AFTERWARD_IF_WRAPPING_ON_NEWLINES, ScannedTextFlags};
 use fragment::{SELECTED, ScannedTextFragmentInfo, SpecificFragmentInfo, UnscannedTextFragmentInfo};
 use gfx::font::{DISABLE_KERNING_SHAPING_FLAG, FontMetrics, IGNORE_LIGATURES_SHAPING_FLAG};
@@ -103,6 +104,7 @@ impl TextRunScanner {
             }
 
             // Flush that clump to the list of fragments we're building up.
+            self.strip_whitespace_from_next_fragments_if_necessary(&mut fragments);
             last_whitespace = self.flush_clump_to_list(font_context,
                                                        &mut new_fragments,
                                                        &mut paragraph_bytes_processed,
@@ -412,6 +414,16 @@ impl TextRunScanner {
         }
 
         last_whitespace
+    }
+
+    fn strip_whitespace_from_next_fragments_if_necessary(
+            &mut self,
+            next_fragments: &mut LinkedList<Fragment>) {
+        if let Some(fragment) = self.clump.back_mut() {
+            if fragment.is_hypothetical() {
+                construct::strip_ignorable_whitespace_from_start(next_fragments)
+            }
+        }
     }
 }
 

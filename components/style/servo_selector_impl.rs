@@ -22,6 +22,7 @@ pub enum PseudoElement {
     Selection,
     DetailsSummary,
     DetailsContent,
+    ServoInlineFloatCeiling,
     ServoInputText,
     ServoTableWrapper,
     ServoAnonymousTableWrapper,
@@ -40,6 +41,7 @@ impl ToCss for PseudoElement {
             Selection => "::selection",
             DetailsSummary => "::-servo-details-summary",
             DetailsContent => "::-servo-details-content",
+            ServoInlineFloatCeiling => "::-servo-inline-float-ceiling",
             ServoInputText => "::-servo-input-text",
             ServoTableWrapper => "::-servo-table-wrapper",
             ServoAnonymousTableWrapper => "::-servo-anonymous-table-wrapper",
@@ -70,6 +72,7 @@ impl PseudoElement {
             PseudoElement::Selection => PseudoElementCascadeType::Eager,
             PseudoElement::DetailsSummary => PseudoElementCascadeType::Lazy,
             PseudoElement::DetailsContent |
+            PseudoElement::ServoInlineFloatCeiling |
             PseudoElement::ServoInputText |
             PseudoElement::ServoTableWrapper |
             PseudoElement::ServoAnonymousTableWrapper |
@@ -223,6 +226,12 @@ impl SelectorImpl for ServoSelectorImpl {
                 }
                 DetailsContent
             },
+            "-servo-inline-float-ceiling" => {
+                if !context.in_user_agent_stylesheet {
+                    return Err(())
+                }
+                ServoInlineFloatCeiling
+            },
             "-servo-input-text" => {
                 if !context.in_user_agent_stylesheet {
                     return Err(())
@@ -286,6 +295,7 @@ impl ServoSelectorImpl {
         fun(PseudoElement::DetailsContent);
         fun(PseudoElement::DetailsSummary);
         fun(PseudoElement::Selection);
+        fun(PseudoElement::ServoInlineFloatCeiling);
         fun(PseudoElement::ServoInputText);
         fun(PseudoElement::ServoTableWrapper);
         fun(PseudoElement::ServoAnonymousTableWrapper);

@@ -297,6 +297,7 @@ impl Stylist {
             PseudoElement::ServoAnonymousTableCell |
             PseudoElement::ServoAnonymousTableRow |
             PseudoElement::ServoAnonymousTableWrapper |
+            PseudoElement::ServoInlineFloatCeiling |
             PseudoElement::ServoTableWrapper => true,
             PseudoElement::Before |
             PseudoElement::After |

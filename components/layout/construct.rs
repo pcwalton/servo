@@ -474,6 +474,10 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
                         let kid_node = kid_flow.as_block().fragment.node;
                         let kid_pseudo = kid_flow.as_block().fragment.pseudo.clone();
                         let kid_style = kid_flow.as_block().fragment.style.clone();
+                        let pseudo = PseudoElement::ServoInlineFloatCeiling;
+                        let kid_style = self.style_context()
+                                            .stylist
+                                            .style_for_anonymous_box(&pseudo, &kid_style);
                         let kid_selected_style = kid_flow.as_block()
                                                          .fragment
                                                          .selected_style
@@ -819,6 +823,10 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
                         let kid_node = flow.as_block().fragment.node;
                         let kid_pseudo = flow.as_block().fragment.pseudo.clone();
                         let kid_style = flow.as_block().fragment.style.clone();
+                        let pseudo = PseudoElement::ServoInlineFloatCeiling;
+                        let kid_style = self.style_context()
+                                            .stylist
+                                            .style_for_anonymous_box(&pseudo, &kid_style);
                         let kid_selected_style = flow.as_block().fragment.selected_style.clone();
                         let kid_restyle_damage = flow.as_block().fragment.restyle_damage;
                         let fragment_info = SpecificFragmentInfo::InlineFloatCeiling(

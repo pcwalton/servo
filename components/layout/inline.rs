@@ -397,7 +397,7 @@ impl LineBreaker {
 
     /// Commits a line to the list.
     fn flush_current_line(&mut self) {
-        debug!("LineBreaker: flushing line {}: {:?}", self.lines.len(), self.pending_line);
+        //println!("LineBreaker: flushing line {}: {:?}", self.lines.len(), self.pending_line);
         self.strip_trailing_whitespace_from_pending_line_if_necessary();
         self.lines.push(self.pending_line.clone());
         self.cur_b = self.pending_line.bounds.start.b + self.pending_line.bounds.size.block;
@@ -567,12 +567,12 @@ impl LineBreaker {
             fragment.white_space().allow_wrap()
         };
 
-        debug!("LineBreaker: trying to append to line {} (fragment size: {:?}, green zone: {:?}): \
+        /*println!("LineBreaker: trying to append to line {} (fragment size: {:?}, green zone: {:?}): \
                 {:?}",
                self.lines.len(),
                fragment.border_box.size,
                self.pending_line.green_zone,
-               fragment);
+               fragment);*/
 
         // NB: At this point, if `green_zone.inline < self.pending_line.bounds.size.inline` or
         // `green_zone.block < self.pending_line.bounds.size.block`, then we committed a line that
