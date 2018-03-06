@@ -18,6 +18,10 @@ opt-level = 3
 # debug = true
 # lto = false
 
+[patch."https://github.com/servo/webrender"]
+"webrender" = { path = "/Users/pcwalton/Source/rust-packages/webrender/webrender" }
+"webrender_api" = { path = "/Users/pcwalton/Source/rust-packages/webrender/webrender_api" }
+
 [patch.crates-io]
 
 # If you need to temporarily test Servo with a local fork of some upstream
