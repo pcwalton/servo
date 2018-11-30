@@ -5,7 +5,6 @@
 //! CSS transitions and animations.
 
 use crate::context::LayoutContext;
-use crate::display_list::items::OpaqueNode;
 use crate::flow::{Flow, GetBaseFlow};
 use crate::opaque_node::OpaqueNodeMethods;
 use crossbeam_channel::Receiver;
@@ -15,7 +14,7 @@ use msg::constellation_msg::PipelineId;
 use script_traits::UntrustedNodeAddress;
 use script_traits::{AnimationState, ConstellationControlMsg, LayoutMsg as ConstellationMsg};
 use style::animation::{update_style_for_animation, Animation};
-use style::dom::TElement;
+use style::dom::{OpaqueNode, TElement};
 use style::font_metrics::ServoMetricsProvider;
 use style::selector_parser::RestyleDamage;
 use style::timer::Timer;

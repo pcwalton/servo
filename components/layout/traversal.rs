@@ -6,7 +6,6 @@
 
 use crate::construct::FlowConstructor;
 use crate::context::LayoutContext;
-use crate::display_list::DisplayListBuildState;
 use crate::flow::{Flow, FlowFlags, GetBaseFlow, ImmutableFlowUtils};
 use crate::wrapper::ThreadSafeLayoutNodeHelpers;
 use crate::wrapper::{GetRawData, LayoutNodeLayoutData};
@@ -324,32 +323,5 @@ impl<'a> PreorderFlowTraversal for ComputeStackingRelativePositions<'a> {
         flow.mut_base()
             .restyle_damage
             .remove(ServoRestyleDamage::REPOSITION)
-    }
-}
-
-pub struct BuildDisplayList<'a> {
-    pub state: DisplayListBuildState<'a>,
-}
-
-impl<'a> BuildDisplayList<'a> {
-    #[inline]
-    pub fn traverse(&mut self, flow: &mut dyn Flow) {
-        let parent_stacking_context_id = self.state.current_stacking_context_id;
-        self.state.current_stacking_context_id = flow.base().stacking_context_id;
-
-        let parent_clipping_and_scrolling = self.state.current_clipping_and_scrolling;
-        self.state.current_clipping_and_scrolling = flow.clipping_and_scrolling();
-
-        flow.build_display_list(&mut self.state);
-        flow.mut_base()
-            .restyle_damage
-            .remove(ServoRestyleDamage::REPAINT);
-
-        for kid in flow.mut_base().child_iter_mut() {
-            self.traverse(kid);
-        }
-
-        self.state.current_stacking_context_id = parent_stacking_context_id;
-        self.state.current_clipping_and_scrolling = parent_clipping_and_scrolling;
     }
 }

@@ -6,13 +6,12 @@
 
 use app_units::Au;
 use crate::context::LayoutContext;
-use crate::display_list::{DisplayListBuildState, StackingContextCollectionState};
 use crate::floats::SpeculatedFloatPlacement;
 use crate::flow::{Flow, FlowFlags, GetBaseFlow, ImmutableFlowUtils};
 use crate::fragment::{CoordinateSystem, FragmentBorderBoxIterator};
 use crate::generated_content::ResolveGeneratedContent;
 use crate::incremental::RelayoutMode;
-use crate::traversal::{AssignBSizes, AssignISizes, BubbleISizes, BuildDisplayList};
+use crate::traversal::{AssignBSizes, AssignISizes, BubbleISizes};
 use crate::traversal::{InorderFlowTraversal, PostorderFlowTraversal, PreorderFlowTraversal};
 use euclid::{Point2D, Vector2D};
 use servo_config::opts;
@@ -67,19 +66,6 @@ pub fn reflow(root: &mut dyn Flow, layout_context: &LayoutContext, relayout_mode
     };
 
     doit(root, assign_inline_sizes, assign_block_sizes, relayout_mode);
-}
-
-pub fn build_display_list_for_subtree<'a>(
-    flow_root: &mut dyn Flow,
-    layout_context: &'a LayoutContext,
-) -> DisplayListBuildState<'a> {
-    let mut state = StackingContextCollectionState::new(layout_context.id);
-    flow_root.collect_stacking_contexts(&mut state);
-
-    let state = DisplayListBuildState::new(layout_context, state);
-    let mut build_display_list = BuildDisplayList { state: state };
-    build_display_list.traverse(flow_root);
-    build_display_list.state
 }
 
 pub fn iterate_through_flow_tree_fragment_border_boxes(

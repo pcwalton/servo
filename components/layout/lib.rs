@@ -23,7 +23,6 @@ mod block;
 pub mod construct;
 pub mod context;
 pub mod data;
-pub mod display_list;
 mod floats;
 pub mod flow;
 mod flow_list;

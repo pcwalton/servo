@@ -14,7 +14,6 @@
 use crate::block::BlockFlow;
 use crate::context::{with_thread_local_font_context, LayoutContext};
 use crate::data::{LayoutData, LayoutDataFlags};
-use crate::display_list::items::OpaqueNode;
 use crate::floats::FloatKind;
 use crate::flow::{AbsoluteDescendants, Flow, GetBaseFlow, ImmutableFlowUtils};
 use crate::flow::{FlowFlags, MutableFlowUtils, MutableOwnedFlowUtils};
@@ -53,7 +52,7 @@ use style::computed_values::display::T as Display;
 use style::computed_values::float::T as Float;
 use style::computed_values::position::T as Position;
 use style::context::SharedStyleContext;
-use style::dom::TElement;
+use style::dom::{OpaqueNode, TElement};
 use style::properties::ComputedValues;
 use style::selector_parser::{PseudoElement, RestyleDamage};
 use style::servo::restyle_damage::ServoRestyleDamage;

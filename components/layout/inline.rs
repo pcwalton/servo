@@ -5,9 +5,6 @@
 use app_units::{Au, MIN_AU};
 use crate::block::AbsoluteAssignBSizesTraversal;
 use crate::context::{LayoutContext, LayoutFontContext};
-use crate::display_list::items::OpaqueNode;
-use crate::display_list::StackingContextCollectionState;
-use crate::display_list::{DisplayListBuildState, InlineFlowDisplayListBuilding};
 use crate::floats::{FloatKind, Floats, PlacementInfo};
 use crate::flow::{BaseFlow, Flow, FlowClass, ForceNonfloatedFlag};
 use crate::flow::{EarlyAbsolutePositionInfo, FlowFlags, GetBaseFlow, OpaqueFlow};
@@ -35,6 +32,7 @@ use style::computed_values::position::T as Position;
 use style::computed_values::text_align::T as TextAlign;
 use style::computed_values::text_justify::T as TextJustify;
 use style::computed_values::white_space::T as WhiteSpace;
+use style::dom::OpaqueNode;
 use style::logical_geometry::{LogicalRect, LogicalSize, WritingMode};
 use style::properties::ComputedValues;
 use style::servo::restyle_damage::ServoRestyleDamage;
@@ -1828,14 +1826,6 @@ impl Flow for InlineFlow {
     fn update_late_computed_inline_position_if_necessary(&mut self, _: Au) {}
 
     fn update_late_computed_block_position_if_necessary(&mut self, _: Au) {}
-
-    fn collect_stacking_contexts(&mut self, state: &mut StackingContextCollectionState) {
-        self.collect_stacking_contexts_for_inline(state);
-    }
-
-    fn build_display_list(&mut self, state: &mut DisplayListBuildState) {
-        self.build_display_list_for_inline(state);
-    }
 
     fn repair_style(&mut self, _: &ServoArc<ComputedValues>) {}
 

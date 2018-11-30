@@ -4,7 +4,6 @@
 
 //! Data needed by the layout thread.
 
-use crate::display_list::items::{OpaqueNode, WebRenderImageInfo};
 use crate::opaque_node::OpaqueNodeMethods;
 use fnv::FnvHasher;
 use gfx::font_cache_thread::FontCacheThread;
@@ -26,6 +25,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use style::context::RegisteredSpeculativePainter;
 use style::context::SharedStyleContext;
+use style::dom::OpaqueNode;
 
 pub type LayoutFontContext = FontContext<FontCacheThread>;
 
@@ -68,13 +68,6 @@ pub struct LayoutContext<'a> {
 
     /// Interface to the font cache thread.
     pub font_cache_thread: Mutex<FontCacheThread>,
-
-    /// A cache of WebRender image info.
-    pub webrender_image_cache: Arc<
-        RwLock<
-            HashMap<(ServoUrl, UsePlaceholder), WebRenderImageInfo, BuildHasherDefault<FnvHasher>>,
-        >,
-    >,
 
     /// Paint worklets
     pub registered_painters: &'a dyn RegisteredPainters,
@@ -158,35 +151,6 @@ impl<'a> LayoutContext<'a> {
                 }
                 None
             },
-        }
-    }
-
-    pub fn get_webrender_image_for_url(
-        &self,
-        node: OpaqueNode,
-        url: ServoUrl,
-        use_placeholder: UsePlaceholder,
-    ) -> Option<WebRenderImageInfo> {
-        if let Some(existing_webrender_image) = self
-            .webrender_image_cache
-            .read()
-            .get(&(url.clone(), use_placeholder))
-        {
-            return Some((*existing_webrender_image).clone());
-        }
-
-        match self.get_or_request_image_or_meta(node, url.clone(), use_placeholder) {
-            Some(ImageOrMetadataAvailable::ImageAvailable(image, _)) => {
-                let image_info = WebRenderImageInfo::from_image(&*image);
-                if image_info.key.is_none() {
-                    Some(image_info)
-                } else {
-                    let mut webrender_image_cache = self.webrender_image_cache.write();
-                    webrender_image_cache.insert((url, use_placeholder), image_info);
-                    Some(image_info)
-                }
-            },
-            None | Some(ImageOrMetadataAvailable::MetadataAvailable(_)) => None,
         }
     }
 }

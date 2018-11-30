@@ -9,7 +9,6 @@
 //! as possible.
 
 use crate::context::{with_thread_local_font_context, LayoutContext};
-use crate::display_list::items::OpaqueNode;
 use crate::flow::{Flow, FlowFlags, GetBaseFlow, ImmutableFlowUtils};
 use crate::fragment::{
     Fragment, GeneratedContentInfo, SpecificFragmentInfo, UnscannedTextFragmentInfo,
@@ -21,6 +20,7 @@ use smallvec::SmallVec;
 use std::collections::{HashMap, LinkedList};
 use style::computed_values::display::T as Display;
 use style::computed_values::list_style_type::T as ListStyleType;
+use style::dom::OpaqueNode;
 use style::properties::ComputedValues;
 use style::selector_parser::RestyleDamage;
 use style::servo::restyle_damage::ServoRestyleDamage;

@@ -7,8 +7,6 @@
 use app_units::Au;
 use canvas_traits::canvas::{CanvasId, CanvasMsg};
 use crate::context::{with_thread_local_font_context, LayoutContext};
-use crate::display_list::items::{ClipScrollNodeIndex, OpaqueNode, BLUR_INFLATION_FACTOR};
-use crate::display_list::ToLayout;
 use crate::floats::ClearType;
 use crate::flow::{GetBaseFlow, ImmutableFlowUtils};
 use crate::flow_ref::FlowRef;
@@ -53,6 +51,7 @@ use style::computed_values::text_decoration_line::T as TextDecorationLine;
 use style::computed_values::transform_style::T as TransformStyle;
 use style::computed_values::white_space::T as WhiteSpace;
 use style::computed_values::word_break::T as WordBreak;
+use style::dom::OpaqueNode;
 use style::logical_geometry::{Direction, LogicalMargin, LogicalRect, LogicalSize, WritingMode};
 use style::properties::ComputedValues;
 use style::selector_parser::RestyleDamage;
@@ -148,11 +147,6 @@ pub struct Fragment {
     /// to 0, but it assigned during the collect_stacking_contexts phase of display
     /// list construction.
     pub stacking_context_id: StackingContextId,
-
-    /// The indices of this Fragment's ClipScrollNode. If this fragment doesn't have a
-    /// `established_reference_frame` assigned, it will use the `clipping_and_scrolling` of the
-    /// parent block.
-    pub established_reference_frame: Option<ClipScrollNodeIndex>,
 }
 
 impl Serialize for Fragment {
@@ -652,7 +646,6 @@ impl Fragment {
             flags: FragmentFlags::empty(),
             debug_id: DebugId::new(),
             stacking_context_id: StackingContextId::root(),
-            established_reference_frame: None,
         }
     }
 
@@ -683,7 +676,6 @@ impl Fragment {
             flags: FragmentFlags::empty(),
             debug_id: DebugId::new(),
             stacking_context_id: StackingContextId::root(),
-            established_reference_frame: None,
         }
     }
 
@@ -710,7 +702,6 @@ impl Fragment {
             flags: FragmentFlags::empty(),
             debug_id: DebugId::new(),
             stacking_context_id: StackingContextId::root(),
-            established_reference_frame: None,
         }
     }
 
@@ -737,7 +728,6 @@ impl Fragment {
             flags: FragmentFlags::empty(),
             debug_id: self.debug_id.clone(),
             stacking_context_id: StackingContextId::root(),
-            established_reference_frame: None,
         }
     }
 
@@ -2650,19 +2640,6 @@ impl Fragment {
             border_box.translate_by_size(&relative_position.to_physical(self.style.writing_mode));
         let mut overflow = Overflow::from_rect(&border_box);
 
-        // Box shadows cause us to draw outside our border box.
-        for box_shadow in &self.style().get_effects().box_shadow.0 {
-            let offset = Vector2D::new(
-                Au::from(box_shadow.base.horizontal),
-                Au::from(box_shadow.base.vertical),
-            );
-            let inflation = Au::from(box_shadow.spread) +
-                Au::from(box_shadow.base.blur) * BLUR_INFLATION_FACTOR;
-            overflow.paint = overflow
-                .paint
-                .union(&border_box.translate(&offset).inflate(inflation, inflation))
-        }
-
         // Outlines cause us to draw outside our border box.
         let outline_width = Au::from(self.style.get_outline().outline_width);
         if outline_width != Au(0) {
@@ -3018,49 +2995,6 @@ impl Fragment {
         );
 
         Some(pre_transform.pre_mul(&transform).pre_mul(&post_transform))
-    }
-
-    /// Returns the 4D matrix representing this fragment's perspective.
-    pub fn perspective_matrix(
-        &self,
-        stacking_relative_border_box: &Rect<Au>,
-    ) -> Option<LayoutTransform> {
-        match self.style().get_box().perspective {
-            Perspective::Length(length) => {
-                let perspective_origin = self.style().get_box().perspective_origin;
-                let perspective_origin = Point2D::new(
-                    perspective_origin
-                        .horizontal
-                        .to_used_value(stacking_relative_border_box.size.width),
-                    perspective_origin
-                        .vertical
-                        .to_used_value(stacking_relative_border_box.size.height),
-                )
-                .to_layout();
-
-                let pre_transform = LayoutTransform::create_translation(
-                    perspective_origin.x,
-                    perspective_origin.y,
-                    0.0,
-                );
-                let post_transform = LayoutTransform::create_translation(
-                    -perspective_origin.x,
-                    -perspective_origin.y,
-                    0.0,
-                );
-
-                let perspective_matrix = LayoutTransform::from_untyped(
-                    &transform::create_perspective_matrix(length.px()),
-                );
-
-                Some(
-                    pre_transform
-                        .pre_mul(&perspective_matrix)
-                        .pre_mul(&post_transform),
-                )
-            },
-            Perspective::None => None,
-        }
     }
 }
 

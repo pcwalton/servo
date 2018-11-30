@@ -41,8 +41,6 @@ use layout::context::malloc_size_of_persistent_local_context;
 use layout::context::LayoutContext;
 use layout::context::RegisteredPainter;
 use layout::context::RegisteredPainters;
-use layout::display_list::items::{OpaqueNode, WebRenderImageInfo};
-use layout::display_list::{IndexableText, ToLayout, WebRenderDisplayListConverter};
 use layout::flow::{Flow, GetBaseFlow, ImmutableFlowUtils, MutableOwnedFlowUtils};
 use layout::flow_ref::FlowRef;
 use layout::incremental::{LayoutDamageComputation, RelayoutMode, SpecialRestyleDamage};
@@ -51,7 +49,7 @@ use layout::parallel;
 use layout::query::{
     process_content_box_request, process_content_boxes_request, LayoutRPCImpl, LayoutThreadData,
 };
-use layout::query::{process_element_inner_text_query, process_node_geometry_request};
+use layout::query::{process_node_geometry_request};
 use layout::query::{process_node_scroll_area_request, process_node_scroll_id_request};
 use layout::query::{
     process_offset_parent_query, process_resolved_style_request, process_style_query,
@@ -101,7 +99,7 @@ use std::thread;
 use style::animation::Animation;
 use style::context::{QuirksMode, RegisteredSpeculativePainter, RegisteredSpeculativePainters};
 use style::context::{SharedStyleContext, StyleSystemOptions, ThreadLocalStyleContextCreationInfo};
-use style::dom::{ShowSubtree, ShowSubtreeDataAndPrimaryValues, TElement, TNode};
+use style::dom::{OpaqueNode, ShowSubtree, ShowSubtreeDataAndPrimaryValues, TElement, TNode};
 use style::driver;
 use style::error_reporting::RustLogReporter;
 use style::invalidation::element::restyle_hints::RestyleHint;
@@ -148,9 +146,6 @@ pub struct LayoutThread {
 
     /// Webrender interface.
     webrender_api: webrender_api::RenderApi,
-
-    /// The image cache for WebRender.
-    webrender_image_cache: Arc<RwLock<FnvHashMap<(ServoUrl, UsePlaceholder), WebRenderImageInfo>>>,
 }
 
 impl LayoutThreadFactory for LayoutThread {
@@ -226,7 +221,6 @@ impl LayoutThread {
             document_shared_lock: None,
             registered_painters: RegisteredPaintersImpl(Default::default()),
             webrender_api: global_info.webrender_api_sender.create_api(),
-            webrender_image_cache: Arc::new(RwLock::new(FnvHashMap::default())),
             global_info,
             thread_info,
         }

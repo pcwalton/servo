@@ -27,10 +27,6 @@
 
 use app_units::{Au, MAX_AU};
 use crate::context::LayoutContext;
-use crate::display_list::items::DisplayListSection;
-use crate::display_list::StackingContextCollectionState;
-use crate::display_list::{BlockFlowDisplayListBuilding, BorderPaintingMode};
-use crate::display_list::{DisplayListBuildState, StackingContextCollectionFlags};
 use crate::floats::{ClearType, FloatKind, Floats, PlacementInfo};
 use crate::flow::{
     BaseFlow, EarlyAbsolutePositionInfo, Flow, FlowClass, ForceNonfloatedFlag, GetBaseFlow,
@@ -2136,24 +2132,6 @@ impl BlockFlow {
         );
         as_margins.to_physical(writing_mode)
     }
-
-    pub fn background_border_section(&self) -> DisplayListSection {
-        if self.base.flags.is_float() {
-            DisplayListSection::BackgroundAndBorders
-        } else if self
-            .base
-            .flags
-            .contains(FlowFlags::IS_ABSOLUTELY_POSITIONED)
-        {
-            if self.fragment.establishes_stacking_context() {
-                DisplayListSection::BackgroundAndBorders
-            } else {
-                DisplayListSection::BlockBackgroundsAndBorders
-            }
-        } else {
-            DisplayListSection::BlockBackgroundsAndBorders
-        }
-    }
 }
 
 impl Flow for BlockFlow {
@@ -2585,14 +2563,6 @@ impl Flow for BlockFlow {
         {
             self.base.position.start.b = block_position
         }
-    }
-
-    fn collect_stacking_contexts(&mut self, state: &mut StackingContextCollectionState) {
-        self.collect_stacking_contexts_for_block(state, StackingContextCollectionFlags::empty());
-    }
-
-    fn build_display_list(&mut self, state: &mut DisplayListBuildState) {
-        self.build_display_list_for_block(state, BorderPaintingMode::Separate);
     }
 
     fn repair_style(&mut self, new_style: &crate::ServoArc<ComputedValues>) {

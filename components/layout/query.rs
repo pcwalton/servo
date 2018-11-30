@@ -7,8 +7,6 @@
 use app_units::Au;
 use crate::construct::ConstructionResult;
 use crate::context::LayoutContext;
-use crate::display_list::items::{DisplayList, OpaqueNode, ScrollOffsetMap};
-use crate::display_list::IndexableText;
 use crate::flow::{Flow, GetBaseFlow};
 use crate::fragment::{Fragment, FragmentBorderBoxIterator};
 use crate::inline::InlineFragmentNodeFlags;
@@ -36,7 +34,7 @@ use style::computed_values::display::T as Display;
 use style::computed_values::position::T as Position;
 use style::computed_values::visibility::T as Visibility;
 use style::context::{StyleContext, ThreadLocalStyleContext};
-use style::dom::TElement;
+use style::dom::{OpaqueNode, TElement};
 use style::logical_geometry::{BlockFlowDirection, InlineBaseDirection, WritingMode};
 use style::properties::{style_structs, LonghandId, PropertyDeclarationId, PropertyId};
 use style::selector_parser::PseudoElement;
@@ -49,11 +47,6 @@ use webrender_api::ExternalScrollId;
 pub struct LayoutThreadData {
     /// The channel on which messages can be sent to the constellation.
     pub constellation_chan: IpcSender<ConstellationMsg>,
-
-    /// The root stacking context.
-    pub display_list: Option<Arc<DisplayList>>,
-
-    pub indexable_text: IndexableText,
 
     /// A queued response for the union of the content boxes of a node.
     pub content_box_response: Option<Rect<Au>>,
@@ -78,9 +71,6 @@ pub struct LayoutThreadData {
 
     /// A queued response for the style of a node.
     pub style_response: StyleResponse,
-
-    /// Scroll offsets of scrolling regions.
-    pub scroll_offsets: ScrollOffsetMap,
 
     /// Index in a text fragment. We need this do determine the insertion point.
     pub text_index_response: TextIndexResponse,
@@ -967,123 +957,4 @@ pub fn process_style_query<N: LayoutNode>(requested_node: N) -> StyleResponse {
 enum InnerTextItem {
     Text(String),
     RequiredLineBreakCount(u32),
-}
-
-// https://html.spec.whatwg.org/multipage/#the-innertext-idl-attribute
-pub fn process_element_inner_text_query<N: LayoutNode>(
-    node: N,
-    indexable_text: &IndexableText,
-) -> String {
-    // Step 1.
-    let mut results = Vec::new();
-    // Step 2.
-    inner_text_collection_steps(node, indexable_text, &mut results);
-    let mut max_req_line_break_count = 0;
-    let mut inner_text = Vec::new();
-    for item in results {
-        match item {
-            InnerTextItem::Text(s) => {
-                if max_req_line_break_count > 0 {
-                    // Step 5.
-                    for _ in 0..max_req_line_break_count {
-                        inner_text.push("\u{000A}".to_owned());
-                    }
-                    max_req_line_break_count = 0;
-                }
-                // Step 3.
-                if !s.is_empty() {
-                    inner_text.push(s.to_owned());
-                }
-            },
-            InnerTextItem::RequiredLineBreakCount(count) => {
-                // Step 4.
-                if inner_text.len() == 0 {
-                    // Remove required line break count at the start.
-                    continue;
-                }
-                // Store the count if it's the max of this run,
-                // but it may be ignored if no text item is found afterwards,
-                // which means that these are consecutive line breaks at the end.
-                if count > max_req_line_break_count {
-                    max_req_line_break_count = count;
-                }
-            },
-        }
-    }
-    inner_text.into_iter().collect()
-}
-
-// https://html.spec.whatwg.org/multipage/#inner-text-collection-steps
-#[allow(unsafe_code)]
-fn inner_text_collection_steps<N: LayoutNode>(
-    node: N,
-    indexable_text: &IndexableText,
-    results: &mut Vec<InnerTextItem>,
-) {
-    let mut items = Vec::new();
-    for child in node.traverse_preorder() {
-        let node = match child.type_id() {
-            LayoutNodeType::Text => child.parent_node().unwrap(),
-            _ => child,
-        };
-
-        let element_data = unsafe {
-            node.get_style_and_layout_data()
-                .map(|d| &(*(d.ptr.as_ptr() as *mut StyleData)).element_data)
-        };
-
-        if element_data.is_none() {
-            continue;
-        }
-
-        let style = match element_data.unwrap().borrow().styles.get_primary() {
-            None => continue,
-            Some(style) => style.clone(),
-        };
-
-        // Step 2.
-        if style.get_inherited_box().visibility != Visibility::Visible {
-            continue;
-        }
-
-        // Step 3.
-        let display = style.get_box().display;
-        if !child.is_in_document() || display == Display::None {
-            continue;
-        }
-
-        match child.type_id() {
-            LayoutNodeType::Text => {
-                // Step 4.
-                if let Some(text_content) = indexable_text.get(child.opaque()) {
-                    for content in text_content {
-                        items.push(InnerTextItem::Text(content.text_run.text.to_string()));
-                    }
-                }
-            },
-            LayoutNodeType::Element(LayoutElementType::HTMLBRElement) => {
-                // Step 5.
-                items.push(InnerTextItem::Text(String::from(
-                    "\u{000A}", /* line feed */
-                )));
-            },
-            LayoutNodeType::Element(LayoutElementType::HTMLParagraphElement) => {
-                // Step 8.
-                items.insert(0, InnerTextItem::RequiredLineBreakCount(2));
-                items.push(InnerTextItem::RequiredLineBreakCount(2));
-            },
-            _ => {},
-        }
-
-        match display {
-            Display::Block | Display::Flex => {
-                // Step 9.
-                items.insert(0, InnerTextItem::RequiredLineBreakCount(1));
-                items.push(InnerTextItem::RequiredLineBreakCount(1));
-            },
-            _ => {},
-        }
-    }
-
-    results.append(&mut items);
 }
