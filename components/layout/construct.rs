@@ -18,9 +18,7 @@ use crate::floats::FloatKind;
 use crate::flow::{AbsoluteDescendants, Flow, GetBaseFlow, ImmutableFlowUtils};
 use crate::flow::{FlowFlags, MutableFlowUtils, MutableOwnedFlowUtils};
 use crate::flow_ref::FlowRef;
-use crate::fragment::{
-    CanvasFragmentInfo, Fragment, GeneratedContentInfo, IframeFragmentInfo,
-};
+use crate::fragment::{CanvasFragmentInfo, Fragment, IframeFragmentInfo};
 use crate::fragment::{
     ImageFragmentInfo, InlineAbsoluteFragmentInfo, InlineAbsoluteHypotheticalFragmentInfo,
 };
@@ -56,7 +54,6 @@ use style::dom::{OpaqueNode, TElement};
 use style::properties::ComputedValues;
 use style::selector_parser::{PseudoElement, RestyleDamage};
 use style::servo::restyle_damage::ServoRestyleDamage;
-use style::values::generics::counters::ContentItem;
 
 /// The results of flow construction for a DOM node.
 #[derive(Clone)]
@@ -791,31 +788,6 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
                         specific_fragment_info,
                     ))
             },
-            TextContent::GeneratedContent(content_items) => {
-                for content_item in content_items.into_iter() {
-                    let specific_fragment_info = match content_item {
-                        ContentItem::String(string) => {
-                            let info = Box::new(UnscannedTextFragmentInfo::new(string, None));
-                            SpecificFragmentInfo::UnscannedText(info)
-                        },
-                        content_item => {
-                            let content_item =
-                                Box::new(GeneratedContentInfo::ContentItem(content_item));
-                            SpecificFragmentInfo::GeneratedContent(content_item)
-                        },
-                    };
-                    fragments
-                        .fragments
-                        .push_back(Fragment::from_opaque_node_and_style(
-                            node.opaque(),
-                            node.get_pseudo_element_type(),
-                            style.clone(),
-                            selected_style.clone(),
-                            node.restyle_damage(),
-                            specific_fragment_info,
-                        ))
-                }
-            },
         }
     }
 
@@ -1307,7 +1279,6 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
                                 // Text fragments in ConstructionResult haven't been scanned yet
                                 unreachable!()
                             },
-                            SpecificFragmentInfo::GeneratedContent(_) |
                             SpecificFragmentInfo::UnscannedText(_) => {
                                 // We can't repair this unscanned text; we need to update the
                                 // scanned text fragments.

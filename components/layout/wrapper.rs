@@ -36,8 +36,6 @@ use script_layout_interface::wrapper_traits::GetLayoutData;
 use script_layout_interface::wrapper_traits::{ThreadSafeLayoutElement, ThreadSafeLayoutNode};
 use style::dom::{NodeInfo, TNode};
 use style::selector_parser::RestyleDamage;
-use style::values::computed::counters::ContentItem;
-use style::values::generics::counters::Content;
 
 pub trait LayoutNodeLayoutData {
     /// Similar to borrow_data*, but returns the full PersistentLayoutData rather
@@ -112,15 +110,6 @@ impl<T: ThreadSafeLayoutNode> ThreadSafeLayoutNodeHelpers for T {
     }
 
     fn text_content(&self) -> TextContent {
-        if self.get_pseudo_element_type().is_replaced_content() {
-            let style = self.as_element().unwrap().resolved_style();
-
-            return TextContent::GeneratedContent(match style.as_ref().get_counters().content {
-                Content::Items(ref value) => value.to_vec(),
-                _ => vec![],
-            });
-        }
-
         TextContent::Text(self.node_text_content().into_boxed_str())
     }
 
@@ -161,14 +150,12 @@ impl<T: ThreadSafeLayoutNode> ThreadSafeLayoutNodeHelpers for T {
 
 pub enum TextContent {
     Text(Box<str>),
-    GeneratedContent(Vec<ContentItem>),
 }
 
 impl TextContent {
     pub fn is_empty(&self) -> bool {
         match *self {
             TextContent::Text(_) => false,
-            TextContent::GeneratedContent(ref content) => content.is_empty(),
         }
     }
 }

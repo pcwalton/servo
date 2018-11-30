@@ -9,18 +9,13 @@ use crate::context::LayoutContext;
 use crate::floats::SpeculatedFloatPlacement;
 use crate::flow::{Flow, FlowFlags, GetBaseFlow, ImmutableFlowUtils};
 use crate::fragment::{CoordinateSystem, FragmentBorderBoxIterator};
-use crate::generated_content::ResolveGeneratedContent;
 use crate::incremental::RelayoutMode;
 use crate::traversal::{AssignBSizes, AssignISizes, BubbleISizes};
-use crate::traversal::{InorderFlowTraversal, PostorderFlowTraversal, PreorderFlowTraversal};
+use crate::traversal::{PostorderFlowTraversal, PreorderFlowTraversal};
 use euclid::{Point2D, Vector2D};
 use servo_config::opts;
 use style::servo::restyle_damage::ServoRestyleDamage;
 use webrender_api::LayoutPoint;
-
-pub fn resolve_generated_content(root: &mut dyn Flow, layout_context: &LayoutContext) {
-    ResolveGeneratedContent::new(&layout_context).traverse(root, 0);
-}
 
 /// Run the main layout passes sequentially.
 pub fn reflow(root: &mut dyn Flow, layout_context: &LayoutContext, relayout_mode: RelayoutMode) {

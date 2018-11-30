@@ -23,8 +23,6 @@ use script_layout_interface::rpc::{OffsetParentResponse, ResolvedStyleResponse, 
 use script_layout_interface::wrapper_traits::{
     LayoutNode, ThreadSafeLayoutElement, ThreadSafeLayoutNode,
 };
-use script_layout_interface::StyleData;
-use script_layout_interface::{LayoutElementType, LayoutNodeType};
 use script_traits::LayoutMsg as ConstellationMsg;
 use script_traits::UntrustedNodeAddress;
 use std::cmp::{max, min};
@@ -32,7 +30,6 @@ use std::ops::Deref;
 use std::sync::{Arc, Mutex};
 use style::computed_values::display::T as Display;
 use style::computed_values::position::T as Position;
-use style::computed_values::visibility::T as Visibility;
 use style::context::{StyleContext, ThreadLocalStyleContext};
 use style::dom::{OpaqueNode, TElement};
 use style::logical_geometry::{BlockFlowDirection, InlineBaseDirection, WritingMode};

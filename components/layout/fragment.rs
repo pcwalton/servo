@@ -57,10 +57,8 @@ use style::properties::ComputedValues;
 use style::selector_parser::RestyleDamage;
 use style::servo::restyle_damage::ServoRestyleDamage;
 use style::str::char_is_whitespace;
-use style::values::computed::counters::ContentItem;
 use style::values::computed::{Length, LengthOrPercentage, LengthOrPercentageOrAuto};
 use style::values::generics::box_::{Perspective, VerticalAlign};
-use style::values::generics::transform;
 use webrender_api::{self, LayoutTransform};
 
 // From gfxFontConstants.h in Firefox.
@@ -166,10 +164,6 @@ impl Serialize for Fragment {
 pub enum SpecificFragmentInfo {
     Generic,
 
-    /// A piece of generated content that cannot be resolved into `ScannedText` until the generated
-    /// content resolution phase (e.g. an ordered list item marker).
-    GeneratedContent(Box<GeneratedContentInfo>),
-
     Iframe(IframeFragmentInfo),
     Image(Box<ImageFragmentInfo>),
     Media(Box<MediaFragmentInfo>),
@@ -202,7 +196,6 @@ impl SpecificFragmentInfo {
     fn restyle_damage(&self) -> RestyleDamage {
         let flow = match *self {
             SpecificFragmentInfo::Canvas(_) |
-            SpecificFragmentInfo::GeneratedContent(_) |
             SpecificFragmentInfo::Iframe(_) |
             SpecificFragmentInfo::Image(_) |
             SpecificFragmentInfo::Media(_) |
@@ -226,7 +219,6 @@ impl SpecificFragmentInfo {
             SpecificFragmentInfo::Canvas(_) => "SpecificFragmentInfo::Canvas",
             SpecificFragmentInfo::Media(_) => "SpecificFragmentInfo::Media",
             SpecificFragmentInfo::Generic => "SpecificFragmentInfo::Generic",
-            SpecificFragmentInfo::GeneratedContent(_) => "SpecificFragmentInfo::GeneratedContent",
             SpecificFragmentInfo::Iframe(_) => "SpecificFragmentInfo::Iframe",
             SpecificFragmentInfo::Image(_) => "SpecificFragmentInfo::Image",
             SpecificFragmentInfo::InlineAbsolute(_) => "SpecificFragmentInfo::InlineAbsolute",
@@ -252,15 +244,6 @@ impl fmt::Debug for SpecificFragmentInfo {
             _ => Ok(()),
         }
     }
-}
-
-/// Information for generated content.
-#[derive(Clone)]
-pub enum GeneratedContentInfo {
-    ListItem,
-    ContentItem(ContentItem),
-    /// Placeholder for elements with generated content that did not generate any fragments.
-    Empty,
 }
 
 /// A hypothetical box (see CSS 2.1 § 10.3.7) for an absolutely-positioned block that was declared
@@ -827,7 +810,6 @@ impl Fragment {
             SpecificFragmentInfo::Canvas(_) |
             SpecificFragmentInfo::Media(_) |
             SpecificFragmentInfo::Generic |
-            SpecificFragmentInfo::GeneratedContent(_) |
             SpecificFragmentInfo::Iframe(_) |
             SpecificFragmentInfo::Image(_) |
             SpecificFragmentInfo::InlineAbsolute(_) |
@@ -1433,17 +1415,6 @@ impl Fragment {
         self.is_scanned_text_fragment() && self.white_space().allow_wrap()
     }
 
-    /// Returns true if and only if this fragment is a generated content fragment.
-    pub fn is_unscanned_generated_content(&self) -> bool {
-        match self.specific {
-            SpecificFragmentInfo::GeneratedContent(ref content) => match **content {
-                GeneratedContentInfo::Empty => false,
-                _ => true,
-            },
-            _ => false,
-        }
-    }
-
     /// Returns true if and only if this is a scanned text fragment.
     pub fn is_scanned_text_fragment(&self) -> bool {
         match self.specific {
@@ -1466,7 +1437,6 @@ impl Fragment {
         let mut result = self.style_specified_intrinsic_inline_size();
         match self.specific {
             SpecificFragmentInfo::Generic |
-            SpecificFragmentInfo::GeneratedContent(_) |
             SpecificFragmentInfo::Multicol |
             SpecificFragmentInfo::MulticolColumn |
             SpecificFragmentInfo::InlineAbsoluteHypothetical(_) => {},
@@ -1940,7 +1910,6 @@ impl Fragment {
         match self.specific {
             SpecificFragmentInfo::TruncatedFragment(ref t) if t.text_info.is_none() => return,
             SpecificFragmentInfo::Generic |
-            SpecificFragmentInfo::GeneratedContent(_) |
             SpecificFragmentInfo::Multicol |
             SpecificFragmentInfo::MulticolColumn => return,
             SpecificFragmentInfo::UnscannedText(_) => {
@@ -2024,7 +1993,6 @@ impl Fragment {
         match self.specific {
             SpecificFragmentInfo::TruncatedFragment(ref t) if t.text_info.is_none() => return,
             SpecificFragmentInfo::Generic |
-            SpecificFragmentInfo::GeneratedContent(_) |
             SpecificFragmentInfo::Multicol |
             SpecificFragmentInfo::MulticolColumn => return,
             SpecificFragmentInfo::UnscannedText(_) => {
@@ -2114,18 +2082,16 @@ impl Fragment {
         // calculated. For replaced elements, inline-block elements, and inline-table
         // elements, this is the height of their margin box."
         //
-        // FIXME(pcwalton): We have to handle `Generic` and `GeneratedContent` here to avoid
+        // FIXME(pcwalton): We have to handle `Generic` here to avoid
         // crashing in a couple of `css21_dev/html4/content-` WPTs, but I don't see how those two
-        // fragment types should end up inside inlines. (In the case of `GeneratedContent`, those
-        // fragment types should have been resolved by now…)
+        // fragment types should end up inside inlines.
         let inline_metrics = match self.specific {
             SpecificFragmentInfo::Canvas(_) |
             SpecificFragmentInfo::Iframe(_) |
             SpecificFragmentInfo::Image(_) |
             SpecificFragmentInfo::Media(_) |
             SpecificFragmentInfo::Svg(_) |
-            SpecificFragmentInfo::Generic |
-            SpecificFragmentInfo::GeneratedContent(_) => {
+            SpecificFragmentInfo::Generic => {
                 let ascent = self.border_box.size.block + self.margin.block_end;
                 InlineMetrics {
                     space_above_baseline: ascent + self.margin.block_start,
@@ -2442,7 +2408,6 @@ impl Fragment {
             SpecificFragmentInfo::MulticolColumn => false,
             SpecificFragmentInfo::Canvas(_) |
             SpecificFragmentInfo::Generic |
-            SpecificFragmentInfo::GeneratedContent(_) |
             SpecificFragmentInfo::Iframe(_) |
             SpecificFragmentInfo::Image(_) |
             SpecificFragmentInfo::Media(_) |
@@ -2948,7 +2913,6 @@ impl Fragment {
             SpecificFragmentInfo::Multicol |
             SpecificFragmentInfo::MulticolColumn => false,
             SpecificFragmentInfo::Canvas(_) |
-            SpecificFragmentInfo::GeneratedContent(_) |
             SpecificFragmentInfo::Iframe(_) |
             SpecificFragmentInfo::Image(_) |
             SpecificFragmentInfo::Media(_) |

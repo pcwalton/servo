@@ -979,17 +979,6 @@ impl InlineFlow {
             first_line_indentation: Au(0),
         };
 
-        if flow
-            .fragments
-            .fragments
-            .iter()
-            .any(Fragment::is_unscanned_generated_content)
-        {
-            flow.base
-                .restyle_damage
-                .insert(ServoRestyleDamage::RESOLVE_GENERATED_CONTENT);
-        }
-
         flow
     }
 

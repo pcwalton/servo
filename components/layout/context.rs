@@ -5,22 +5,18 @@
 //! Data needed by the layout thread.
 
 use crate::opaque_node::OpaqueNodeMethods;
-use fnv::FnvHasher;
 use gfx::font_cache_thread::FontCacheThread;
 use gfx::font_context::FontContext;
 use malloc_size_of::{MallocSizeOf, MallocSizeOfOps};
 use msg::constellation_msg::PipelineId;
 use net_traits::image_cache::{CanRequestImages, ImageCache, ImageState};
 use net_traits::image_cache::{ImageOrMetadataAvailable, UsePlaceholder};
-use parking_lot::RwLock;
 use script_layout_interface::{PendingImage, PendingImageState};
 use script_traits::Painter;
 use script_traits::UntrustedNodeAddress;
 use servo_atoms::Atom;
 use servo_url::ServoUrl;
 use std::cell::{RefCell, RefMut};
-use std::collections::HashMap;
-use std::hash::BuildHasherDefault;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use style::context::RegisteredSpeculativePainter;

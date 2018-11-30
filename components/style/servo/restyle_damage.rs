@@ -46,11 +46,6 @@ bitflags! {
         /// Propagates up the flow tree because the computation is top-down.
         const REFLOW = 0x20;
 
-        /// Re-resolve generated content.
-        ///
-        /// Propagates up the flow tree because the computation is inorder.
-        const RESOLVE_GENERATED_CONTENT = 0x40;
-
         /// The entire flow needs to be reconstructed.
         const RECONSTRUCT_FLOW = 0x80;
     }
@@ -101,15 +96,13 @@ impl ServoRestyleDamage {
             self & (ServoRestyleDamage::REPAINT |
                 ServoRestyleDamage::REPOSITION |
                 ServoRestyleDamage::STORE_OVERFLOW |
-                ServoRestyleDamage::REFLOW_OUT_OF_FLOW |
-                ServoRestyleDamage::RESOLVE_GENERATED_CONTENT)
+                ServoRestyleDamage::REFLOW_OUT_OF_FLOW)
         } else {
             self & (ServoRestyleDamage::REPAINT |
                 ServoRestyleDamage::REPOSITION |
                 ServoRestyleDamage::STORE_OVERFLOW |
                 ServoRestyleDamage::REFLOW |
-                ServoRestyleDamage::REFLOW_OUT_OF_FLOW |
-                ServoRestyleDamage::RESOLVE_GENERATED_CONTENT)
+                ServoRestyleDamage::REFLOW_OUT_OF_FLOW)
         }
     }
 
@@ -166,10 +159,6 @@ impl fmt::Display for ServoRestyleDamage {
             (ServoRestyleDamage::BUBBLE_ISIZES, "BubbleISizes"),
             (ServoRestyleDamage::REFLOW_OUT_OF_FLOW, "ReflowOutOfFlow"),
             (ServoRestyleDamage::REFLOW, "Reflow"),
-            (
-                ServoRestyleDamage::RESOLVE_GENERATED_CONTENT,
-                "ResolveGeneratedContent",
-            ),
             (ServoRestyleDamage::RECONSTRUCT_FLOW, "ReconstructFlow"),
         ];
 
