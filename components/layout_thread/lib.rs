@@ -35,7 +35,6 @@ use gfx_traits::{node_id_from_scroll_id, Epoch};
 use histogram::Histogram;
 use ipc_channel::ipc::{self, IpcReceiver, IpcSender};
 use ipc_channel::router::ROUTER;
-use layout::animation;
 use layout::construct::ConstructionResult;
 use layout::context::malloc_size_of_persistent_local_context;
 use layout::context::LayoutContext;
