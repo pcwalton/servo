@@ -337,7 +337,6 @@ impl LayoutThread {
         }
     }
 
-
     /// Returns profiling information which is passed to the time profiler.
     fn profiler_metadata(&self) -> Option<TimerMetadata> {
         Some(TimerMetadata {

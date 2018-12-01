@@ -31,7 +31,7 @@
 #![allow(unsafe_code)]
 
 use atomic_refcell::{AtomicRef, AtomicRefMut};
-use crate::data::{LayoutData, LayoutDataFlags, StyleAndLayoutData};
+use crate::data::{LayoutData, StyleAndLayoutData};
 use script_layout_interface::wrapper_traits::GetLayoutData;
 use script_layout_interface::wrapper_traits::ThreadSafeLayoutNode;
 use style::dom::{NodeInfo, TNode};
@@ -55,8 +55,7 @@ impl<T: GetLayoutData> LayoutNodeLayoutData for T {
     }
 
     fn flow_debug_id(self) -> usize {
-        self.borrow_layout_data()
-            .map_or(0, |d| d.flow_construction_result.debug_id())
+        0
     }
 }
 
@@ -74,15 +73,6 @@ impl<T: GetLayoutData> GetRawData for T {
 }
 
 pub trait ThreadSafeLayoutNodeHelpers {
-    /// Returns the layout data flags for this node.
-    fn flags(self) -> LayoutDataFlags;
-
-    /// Adds the given flags to this node.
-    fn insert_flags(self, new_flags: LayoutDataFlags);
-
-    /// Removes the given flags from this node.
-    fn remove_flags(self, flags: LayoutDataFlags);
-
     /// If this is a text node, generated content, or a form element, copies out
     /// its content. Otherwise, panics.
     ///
@@ -97,18 +87,6 @@ pub trait ThreadSafeLayoutNodeHelpers {
 }
 
 impl<T: ThreadSafeLayoutNode> ThreadSafeLayoutNodeHelpers for T {
-    fn flags(self) -> LayoutDataFlags {
-        self.borrow_layout_data().as_ref().unwrap().flags
-    }
-
-    fn insert_flags(self, new_flags: LayoutDataFlags) {
-        self.mutate_layout_data().unwrap().flags.insert(new_flags);
-    }
-
-    fn remove_flags(self, flags: LayoutDataFlags) {
-        self.mutate_layout_data().unwrap().flags.remove(flags);
-    }
-
     fn text_content(&self) -> TextContent {
         TextContent::Text(self.node_text_content().into_boxed_str())
     }
@@ -126,25 +104,10 @@ impl<T: ThreadSafeLayoutNode> ThreadSafeLayoutNodeHelpers for T {
             debug_assert!(node.is_element());
         }
 
-        let damage = {
-            let data = node.get_raw_data().unwrap();
-
-            if !data
-                .layout_data
-                .borrow()
-                .flags
-                .contains(crate::data::LayoutDataFlags::HAS_BEEN_TRAVERSED)
-            {
-                // We're reflowing a node that was styled for the first time and
-                // has never been visited by layout. Return rebuild_and_reflow,
-                // because that's what the code expects.
-                RestyleDamage::rebuild_and_reflow()
-            } else {
-                data.style_data.element_data.borrow().damage
-            }
-        };
-
-        damage
+        // We're reflowing a node that was styled for the first time and
+        // has never been visited by layout. Return rebuild_and_reflow,
+        // because that's what the code expects.
+        RestyleDamage::rebuild_and_reflow()
     }
 }
 

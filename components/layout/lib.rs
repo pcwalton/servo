@@ -4,14 +4,6 @@
 
 #![deny(unsafe_code)]
 
-#[macro_use]
-extern crate bitflags;
-#[macro_use]
-extern crate html5ever;
-#[macro_use]
-extern crate serde;
-
-pub mod construct;
 pub mod context;
 pub mod data;
 pub mod opaque_node;
@@ -20,7 +12,3 @@ pub mod wrapper;
 
 // For unit tests:
 pub use self::data::LayoutData;
-
-// We can't use servo_arc for everything in layout, because the Flow stuff uses
-// weak references.
-use servo_arc::Arc as ServoArc;
