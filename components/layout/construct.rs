@@ -13,25 +13,17 @@
 
 use crate::context::LayoutContext;
 use crate::data::{LayoutData, LayoutDataFlags};
-use crate::fragment::{CanvasFragmentInfo, Fragment, IframeFragmentInfo};
-use crate::fragment::{ImageFragmentInfo};
-use crate::fragment::{MediaFragmentInfo, SpecificFragmentInfo, SvgFragmentInfo};
 use crate::wrapper::{LayoutNodeLayoutData, ThreadSafeLayoutNodeHelpers};
 use crate::ServoArc;
 use script_layout_interface::wrapper_traits::{
     PseudoElementType, ThreadSafeLayoutElement, ThreadSafeLayoutNode,
 };
 use script_layout_interface::{is_image_data, LayoutElementType, LayoutNodeType};
-use servo_config::opts;
 use servo_url::ServoUrl;
 use std::marker::PhantomData;
-use std::sync::atomic::Ordering;
-use std::sync::Arc;
 use style::computed_values::display::T as Display;
-use style::computed_values::float::T as Float;
-use style::computed_values::position::T as Position;
 use style::context::SharedStyleContext;
-use style::dom::{OpaqueNode, TElement};
+use style::dom::OpaqueNode;
 use style::properties::ComputedValues;
 use style::selector_parser::RestyleDamage;
 use style::servo::restyle_damage::ServoRestyleDamage;
@@ -106,122 +98,6 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
         self.layout_context.shared_context()
     }
 
-    #[inline]
-    fn set_flow_construction_result(
-        &self,
-        node: &ConcreteThreadSafeLayoutNode,
-        result: ConstructionResult,
-    ) {
-        node.set_flow_construction_result(result);
-    }
-
-    /// Builds the fragment for the given block or subclass thereof.
-    fn build_fragment_for_block(&self, node: &ConcreteThreadSafeLayoutNode) -> Fragment {
-        let specific_fragment_info = match node.type_id() {
-            Some(LayoutNodeType::Element(LayoutElementType::HTMLIFrameElement)) => {
-                SpecificFragmentInfo::Iframe(IframeFragmentInfo::new(node))
-            },
-            Some(LayoutNodeType::Element(LayoutElementType::HTMLImageElement)) => {
-                let image_info = Box::new(ImageFragmentInfo::new(
-                    node.image_url(),
-                    node.image_density(),
-                    node,
-                    &self.layout_context,
-                ));
-                SpecificFragmentInfo::Image(image_info)
-            },
-            Some(LayoutNodeType::Element(LayoutElementType::HTMLMediaElement)) => {
-                let data = node.media_data().unwrap();
-                SpecificFragmentInfo::Media(Box::new(MediaFragmentInfo::new(data)))
-            },
-            Some(LayoutNodeType::Element(LayoutElementType::HTMLObjectElement)) => {
-                let image_info = Box::new(ImageFragmentInfo::new(
-                    node.object_data(),
-                    None,
-                    node,
-                    &self.layout_context,
-                ));
-                SpecificFragmentInfo::Image(image_info)
-            },
-            Some(LayoutNodeType::Element(LayoutElementType::HTMLCanvasElement)) => {
-                let data = node.canvas_data().unwrap();
-                SpecificFragmentInfo::Canvas(Box::new(CanvasFragmentInfo::new(data)))
-            },
-            Some(LayoutNodeType::Element(LayoutElementType::SVGSVGElement)) => {
-                let data = node.svg_data().unwrap();
-                SpecificFragmentInfo::Svg(Box::new(SvgFragmentInfo::new(data)))
-            },
-            _ => {
-                // This includes pseudo-elements.
-                SpecificFragmentInfo::Generic
-            },
-        };
-
-        Fragment::new(node, specific_fragment_info, self.layout_context)
-    }
-
-    fn build_block_flow_using_construction_result_of_child(
-        &mut self,
-        _: ConcreteThreadSafeLayoutNode,
-    ) {
-    }
-
-    /// Constructs a block flow, beginning with the given `initial_fragments` if present and then
-    /// appending the construction results of children to the child list of the block flow. {ib}
-    /// splits and absolutely-positioned descendants are handled correctly.
-    fn build_flow_for_block_starting_with_fragments(
-        &mut self,
-        node: &ConcreteThreadSafeLayoutNode,
-    ) -> ConstructionResult {
-        // List of absolute descendants, in tree order.
-        if !node.is_replaced_content() {
-            for kid in node.children() {
-                self.build_block_flow_using_construction_result_of_child(kid);
-            }
-        }
-        ConstructionResult::None
-    }
-
-    /// Constructs a flow for the given block node and its children. This method creates an
-    /// initial fragment as appropriate and then dispatches to
-    /// `build_flow_for_block_starting_with_fragments`. Currently the following kinds of flows get
-    /// initial content:
-    ///
-    /// * Generated content gets the initial content specified by the `content` attribute of the
-    ///   CSS.
-    /// * `<input>` and `<textarea>` elements get their content.
-    ///
-    /// FIXME(pcwalton): It is not clear to me that there isn't a cleaner way to handle
-    /// `<textarea>`.
-    fn build_flow_for_block_like(&mut self, node: &ConcreteThreadSafeLayoutNode)
-                                 -> ConstructionResult {
-        let node_is_input_or_text_area =
-            node.type_id() == Some(LayoutNodeType::Element(LayoutElementType::HTMLInputElement)) ||
-                node.type_id() == Some(LayoutNodeType::Element(
-                    LayoutElementType::HTMLTextAreaElement,
-                ));
-        if node.get_pseudo_element_type().is_replaced_content() || node_is_input_or_text_area {
-            // A TextArea's text contents are displayed through the input text
-            // box, so don't construct them.
-            if node.type_id() == Some(LayoutNodeType::Element(
-                LayoutElementType::HTMLTextAreaElement,
-            )) {
-                for kid in node.children() {
-                    self.set_flow_construction_result(&kid, ConstructionResult::None)
-                }
-            }
-        }
-        self.build_flow_for_block_starting_with_fragments(node)
-    }
-
-    /// Builds a flow for a node with `display: block`. This yields a `BlockFlow` with possibly
-    /// other `BlockFlow`s or `InlineFlow`s underneath it, depending on whether {ib} splits needed
-    /// to happen.
-    fn build_flow_for_block(&mut self, node: &ConcreteThreadSafeLayoutNode) -> ConstructionResult {
-        let fragment = self.build_fragment_for_block(node);
-        self.build_flow_for_block_like(node)
-    }
-
     /// Attempts to perform incremental repair to account for recent changes to this node. This
     /// can fail and return false, indicating that flows will need to be reconstructed.
     ///
@@ -270,7 +146,6 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
                 return false;
             }
 
-            let damage = node.restyle_damage();
             let mut data = node.mutate_layout_data().unwrap();
 
             match *node.construction_result_mut(&mut *data) {

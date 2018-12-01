@@ -9,14 +9,11 @@ extern crate bitflags;
 #[macro_use]
 extern crate html5ever;
 #[macro_use]
-extern crate log;
-#[macro_use]
 extern crate serde;
 
 pub mod construct;
 pub mod context;
 pub mod data;
-mod fragment;
 mod model;
 pub mod opaque_node;
 pub mod query;
@@ -24,8 +21,6 @@ pub mod wrapper;
 
 // For unit tests:
 pub use self::data::LayoutData;
-pub use crate::fragment::Fragment;
-pub use crate::fragment::SpecificFragmentInfo;
 
 // We can't use servo_arc for everything in layout, because the Flow stuff uses
 // weak references.
