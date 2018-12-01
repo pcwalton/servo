@@ -4,7 +4,6 @@
 
 #![deny(unsafe_code)]
 
-pub mod context;
 pub mod data;
 pub mod opaque_node;
 pub mod query;

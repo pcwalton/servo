@@ -5,7 +5,6 @@
 //! Utilities for querying the layout, as needed by the layout thread.
 
 use app_units::Au;
-use crate::context::LayoutContext;
 use euclid::Rect;
 use ipc_channel::ipc::IpcSender;
 use msg::constellation_msg::PipelineId;
@@ -169,15 +168,9 @@ pub fn process_node_scroll_area_request<N: LayoutNode>(_: N) -> Rect<i32> {
 
 /// Return the resolved value of property for a given (pseudo)element.
 /// <https://drafts.csswg.org/cssom/#resolved-value>
-pub fn process_resolved_style_request<'a, N>(
-    _: &LayoutContext,
-    _: N,
-    _: &Option<PseudoElement>,
-    _: &PropertyId,
-) -> String
-where
-    N: LayoutNode,
-{
+pub fn process_resolved_style_request<'a, N>(_: N, _: &Option<PseudoElement>, _: &PropertyId)
+                                             -> String
+                                             where N: LayoutNode {
     "".to_owned()
 }
 

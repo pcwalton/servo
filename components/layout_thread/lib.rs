@@ -18,39 +18,30 @@ mod dom_wrapper;
 
 use crossbeam_channel::Receiver;
 use embedder_traits::resources::{self, Resource};
-use euclid::{TypedScale, TypedSize2D};
-use fnv::FnvHashMap;
-use fxhash::FxHashMap;
+use euclid::TypedScale;
 use ipc_channel::ipc::{self, IpcSender};
 use ipc_channel::router::ROUTER;
-use layout::context::{RegisteredPainter, RegisteredPainters};
 use layout_traits::{LayoutGlobalInfo, LayoutThreadFactory};
 use metrics::{PaintTimeMetrics, ProfilerMetadataFactory};
 use msg::constellation_msg::TopLevelBrowsingContextId;
 use profile_traits::time::{TimerMetadataFrameType, TimerMetadataReflowType, TimerMetadata};
 use script_layout_interface::message::Msg;
-use script_traits::{DrawAPaintImageResult, FrameType, LayoutControlMsg, LayoutPerThreadInfo};
-use script_traits::{PaintWorkletError, Painter};
+use script_traits::{FrameType, LayoutControlMsg, LayoutPerThreadInfo};
 use servo_arc::Arc as ServoArc;
-use servo_atoms::Atom;
 use servo_config::opts;
 use servo_url::ServoUrl;
 use std::process;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
-use style::context::{QuirksMode, RegisteredSpeculativePainter, RegisteredSpeculativePainters};
+use style::context::QuirksMode;
 use style::error_reporting::RustLogReporter;
 use style::media_queries::{Device, MediaList, MediaType};
-use style::properties::PropertyId;
 use style::shared_lock::{SharedRwLock, SharedRwLockReadGuard};
 use style::stylesheets::{DocumentStyleSheet, Origin, Stylesheet};
 use style::stylesheets::{StylesheetInDocument, UserAgentStylesheets};
 use style::stylist::Stylist;
 use style::thread_state::{self, ThreadState};
-use style_traits::CSSPixel;
-use style_traits::DevicePixel;
-use style_traits::SpeculativePainter;
 
 /// The layout thread.
 pub struct LayoutThread {
@@ -68,9 +59,6 @@ pub struct LayoutThread {
 
     /// The number of Web fonts that have been requested but not yet loaded.
     outstanding_web_fonts: Arc<AtomicUsize>,
-
-    /// The executors for paint worklets.
-    registered_painters: RegisteredPaintersImpl,
 }
 
 impl LayoutThreadFactory for LayoutThread {
@@ -143,7 +131,6 @@ impl LayoutThread {
             },
             stylist: Stylist::new(device, QuirksMode::NoQuirks),
             outstanding_web_fonts: Arc::new(AtomicUsize::new(0)),
-            registered_painters: RegisteredPaintersImpl(Default::default()),
             global_info,
             thread_info,
         }
@@ -262,22 +249,8 @@ impl LayoutThread {
             },
             Msg::CreateLayoutThread(info) => self.create_layout_thread(info),
             Msg::SetFinalUrl(final_url) => self.thread_info.current_url = final_url,
-            Msg::RegisterPaint(name, mut properties, painter) => {
-                debug!("Registering the painter");
-                let properties = properties
-                    .drain(..)
-                    .filter_map(|name| {
-                        let id = PropertyId::parse_enabled_for_all_content(&*name).ok()?;
-                        Some((name.clone(), id))
-                    })
-                    .filter(|&(_, ref id)| !id.is_shorthand())
-                    .collect();
-                let registered_painter = RegisteredPainterImpl {
-                    name: name.clone(),
-                    properties,
-                    painter,
-                };
-                self.registered_painters.0.insert(name, registered_painter);
+            Msg::RegisterPaint(_name, _properties, _painter) => {
+                // TODO(pcwalton)
             },
             Msg::PrepareToExit(_response_chan) => {
                 // TODO(pcwalton)
@@ -437,66 +410,6 @@ lazy_static! {
             },
         }
     };
-}
-
-struct RegisteredPainterImpl {
-    painter: Box<dyn Painter>,
-    name: Atom,
-    // FIXME: Should be a PrecomputedHashMap.
-    properties: FxHashMap<Atom, PropertyId>,
-}
-
-impl SpeculativePainter for RegisteredPainterImpl {
-    fn speculatively_draw_a_paint_image(
-        &self,
-        properties: Vec<(Atom, String)>,
-        arguments: Vec<String>,
-    ) {
-        self.painter
-            .speculatively_draw_a_paint_image(properties, arguments);
-    }
-}
-
-impl RegisteredSpeculativePainter for RegisteredPainterImpl {
-    fn properties(&self) -> &FxHashMap<Atom, PropertyId> {
-        &self.properties
-    }
-    fn name(&self) -> Atom {
-        self.name.clone()
-    }
-}
-
-impl Painter for RegisteredPainterImpl {
-    fn draw_a_paint_image(
-        &self,
-        size: TypedSize2D<f32, CSSPixel>,
-        device_pixel_ratio: TypedScale<f32, CSSPixel, DevicePixel>,
-        properties: Vec<(Atom, String)>,
-        arguments: Vec<String>,
-    ) -> Result<DrawAPaintImageResult, PaintWorkletError> {
-        self.painter
-            .draw_a_paint_image(size, device_pixel_ratio, properties, arguments)
-    }
-}
-
-impl RegisteredPainter for RegisteredPainterImpl {}
-
-struct RegisteredPaintersImpl(FnvHashMap<Atom, RegisteredPainterImpl>);
-
-impl RegisteredSpeculativePainters for RegisteredPaintersImpl {
-    fn get(&self, name: &Atom) -> Option<&dyn RegisteredSpeculativePainter> {
-        self.0
-            .get(&name)
-            .map(|painter| painter as &dyn RegisteredSpeculativePainter)
-    }
-}
-
-impl RegisteredPainters for RegisteredPaintersImpl {
-    fn get(&self, name: &Atom) -> Option<&dyn RegisteredPainter> {
-        self.0
-            .get(&name)
-            .map(|painter| painter as &dyn RegisteredPainter)
-    }
 }
 
 struct LayoutThreadMessages {
