@@ -14,7 +14,6 @@ extern crate serde;
 pub mod construct;
 pub mod context;
 pub mod data;
-mod model;
 pub mod opaque_node;
 pub mod query;
 pub mod wrapper;
