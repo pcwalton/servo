@@ -9,7 +9,6 @@ use crate::context::LayoutContext;
 use crate::floats::SpeculatedFloatPlacement;
 use crate::flow::{Flow, FlowFlags, GetBaseFlow, ImmutableFlowUtils};
 use crate::fragment::{CoordinateSystem, FragmentBorderBoxIterator};
-use crate::incremental::RelayoutMode;
 use crate::traversal::{AssignBSizes, AssignISizes, BubbleISizes};
 use crate::traversal::{PostorderFlowTraversal, PreorderFlowTraversal};
 use euclid::{Point2D, Vector2D};
@@ -18,27 +17,18 @@ use style::servo::restyle_damage::ServoRestyleDamage;
 use webrender_api::LayoutPoint;
 
 /// Run the main layout passes sequentially.
-pub fn reflow(root: &mut dyn Flow, layout_context: &LayoutContext, relayout_mode: RelayoutMode) {
+pub fn reflow(root: &mut dyn Flow, layout_context: &LayoutContext) {
     fn doit(
         flow: &mut dyn Flow,
         assign_inline_sizes: AssignISizes,
         assign_block_sizes: AssignBSizes,
-        relayout_mode: RelayoutMode,
     ) {
-        // Force reflow children during this traversal. This is needed when we failed
-        // the float speculation of a block formatting context and need to fix it.
-        if relayout_mode == RelayoutMode::Force {
-            flow.mut_base()
-                .restyle_damage
-                .insert(ServoRestyleDamage::REFLOW_OUT_OF_FLOW | ServoRestyleDamage::REFLOW);
-        }
-
         if assign_inline_sizes.should_process(flow) {
             assign_inline_sizes.process(flow);
         }
 
         for kid in flow.mut_base().child_iter_mut() {
-            doit(kid, assign_inline_sizes, assign_block_sizes, relayout_mode);
+            doit(kid, assign_inline_sizes, assign_block_sizes);
         }
 
         if assign_block_sizes.should_process(flow) {
@@ -60,7 +50,7 @@ pub fn reflow(root: &mut dyn Flow, layout_context: &LayoutContext, relayout_mode
         layout_context: &layout_context,
     };
 
-    doit(root, assign_inline_sizes, assign_block_sizes, relayout_mode);
+    doit(root, assign_inline_sizes, assign_block_sizes);
 }
 
 pub fn iterate_through_flow_tree_fragment_border_boxes(

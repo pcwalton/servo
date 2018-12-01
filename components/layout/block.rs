@@ -38,7 +38,6 @@ use crate::flow_list::FlowList;
 use crate::fragment::{
     CoordinateSystem, Fragment, FragmentBorderBoxIterator, FragmentFlags, Overflow,
 };
-use crate::incremental::RelayoutMode;
 use crate::layout_debug;
 use crate::model::{
     AdjoiningMargins, CollapsibleMargins, IntrinsicISizes, MarginCollapseInfo, MaybeAuto,
@@ -1836,7 +1835,7 @@ impl BlockFlow {
             self.assign_inline_sizes(layout_context);
             // Re-run layout on our children.
             for child in self.base.child_iter_mut() {
-                sequential::reflow(child, layout_context, RelayoutMode::Force);
+                sequential::reflow(child, layout_context);
             }
             // Assign our final-final block size.
             self.assign_block_size(layout_context);

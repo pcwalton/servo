@@ -42,7 +42,6 @@ use layout::context::RegisteredPainter;
 use layout::context::RegisteredPainters;
 use layout::flow::{Flow, GetBaseFlow, ImmutableFlowUtils, MutableOwnedFlowUtils};
 use layout::flow_ref::FlowRef;
-use layout::incremental::{LayoutDamageComputation, RelayoutMode, SpecialRestyleDamage};
 use layout::layout_debug;
 use layout::parallel;
 use layout::query::{

@@ -27,7 +27,6 @@ pub mod flow;
 mod flow_list;
 pub mod flow_ref;
 mod fragment;
-pub mod incremental;
 mod inline;
 mod linked_list;
 mod model;
