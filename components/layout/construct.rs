@@ -12,28 +12,17 @@
 //! Construction items bubble up the tree from children to parents until they find their homes.
 
 use crate::block::BlockFlow;
-use crate::context::{with_thread_local_font_context, LayoutContext};
+use crate::context::LayoutContext;
 use crate::data::{LayoutData, LayoutDataFlags};
-use crate::floats::FloatKind;
-use crate::flow::{AbsoluteDescendants, Flow, GetBaseFlow, ImmutableFlowUtils};
+use crate::flow::{AbsoluteDescendants, GetBaseFlow, ImmutableFlowUtils};
 use crate::flow::{FlowFlags, MutableFlowUtils, MutableOwnedFlowUtils};
 use crate::flow_ref::FlowRef;
 use crate::fragment::{CanvasFragmentInfo, Fragment, IframeFragmentInfo};
-use crate::fragment::{
-    ImageFragmentInfo, InlineAbsoluteFragmentInfo, InlineAbsoluteHypotheticalFragmentInfo,
-};
-use crate::fragment::{
-    InlineBlockFragmentInfo, MediaFragmentInfo, SpecificFragmentInfo, SvgFragmentInfo,
-};
-use crate::fragment::{
-    UnscannedTextFragmentInfo, WhitespaceStrippingResult,
-};
-use crate::inline::{InlineFlow, InlineFragmentNodeFlags, InlineFragmentNodeInfo};
-use crate::linked_list::prepend_from;
+use crate::fragment::{ImageFragmentInfo};
+use crate::fragment::{MediaFragmentInfo, SpecificFragmentInfo, SvgFragmentInfo};
 use crate::parallel;
-use crate::text::TextRunScanner;
 use crate::traversal::PostorderNodeMutTraversal;
-use crate::wrapper::{LayoutNodeLayoutData, TextContent, ThreadSafeLayoutNodeHelpers};
+use crate::wrapper::{LayoutNodeLayoutData, ThreadSafeLayoutNodeHelpers};
 use crate::ServoArc;
 use script_layout_interface::wrapper_traits::{
     PseudoElementType, ThreadSafeLayoutElement, ThreadSafeLayoutNode,
@@ -41,9 +30,7 @@ use script_layout_interface::wrapper_traits::{
 use script_layout_interface::{is_image_data, LayoutElementType, LayoutNodeType};
 use servo_config::opts;
 use servo_url::ServoUrl;
-use std::collections::LinkedList;
 use std::marker::PhantomData;
-use std::mem;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use style::computed_values::display::T as Display;
@@ -52,7 +39,7 @@ use style::computed_values::position::T as Position;
 use style::context::SharedStyleContext;
 use style::dom::{OpaqueNode, TElement};
 use style::properties::ComputedValues;
-use style::selector_parser::{PseudoElement, RestyleDamage};
+use style::selector_parser::RestyleDamage;
 use style::servo::restyle_damage::ServoRestyleDamage;
 
 /// The results of flow construction for a DOM node.
@@ -93,8 +80,6 @@ impl ConstructionResult {
 /// to.
 #[derive(Clone)]
 pub enum ConstructionItem {
-    /// Inline fragments and associated {ib} splits that have not yet found flows.
-    InlineFragments(InlineFragmentsConstructionResult),
     /// Potentially ignorable whitespace.
     ///
     /// FIXME(emilio): How could whitespace have any PseudoElementType other
@@ -107,243 +92,7 @@ pub enum ConstructionItem {
     ),
 }
 
-/// Represents inline fragments and {ib} splits that are bubbling up from an inline.
-#[derive(Clone)]
-pub struct InlineFragmentsConstructionResult {
-    /// Any {ib} splits that we're bubbling up.
-    pub splits: LinkedList<InlineBlockSplit>,
-
-    /// Any fragments that succeed the {ib} splits.
-    pub fragments: IntermediateInlineFragments,
-}
-
-/// Represents an {ib} split that has not yet found the containing block that it belongs to. This
-/// is somewhat tricky. An example may be helpful. For this DOM fragment:
-///
-/// ```html
-///     <span>
-///     A
-///     <div>B</div>
-///     C
-///     </span>
-/// ```
-///
-/// The resulting `ConstructionItem` for the outer `span` will be:
-///
-/// ```rust,ignore
-///     ConstructionItem::InlineFragments(
-///         InlineFragmentsConstructionResult {
-///             splits: linked_list![
-///                 InlineBlockSplit {
-///                     predecessors: IntermediateInlineFragments {
-///                         fragments: linked_list![A],
-///                         absolute_descendents: AbsoluteDescendents {
-///                             descendant_links: vec![]
-///                         },
-///                     },
-///                     flow: B,
-///                 }
-///             ],
-///             fragments: linked_list![C],
-///         },
-///     )
-/// ```
-#[derive(Clone)]
-pub struct InlineBlockSplit {
-    /// The inline fragments that precede the flow.
-    pub predecessors: IntermediateInlineFragments,
-
-    /// The flow that caused this {ib} split.
-    pub flow: FlowRef,
-}
-
-impl InlineBlockSplit {
-    /// Flushes the given accumulator to the new split and makes a new accumulator to hold any
-    /// subsequent fragments.
-    fn new<ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>(
-        fragment_accumulator: &mut InlineFragmentsAccumulator,
-        node: &ConcreteThreadSafeLayoutNode,
-        style_context: &SharedStyleContext,
-        flow: FlowRef,
-    ) -> InlineBlockSplit {
-        fragment_accumulator.enclosing_node.as_mut().expect(
-            "enclosing_node is None; Are {ib} splits being generated outside of an inline node?"
-        ).flags.remove(InlineFragmentNodeFlags::LAST_FRAGMENT_OF_ELEMENT);
-
-        let split = InlineBlockSplit {
-            predecessors: mem::replace(
-                fragment_accumulator,
-                InlineFragmentsAccumulator::from_inline_node(node, style_context),
-            )
-            .to_intermediate_inline_fragments::<ConcreteThreadSafeLayoutNode>(style_context),
-            flow: flow,
-        };
-
-        fragment_accumulator
-            .enclosing_node
-            .as_mut()
-            .unwrap()
-            .flags
-            .remove(InlineFragmentNodeFlags::FIRST_FRAGMENT_OF_ELEMENT);
-
-        split
-    }
-}
-
-/// Holds inline fragments and absolute descendants.
-#[derive(Clone)]
-pub struct IntermediateInlineFragments {
-    /// The list of fragments.
-    pub fragments: LinkedList<Fragment>,
-
-    /// The list of absolute descendants of those inline fragments.
-    pub absolute_descendants: AbsoluteDescendants,
-}
-
-impl IntermediateInlineFragments {
-    fn new() -> IntermediateInlineFragments {
-        IntermediateInlineFragments {
-            fragments: LinkedList::new(),
-            absolute_descendants: AbsoluteDescendants::new(),
-        }
-    }
-
-    fn is_empty(&self) -> bool {
-        self.fragments.is_empty() && self.absolute_descendants.is_empty()
-    }
-
-    fn push_all(&mut self, mut other: IntermediateInlineFragments) {
-        self.fragments.append(&mut other.fragments);
-        self.absolute_descendants
-            .push_descendants(other.absolute_descendants);
-    }
-}
-
 /// Holds inline fragments that we're gathering for children of an inline node.
-struct InlineFragmentsAccumulator {
-    /// The list of fragments.
-    fragments: IntermediateInlineFragments,
-
-    /// Information about the inline box directly enclosing the fragments being gathered, if any.
-    ///
-    /// `inline::InlineFragmentNodeInfo` also stores flags indicating whether a fragment is the
-    /// first and/or last of the corresponding inline box. This `InlineFragmentsAccumulator` may
-    /// represent only one side of an {ib} split, so we store these flags as if it represented only
-    /// one fragment. `to_intermediate_inline_fragments` later splits this hypothetical fragment
-    /// into pieces, leaving the `FIRST_FRAGMENT_OF_ELEMENT` and `LAST_FRAGMENT_OF_ELEMENT` flags,
-    /// if present, on the first and last fragments of the output.
-    enclosing_node: Option<InlineFragmentNodeInfo>,
-
-    /// Restyle damage to use for fragments created in this node.
-    restyle_damage: RestyleDamage,
-
-    /// Bidi control characters to insert before and after these fragments.
-    bidi_control_chars: Option<(&'static str, &'static str)>,
-}
-
-impl InlineFragmentsAccumulator {
-    fn new() -> InlineFragmentsAccumulator {
-        InlineFragmentsAccumulator {
-            fragments: IntermediateInlineFragments::new(),
-            enclosing_node: None,
-            bidi_control_chars: None,
-            restyle_damage: RestyleDamage::empty(),
-        }
-    }
-
-    fn from_inline_node<N>(
-        node: &N,
-        style_context: &SharedStyleContext,
-    ) -> InlineFragmentsAccumulator
-    where
-        N: ThreadSafeLayoutNode,
-    {
-        InlineFragmentsAccumulator {
-            fragments: IntermediateInlineFragments::new(),
-            enclosing_node: Some(InlineFragmentNodeInfo {
-                address: node.opaque(),
-                pseudo: node.get_pseudo_element_type(),
-                style: node.style(style_context),
-                selected_style: node.selected_style(),
-                flags: InlineFragmentNodeFlags::FIRST_FRAGMENT_OF_ELEMENT |
-                    InlineFragmentNodeFlags::LAST_FRAGMENT_OF_ELEMENT,
-            }),
-            bidi_control_chars: None,
-            restyle_damage: node.restyle_damage(),
-        }
-    }
-
-    fn push(&mut self, fragment: Fragment) {
-        self.fragments.fragments.push_back(fragment)
-    }
-
-    fn push_all(&mut self, mut fragments: IntermediateInlineFragments) {
-        self.fragments.fragments.append(&mut fragments.fragments);
-        self.fragments
-            .absolute_descendants
-            .push_descendants(fragments.absolute_descendants);
-    }
-
-    fn to_intermediate_inline_fragments<N>(
-        self,
-        context: &SharedStyleContext,
-    ) -> IntermediateInlineFragments
-    where
-        N: ThreadSafeLayoutNode,
-    {
-        let InlineFragmentsAccumulator {
-            mut fragments,
-            enclosing_node,
-            bidi_control_chars,
-            restyle_damage,
-        } = self;
-        if let Some(mut enclosing_node) = enclosing_node {
-            let fragment_count = fragments.fragments.len();
-            for (index, fragment) in fragments.fragments.iter_mut().enumerate() {
-                let mut enclosing_node = enclosing_node.clone();
-                if index != 0 {
-                    enclosing_node
-                        .flags
-                        .remove(InlineFragmentNodeFlags::FIRST_FRAGMENT_OF_ELEMENT)
-                }
-                if index != fragment_count - 1 {
-                    enclosing_node
-                        .flags
-                        .remove(InlineFragmentNodeFlags::LAST_FRAGMENT_OF_ELEMENT)
-                }
-                fragment.add_inline_context_style(enclosing_node);
-            }
-
-            // Control characters are later discarded in transform_text, so they don't affect the
-            // is_first/is_last styles above.
-            enclosing_node.flags.remove(
-                InlineFragmentNodeFlags::FIRST_FRAGMENT_OF_ELEMENT |
-                    InlineFragmentNodeFlags::LAST_FRAGMENT_OF_ELEMENT,
-            );
-
-            if let Some((start, end)) = bidi_control_chars {
-                fragments
-                    .fragments
-                    .push_front(control_chars_to_fragment::<N::ConcreteElement>(
-                        &enclosing_node,
-                        context,
-                        start,
-                        restyle_damage,
-                    ));
-                fragments
-                    .fragments
-                    .push_back(control_chars_to_fragment::<N::ConcreteElement>(
-                        &enclosing_node,
-                        context,
-                        end,
-                        restyle_damage,
-                    ));
-            }
-        }
-        fragments
-    }
-}
-
 /// An object that knows how to create flows.
 pub struct FlowConstructor<'a, N: ThreadSafeLayoutNode> {
     /// The layout context.
@@ -423,211 +172,23 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
         Fragment::new(node, specific_fragment_info, self.layout_context)
     }
 
-    /// Creates an inline flow from a set of inline fragments, then adds it as a child of the given
-    /// flow or pushes it onto the given flow list.
-    ///
-    /// `#[inline(always)]` because this is performance critical and LLVM will not inline it
-    /// otherwise.
-    #[inline(always)]
-    fn flush_inline_fragments_to_flow(
-        &mut self,
-        fragment_accumulator: InlineFragmentsAccumulator,
-        flow: &mut FlowRef,
-        absolute_descendants: &mut AbsoluteDescendants,
-        legalizer: &mut Legalizer,
-        node: &ConcreteThreadSafeLayoutNode,
-    ) {
-        let mut fragments = fragment_accumulator
-            .to_intermediate_inline_fragments::<ConcreteThreadSafeLayoutNode>(self.style_context());
-        if fragments.is_empty() {
-            return;
-        };
-
-        strip_ignorable_whitespace_from_start(&mut fragments.fragments);
-        strip_ignorable_whitespace_from_end(&mut fragments.fragments);
-        if fragments.fragments.is_empty() {
-            absolute_descendants.push_descendants(fragments.absolute_descendants);
-            return;
-        }
-
-        // Build a list of all the inline-block fragments before fragments is moved.
-        let mut inline_block_flows = vec![];
-        for fragment in &fragments.fragments {
-            match fragment.specific {
-                SpecificFragmentInfo::InlineBlock(ref info) => {
-                    inline_block_flows.push(info.flow_ref.clone())
-                },
-                SpecificFragmentInfo::InlineAbsoluteHypothetical(ref info) => {
-                    inline_block_flows.push(info.flow_ref.clone())
-                },
-                SpecificFragmentInfo::InlineAbsolute(ref info) => {
-                    inline_block_flows.push(info.flow_ref.clone())
-                },
-                _ => {},
-            }
-        }
-
-        // We must scan for runs before computing minimum ascent and descent because scanning
-        // for runs might collapse so much whitespace away that only hypothetical fragments
-        // remain. In that case the inline flow will compute its ascent and descent to be zero.
-        let scanned_fragments =
-            with_thread_local_font_context(self.layout_context, |font_context| {
-                TextRunScanner::new().scan_for_runs(
-                    font_context,
-                    mem::replace(&mut fragments.fragments, LinkedList::new()),
-                )
-            });
-        let mut inline_flow_ref = FlowRef::new(Arc::new(InlineFlow::from_fragments(
-            scanned_fragments,
-            node.style(self.style_context()).writing_mode,
-        )));
-
-        // Add all the inline-block fragments as children of the inline flow.
-        for inline_block_flow in &inline_block_flows {
-            inline_flow_ref.add_new_child(inline_block_flow.clone());
-        }
-
-        // Set up absolute descendants as necessary.
-        //
-        // The inline flow itself may need to become the containing block for absolute descendants
-        // in order to handle cases like:
-        //
-        //      <div>
-        //          <span style="position: relative">
-        //              <span style="position: absolute; ..."></span>
-        //          </span>
-        //      </div>
-        //
-        // See the comment above `flow::AbsoluteDescendantInfo` for more information.
-        inline_flow_ref.take_applicable_absolute_descendants(&mut fragments.absolute_descendants);
-        absolute_descendants.push_descendants(fragments.absolute_descendants);
-
-        {
-            // FIXME(#6503): Use Arc::get_mut().unwrap() here.
-            let inline_flow = FlowRef::deref_mut(&mut inline_flow_ref).as_mut_inline();
-            inline_flow.minimum_line_metrics =
-                with_thread_local_font_context(self.layout_context, |font_context| {
-                    inline_flow
-                        .minimum_line_metrics(font_context, &node.style(self.style_context()))
-                });
-        }
-
-        inline_flow_ref.finish();
-        legalizer.add_child::<ConcreteThreadSafeLayoutNode::ConcreteElement>(
-            self.style_context(),
-            flow,
-            inline_flow_ref,
-        )
-    }
-
     fn build_block_flow_using_construction_result_of_child(
         &mut self,
         flow: &mut FlowRef,
-        node: &ConcreteThreadSafeLayoutNode,
         kid: ConcreteThreadSafeLayoutNode,
-        inline_fragment_accumulator: &mut InlineFragmentsAccumulator,
         abs_descendants: &mut AbsoluteDescendants,
         legalizer: &mut Legalizer,
     ) {
         match kid.get_construction_result() {
             ConstructionResult::None => {},
             ConstructionResult::Flow(kid_flow, kid_abs_descendants) => {
-                if !kid_flow
-                    .base()
-                    .flags
-                    .contains(FlowFlags::IS_ABSOLUTELY_POSITIONED)
-                {
-                    // Flush any inline fragments that we were gathering up. This allows us to
-                    // handle {ib} splits.
-                    let old_inline_fragment_accumulator = mem::replace(
-                        inline_fragment_accumulator,
-                        InlineFragmentsAccumulator::new(),
-                    );
-                    self.flush_inline_fragments_to_flow(
-                        old_inline_fragment_accumulator,
-                        flow,
-                        abs_descendants,
-                        legalizer,
-                        node,
-                    );
-                }
                 legalizer.add_child::<ConcreteThreadSafeLayoutNode::ConcreteElement>(
-                    self.style_context(),
                     flow,
                     kid_flow,
                 );
                 abs_descendants.push_descendants(kid_abs_descendants);
             },
-            ConstructionResult::ConstructionItem(ConstructionItem::InlineFragments(
-                InlineFragmentsConstructionResult {
-                    splits,
-                    fragments: successor_fragments,
-                },
-            )) => {
-                // Add any {ib} splits.
-                for split in splits {
-                    // Pull apart the {ib} split object and push its predecessor fragments
-                    // onto the list.
-                    let InlineBlockSplit {
-                        predecessors,
-                        flow: kid_flow,
-                    } = split;
-                    inline_fragment_accumulator.push_all(predecessors);
-
-                    // Flush any inline fragments that we were gathering up.
-                    debug!(
-                        "flushing {} inline box(es) to flow A",
-                        inline_fragment_accumulator.fragments.fragments.len()
-                    );
-                    let old_inline_fragment_accumulator = mem::replace(
-                        inline_fragment_accumulator,
-                        InlineFragmentsAccumulator::new(),
-                    );
-                    let absolute_descendants =
-                        &mut inline_fragment_accumulator.fragments.absolute_descendants;
-                    self.flush_inline_fragments_to_flow(
-                        old_inline_fragment_accumulator,
-                        flow,
-                        absolute_descendants,
-                        legalizer,
-                        node,
-                    );
-
-                    // Push the flow generated by the {ib} split onto our list of flows.
-                    legalizer.add_child::<ConcreteThreadSafeLayoutNode::ConcreteElement>(
-                        self.style_context(),
-                        flow,
-                        kid_flow,
-                    )
-                }
-
-                // Add the fragments to the list we're maintaining.
-                inline_fragment_accumulator.push_all(successor_fragments);
-            },
-            ConstructionResult::ConstructionItem(ConstructionItem::Whitespace(
-                whitespace_node,
-                whitespace_pseudo,
-                whitespace_style,
-                whitespace_damage,
-            )) => {
-                // Add whitespace results. They will be stripped out later on when
-                // between block elements, and retained when between inline elements.
-                let fragment_info = SpecificFragmentInfo::UnscannedText(Box::new(
-                    UnscannedTextFragmentInfo::new(Box::<str>::from(" "), None),
-                ));
-                let fragment = Fragment::from_opaque_node_and_style(
-                    whitespace_node,
-                    whitespace_pseudo,
-                    whitespace_style,
-                    node.selected_style(),
-                    whitespace_damage,
-                    fragment_info,
-                );
-                inline_fragment_accumulator
-                    .fragments
-                    .fragments
-                    .push_back(fragment);
-            },
+            ConstructionResult::ConstructionItem(ConstructionItem::Whitespace(..)) => {},
         }
     }
 
@@ -638,15 +199,7 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
         &mut self,
         mut flow: FlowRef,
         node: &ConcreteThreadSafeLayoutNode,
-        initial_fragments: IntermediateInlineFragments,
     ) -> ConstructionResult {
-        // Gather up fragments for the inline flows we might need to create.
-        let mut inline_fragment_accumulator = InlineFragmentsAccumulator::new();
-
-        inline_fragment_accumulator
-            .fragments
-            .push_all(initial_fragments);
-
         // List of absolute descendants, in tree order.
         let mut abs_descendants = AbsoluteDescendants::new();
         let mut legalizer = Legalizer::new();
@@ -658,24 +211,12 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
 
                 self.build_block_flow_using_construction_result_of_child(
                     &mut flow,
-                    node,
                     kid,
-                    &mut inline_fragment_accumulator,
                     &mut abs_descendants,
                     &mut legalizer,
                 );
             }
         }
-
-        // Perform a final flush of any inline fragments that we were gathering up to handle {ib}
-        // splits, after stripping ignorable whitespace.
-        self.flush_inline_fragments_to_flow(
-            inline_fragment_accumulator,
-            &mut flow,
-            &mut abs_descendants,
-            &mut legalizer,
-            node,
-        );
 
         // The flow is done.
         legalizer.finish(&mut flow);
@@ -716,7 +257,6 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
         flow: FlowRef,
         node: &ConcreteThreadSafeLayoutNode,
     ) -> ConstructionResult {
-        let mut fragments = IntermediateInlineFragments::new();
         let node_is_input_or_text_area =
             node.type_id() == Some(LayoutNodeType::Element(LayoutElementType::HTMLInputElement)) ||
                 node.type_id() == Some(LayoutNodeType::Element(
@@ -732,435 +272,19 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
                     self.set_flow_construction_result(&kid, ConstructionResult::None)
                 }
             }
-
-            let context = self.style_context();
-            let mut style = node.style(context);
-            style = context
-                .stylist
-                .style_for_anonymous::<ConcreteThreadSafeLayoutNode::ConcreteElement>(
-                    &context.guards,
-                    &PseudoElement::ServoText,
-                    &style,
-                );
-            if node_is_input_or_text_area {
-                style = context
-                    .stylist
-                    .style_for_anonymous::<ConcreteThreadSafeLayoutNode::ConcreteElement>(
-                        &context.guards,
-                        &PseudoElement::ServoInputText,
-                        &style,
-                    )
-            }
-
-            self.create_fragments_for_node_text_content(&mut fragments, node, &style)
         }
-        self.build_flow_for_block_starting_with_fragments(flow, node, fragments)
-    }
-
-    /// Pushes fragments appropriate for the content of the given node onto the given list.
-    fn create_fragments_for_node_text_content(
-        &self,
-        fragments: &mut IntermediateInlineFragments,
-        node: &ConcreteThreadSafeLayoutNode,
-        style: &ServoArc<ComputedValues>,
-    ) {
-        // Fast path: If there is no text content, return immediately.
-        let text_content = node.text_content();
-        if text_content.is_empty() {
-            return;
-        }
-
-        let style = (*style).clone();
-        let selected_style = node.selected_style();
-
-        match text_content {
-            TextContent::Text(string) => {
-                let info = Box::new(UnscannedTextFragmentInfo::new(string, node.selection()));
-                let specific_fragment_info = SpecificFragmentInfo::UnscannedText(info);
-                fragments
-                    .fragments
-                    .push_back(Fragment::from_opaque_node_and_style(
-                        node.opaque(),
-                        node.get_pseudo_element_type(),
-                        style,
-                        selected_style,
-                        node.restyle_damage(),
-                        specific_fragment_info,
-                    ))
-            },
-        }
+        self.build_flow_for_block_starting_with_fragments(flow, node)
     }
 
     /// Builds a flow for a node with `display: block`. This yields a `BlockFlow` with possibly
     /// other `BlockFlow`s or `InlineFlow`s underneath it, depending on whether {ib} splits needed
     /// to happen.
-    fn build_flow_for_block(
-        &mut self,
-        node: &ConcreteThreadSafeLayoutNode,
-        float_kind: Option<FloatKind>,
-    ) -> ConstructionResult {
+    fn build_flow_for_block(&mut self, node: &ConcreteThreadSafeLayoutNode) -> ConstructionResult {
         let fragment = self.build_fragment_for_block(node);
-        let flow = FlowRef::new(Arc::new(BlockFlow::from_fragment_and_float_kind(
-            fragment, float_kind,
-        )));
+        let flow = FlowRef::new(Arc::new(BlockFlow::from_fragment(fragment)));
         self.build_flow_for_block_like(flow, node)
     }
 
-    /// Bubbles up {ib} splits.
-    fn accumulate_inline_block_splits(
-        &mut self,
-        splits: LinkedList<InlineBlockSplit>,
-        node: &ConcreteThreadSafeLayoutNode,
-        fragment_accumulator: &mut InlineFragmentsAccumulator,
-        opt_inline_block_splits: &mut LinkedList<InlineBlockSplit>,
-    ) {
-        for split in splits {
-            let InlineBlockSplit {
-                predecessors,
-                flow: kid_flow,
-            } = split;
-            fragment_accumulator.push_all(predecessors);
-
-            opt_inline_block_splits.push_back(InlineBlockSplit::new(
-                fragment_accumulator,
-                node,
-                self.style_context(),
-                kid_flow,
-            ));
-        }
-    }
-
-    /// Concatenates the fragments of kids, adding in our own borders/padding/margins if necessary.
-    /// Returns the `InlineFragmentsConstructionResult`, if any. There will be no
-    /// `InlineFragmentsConstructionResult` if this node consisted entirely of ignorable
-    /// whitespace.
-    fn build_fragments_for_nonreplaced_inline_content(
-        &mut self,
-        node: &ConcreteThreadSafeLayoutNode,
-    ) -> ConstructionResult {
-        let mut opt_inline_block_splits: LinkedList<InlineBlockSplit> = LinkedList::new();
-        let mut fragment_accumulator =
-            InlineFragmentsAccumulator::from_inline_node(node, self.style_context());
-        fragment_accumulator.bidi_control_chars =
-            bidi_control_chars(&node.style(self.style_context()));
-
-        let mut abs_descendants = AbsoluteDescendants::new();
-
-        // Concatenate all the fragments of our kids, creating {ib} splits as necessary.
-        let mut is_empty = true;
-        for kid in node.children() {
-            is_empty = false;
-            if kid.get_pseudo_element_type() != PseudoElementType::Normal {
-                self.process(&kid);
-            }
-            match kid.get_construction_result() {
-                ConstructionResult::None => {},
-                ConstructionResult::Flow(flow, kid_abs_descendants) => {
-                    if !flow
-                        .base()
-                        .flags
-                        .contains(FlowFlags::IS_ABSOLUTELY_POSITIONED)
-                    {
-                        opt_inline_block_splits.push_back(InlineBlockSplit::new(
-                            &mut fragment_accumulator,
-                            node,
-                            self.style_context(),
-                            flow,
-                        ));
-                        abs_descendants.push_descendants(kid_abs_descendants);
-                    } else {
-                        // Push the absolutely-positioned kid as an inline containing block.
-                        let kid_node = flow.as_block().fragment.node;
-                        let kid_pseudo = flow.as_block().fragment.pseudo.clone();
-                        let kid_style = flow.as_block().fragment.style.clone();
-                        let kid_selected_style = flow.as_block().fragment.selected_style.clone();
-                        let kid_restyle_damage = flow.as_block().fragment.restyle_damage;
-                        let fragment_info = SpecificFragmentInfo::InlineAbsolute(
-                            InlineAbsoluteFragmentInfo::new(flow),
-                        );
-                        fragment_accumulator.push(Fragment::from_opaque_node_and_style(
-                            kid_node,
-                            kid_pseudo,
-                            kid_style,
-                            kid_selected_style,
-                            kid_restyle_damage,
-                            fragment_info,
-                        ));
-                        fragment_accumulator
-                            .fragments
-                            .absolute_descendants
-                            .push_descendants(kid_abs_descendants);
-                    }
-                },
-                ConstructionResult::ConstructionItem(ConstructionItem::InlineFragments(
-                    InlineFragmentsConstructionResult {
-                        splits,
-                        fragments: successors,
-                    },
-                )) => {
-                    // Bubble up {ib} splits.
-                    self.accumulate_inline_block_splits(
-                        splits,
-                        node,
-                        &mut fragment_accumulator,
-                        &mut opt_inline_block_splits,
-                    );
-
-                    // Push residual fragments.
-                    fragment_accumulator.push_all(successors);
-                },
-                ConstructionResult::ConstructionItem(ConstructionItem::Whitespace(
-                    whitespace_node,
-                    whitespace_pseudo,
-                    whitespace_style,
-                    whitespace_damage,
-                )) => {
-                    // Instantiate the whitespace fragment.
-                    let fragment_info = SpecificFragmentInfo::UnscannedText(Box::new(
-                        UnscannedTextFragmentInfo::new(Box::<str>::from(" "), None),
-                    ));
-                    let fragment = Fragment::from_opaque_node_and_style(
-                        whitespace_node,
-                        whitespace_pseudo,
-                        whitespace_style,
-                        node.selected_style(),
-                        whitespace_damage,
-                        fragment_info,
-                    );
-                    fragment_accumulator.fragments.fragments.push_back(fragment)
-                },
-            }
-        }
-
-        let node_style = node.style(self.style_context());
-        if is_empty && node_style.has_padding_or_border() {
-            // An empty inline box needs at least one fragment to draw its background and borders.
-            let info = SpecificFragmentInfo::UnscannedText(Box::new(
-                UnscannedTextFragmentInfo::new(Box::<str>::from(""), None),
-            ));
-            let fragment = Fragment::from_opaque_node_and_style(
-                node.opaque(),
-                node.get_pseudo_element_type(),
-                node_style.clone(),
-                node.selected_style(),
-                node.restyle_damage(),
-                info,
-            );
-            fragment_accumulator.fragments.fragments.push_back(fragment)
-        }
-
-        // Finally, make a new construction result.
-        if opt_inline_block_splits.len() > 0 ||
-            !fragment_accumulator.fragments.is_empty() ||
-            abs_descendants.len() > 0
-        {
-            fragment_accumulator
-                .fragments
-                .absolute_descendants
-                .push_descendants(abs_descendants);
-
-            // If the node is positioned, then it's the containing block for all absolutely-
-            // positioned descendants.
-            if node_style.get_box().position != Position::Static {
-                fragment_accumulator
-                    .fragments
-                    .absolute_descendants
-                    .mark_as_having_reached_containing_block();
-            }
-
-            let construction_item =
-                ConstructionItem::InlineFragments(InlineFragmentsConstructionResult {
-                    splits: opt_inline_block_splits,
-                    fragments: fragment_accumulator
-                        .to_intermediate_inline_fragments::<ConcreteThreadSafeLayoutNode>(
-                            self.style_context(),
-                        ),
-                });
-            ConstructionResult::ConstructionItem(construction_item)
-        } else {
-            ConstructionResult::None
-        }
-    }
-
-    /// Creates an `InlineFragmentsConstructionResult` for replaced content. Replaced content
-    /// doesn't render its children, so this just nukes a child's fragments and creates a
-    /// `Fragment`.
-    fn build_fragments_for_replaced_inline_content(
-        &mut self,
-        node: &ConcreteThreadSafeLayoutNode,
-    ) -> ConstructionResult {
-        for kid in node.children() {
-            self.set_flow_construction_result(&kid, ConstructionResult::None)
-        }
-
-        let context = self.style_context();
-        let style = node.style(context);
-        // If this node is ignorable whitespace, bail out now.
-        if node.is_ignorable_whitespace(context) {
-            return ConstructionResult::ConstructionItem(ConstructionItem::Whitespace(
-                node.opaque(),
-                node.get_pseudo_element_type(),
-                context
-                    .stylist
-                    .style_for_anonymous::<ConcreteThreadSafeLayoutNode::ConcreteElement>(
-                        &context.guards,
-                        &PseudoElement::ServoText,
-                        &style,
-                    ),
-                node.restyle_damage(),
-            ));
-        }
-
-        // If this is generated content, then we need to initialize the accumulator with the
-        // fragment corresponding to that content. Otherwise, just initialize with the ordinary
-        // fragment that needs to be generated for this inline node.
-        let mut fragments = IntermediateInlineFragments::new();
-        match (node.get_pseudo_element_type(), node.type_id()) {
-            (_, Some(LayoutNodeType::Text)) => {
-                let text_style = context
-                    .stylist
-                    .style_for_anonymous::<ConcreteThreadSafeLayoutNode::ConcreteElement>(
-                        &context.guards,
-                        &PseudoElement::ServoText,
-                        &style,
-                    );
-                self.create_fragments_for_node_text_content(&mut fragments, node, &text_style)
-            },
-            (PseudoElementType::Normal, _) => {
-                fragments
-                    .fragments
-                    .push_back(self.build_fragment_for_block(node));
-            },
-            (_, _) => self.create_fragments_for_node_text_content(&mut fragments, node, &style),
-        }
-
-        let construction_item =
-            ConstructionItem::InlineFragments(InlineFragmentsConstructionResult {
-                splits: LinkedList::new(),
-                fragments: fragments,
-            });
-        ConstructionResult::ConstructionItem(construction_item)
-    }
-
-    /// Build the fragment for an inline-block or inline-flex, based on the `display` flag
-    fn build_fragment_for_inline_block_or_inline_flex(
-        &mut self,
-        node: &ConcreteThreadSafeLayoutNode,
-        display: Display,
-    ) -> ConstructionResult {
-        let block_flow_result = match display {
-            Display::InlineBlock => self.build_flow_for_block(node, None),
-            _ => panic!("The flag should be inline-block"),
-        };
-        let (block_flow, abs_descendants) = match block_flow_result {
-            ConstructionResult::Flow(block_flow, abs_descendants) => (block_flow, abs_descendants),
-            _ => unreachable!(),
-        };
-
-        let context = self.style_context();
-        let style = node.style(context);
-        let style = context
-            .stylist
-            .style_for_anonymous::<ConcreteThreadSafeLayoutNode::ConcreteElement>(
-                &context.guards,
-                &PseudoElement::ServoInlineBlockWrapper,
-                &style,
-            );
-        let fragment_info =
-            SpecificFragmentInfo::InlineBlock(InlineBlockFragmentInfo::new(block_flow));
-        let fragment = Fragment::from_opaque_node_and_style(
-            node.opaque(),
-            node.get_pseudo_element_type(),
-            style,
-            node.selected_style(),
-            node.restyle_damage(),
-            fragment_info,
-        );
-
-        let mut fragment_accumulator = InlineFragmentsAccumulator::new();
-        fragment_accumulator.fragments.fragments.push_back(fragment);
-        fragment_accumulator
-            .fragments
-            .absolute_descendants
-            .push_descendants(abs_descendants);
-
-        let construction_item =
-            ConstructionItem::InlineFragments(InlineFragmentsConstructionResult {
-                splits: LinkedList::new(),
-                fragments: fragment_accumulator
-                    .to_intermediate_inline_fragments::<ConcreteThreadSafeLayoutNode>(context),
-            });
-        ConstructionResult::ConstructionItem(construction_item)
-    }
-
-    /// This is an annoying case, because the computed `display` value is `block`, but the
-    /// hypothetical box is inline.
-    fn build_fragment_for_absolutely_positioned_inline(
-        &mut self,
-        node: &ConcreteThreadSafeLayoutNode,
-    ) -> ConstructionResult {
-        let block_flow_result = self.build_flow_for_block(node, None);
-        let (block_flow, abs_descendants) = match block_flow_result {
-            ConstructionResult::Flow(block_flow, abs_descendants) => (block_flow, abs_descendants),
-            _ => unreachable!(),
-        };
-
-        let fragment_info = SpecificFragmentInfo::InlineAbsoluteHypothetical(
-            InlineAbsoluteHypotheticalFragmentInfo::new(block_flow),
-        );
-        let style_context = self.style_context();
-        let style = node.style(style_context);
-        let style = style_context
-            .stylist
-            .style_for_anonymous::<ConcreteThreadSafeLayoutNode::ConcreteElement>(
-                &style_context.guards,
-                &PseudoElement::ServoInlineAbsolute,
-                &style,
-            );
-        let fragment = Fragment::from_opaque_node_and_style(
-            node.opaque(),
-            PseudoElementType::Normal,
-            style,
-            node.selected_style(),
-            node.restyle_damage(),
-            fragment_info,
-        );
-
-        let mut fragment_accumulator =
-            InlineFragmentsAccumulator::from_inline_node(node, self.style_context());
-        fragment_accumulator.fragments.fragments.push_back(fragment);
-        fragment_accumulator
-            .fragments
-            .absolute_descendants
-            .push_descendants(abs_descendants);
-
-        let construction_item =
-            ConstructionItem::InlineFragments(InlineFragmentsConstructionResult {
-                splits: LinkedList::new(),
-                fragments: fragment_accumulator
-                    .to_intermediate_inline_fragments::<ConcreteThreadSafeLayoutNode>(
-                        style_context,
-                    ),
-            });
-        ConstructionResult::ConstructionItem(construction_item)
-    }
-
-    /// Builds one or more fragments for a node with `display: inline`. This yields an
-    /// `InlineFragmentsConstructionResult`.
-    fn build_fragments_for_inline(
-        &mut self,
-        node: &ConcreteThreadSafeLayoutNode,
-    ) -> ConstructionResult {
-        // Is this node replaced content?
-        if !node.is_replaced_content() {
-            // Go to a path that concatenates our kids' fragments.
-            self.build_fragments_for_nonreplaced_inline_content(node)
-        } else {
-            // Otherwise, just nuke our kids' fragments, create our fragment if any, and be done
-            // with it.
-            self.build_fragments_for_replaced_inline_content(node)
-        }
-    }
 
     /// Attempts to perform incremental repair to account for recent changes to this node. This
     /// can fail and return false, indicating that flows will need to be reconstructed.
@@ -1202,7 +326,7 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
             return false;
         }
 
-        let mut set_has_newly_constructed_flow_flag = false;
+        let set_has_newly_constructed_flow_flag = false;
         let result = {
             let style = node.style(self.style_context());
 
@@ -1225,73 +349,6 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
                     let flow = FlowRef::deref_mut(flow);
                     flow.mut_base().restyle_damage.insert(damage);
                     flow.repair_style_and_bubble_inline_sizes(&style);
-                    true
-                },
-                ConstructionResult::ConstructionItem(ConstructionItem::InlineFragments(
-                    ref mut inline_fragments_construction_result,
-                )) => {
-                    if !inline_fragments_construction_result.splits.is_empty() {
-                        return false;
-                    }
-
-                    for fragment in inline_fragments_construction_result
-                        .fragments
-                        .fragments
-                        .iter_mut()
-                    {
-                        // Only mutate the styles of fragments that represent the dirty node (including
-                        // pseudo-element).
-                        if fragment.node != node.opaque() {
-                            continue;
-                        }
-                        if fragment.pseudo != node.get_pseudo_element_type() {
-                            continue;
-                        }
-
-                        match fragment.specific {
-                            SpecificFragmentInfo::InlineBlock(ref mut inline_block_fragment) => {
-                                let flow_ref =
-                                    FlowRef::deref_mut(&mut inline_block_fragment.flow_ref);
-                                flow_ref.mut_base().restyle_damage.insert(damage);
-                                // FIXME(pcwalton): Fragment restyle damage too?
-                                flow_ref.repair_style_and_bubble_inline_sizes(&style);
-                            },
-                            SpecificFragmentInfo::InlineAbsoluteHypothetical(
-                                ref mut inline_absolute_hypothetical_fragment,
-                            ) => {
-                                let flow_ref = FlowRef::deref_mut(
-                                    &mut inline_absolute_hypothetical_fragment.flow_ref,
-                                );
-                                flow_ref.mut_base().restyle_damage.insert(damage);
-                                // FIXME(pcwalton): Fragment restyle damage too?
-                                flow_ref.repair_style_and_bubble_inline_sizes(&style);
-                            },
-                            SpecificFragmentInfo::InlineAbsolute(
-                                ref mut inline_absolute_fragment,
-                            ) => {
-                                let flow_ref =
-                                    FlowRef::deref_mut(&mut inline_absolute_fragment.flow_ref);
-                                flow_ref.mut_base().restyle_damage.insert(damage);
-                                // FIXME(pcwalton): Fragment restyle damage too?
-                                flow_ref.repair_style_and_bubble_inline_sizes(&style);
-                            },
-                            SpecificFragmentInfo::ScannedText(_) => {
-                                // Text fragments in ConstructionResult haven't been scanned yet
-                                unreachable!()
-                            },
-                            SpecificFragmentInfo::UnscannedText(_) => {
-                                // We can't repair this unscanned text; we need to update the
-                                // scanned text fragments.
-                                //
-                                // TODO: Add code to find and repair the ScannedText fragments?
-                                return false;
-                            },
-                            _ => {
-                                fragment.repair_style(&style);
-                                set_has_newly_constructed_flow_flag = true;
-                            },
-                        }
-                    }
                     true
                 },
                 ConstructionResult::ConstructionItem(_) => false,
@@ -1377,31 +434,7 @@ where
             // flow here - instead, let it match the inline case
             // below.
             (Display::Block, _, Position::Absolute) | (Display::Block, _, Position::Fixed) => {
-                let construction_result = self.build_flow_for_block(node, None);
-                self.set_flow_construction_result(node, construction_result)
-            },
-
-            // Inline items that are absolutely-positioned contribute inline fragment construction
-            // results with a hypothetical fragment.
-            (Display::Inline, _, Position::Absolute) |
-            (Display::InlineBlock, _, Position::Absolute) => {
-                let construction_result =
-                    self.build_fragment_for_absolutely_positioned_inline(node);
-                self.set_flow_construction_result(node, construction_result)
-            },
-
-            // Inline items contribute inline fragment construction results.
-            //
-            // FIXME(pcwalton, #3307): This is not sufficient to handle floated generated content.
-            (Display::Inline, Float::None, _) => {
-                let construction_result = self.build_fragments_for_inline(node);
-                self.set_flow_construction_result(node, construction_result)
-            },
-
-            // Inline-block items contribute inline fragment construction results.
-            (Display::InlineBlock, Float::None, _) => {
-                let construction_result =
-                    self.build_fragment_for_inline_block_or_inline_flex(node, Display::InlineBlock);
+                let construction_result = self.build_flow_for_block(node);
                 self.set_flow_construction_result(node, construction_result)
             },
 
@@ -1409,9 +442,8 @@ where
             //
             // TODO(pcwalton): Make this only trigger for blocks and handle the other `display`
             // properties separately.
-            (_, float_value, _) => {
-                let float_kind = FloatKind::from_property(float_value);
-                let construction_result = self.build_flow_for_block(node, float_kind);
+            (_, _, _) => {
+                let construction_result = self.build_flow_for_block(node);
                 self.set_flow_construction_result(node, construction_result)
             },
         }
@@ -1560,122 +592,6 @@ impl FlowConstructionUtils for FlowRef {
     }
 }
 
-/// Strips ignorable whitespace from the start of a list of fragments.
-pub fn strip_ignorable_whitespace_from_start(this: &mut LinkedList<Fragment>) {
-    if this.is_empty() {
-        return; // Fast path.
-    }
-
-    let mut leading_fragments_consisting_of_solely_bidi_control_characters = LinkedList::new();
-    while !this.is_empty() {
-        match this
-            .front_mut()
-            .as_mut()
-            .unwrap()
-            .strip_leading_whitespace_if_necessary()
-        {
-            WhitespaceStrippingResult::RetainFragment => break,
-            WhitespaceStrippingResult::FragmentContainedOnlyBidiControlCharacters => {
-                leading_fragments_consisting_of_solely_bidi_control_characters
-                    .push_back(this.pop_front().unwrap())
-            },
-            WhitespaceStrippingResult::FragmentContainedOnlyWhitespace => {
-                let removed_fragment = this.pop_front().unwrap();
-                if let Some(ref mut remaining_fragment) = this.front_mut() {
-                    remaining_fragment.meld_with_prev_inline_fragment(&removed_fragment);
-                }
-            },
-        }
-    }
-    prepend_from(
-        this,
-        &mut leading_fragments_consisting_of_solely_bidi_control_characters,
-    );
-}
-
-/// Strips ignorable whitespace from the end of a list of fragments.
-pub fn strip_ignorable_whitespace_from_end(this: &mut LinkedList<Fragment>) {
-    if this.is_empty() {
-        return;
-    }
-
-    let mut trailing_fragments_consisting_of_solely_bidi_control_characters = LinkedList::new();
-    while !this.is_empty() {
-        match this
-            .back_mut()
-            .as_mut()
-            .unwrap()
-            .strip_trailing_whitespace_if_necessary()
-        {
-            WhitespaceStrippingResult::RetainFragment => break,
-            WhitespaceStrippingResult::FragmentContainedOnlyBidiControlCharacters => {
-                trailing_fragments_consisting_of_solely_bidi_control_characters
-                    .push_front(this.pop_back().unwrap())
-            },
-            WhitespaceStrippingResult::FragmentContainedOnlyWhitespace => {
-                let removed_fragment = this.pop_back().unwrap();
-                if let Some(ref mut remaining_fragment) = this.back_mut() {
-                    remaining_fragment.meld_with_next_inline_fragment(&removed_fragment);
-                }
-            },
-        }
-    }
-    this.append(&mut trailing_fragments_consisting_of_solely_bidi_control_characters);
-}
-
-/// If the 'unicode-bidi' property has a value other than 'normal', return the bidi control codes
-/// to inject before and after the text content of the element.
-fn bidi_control_chars(style: &ServoArc<ComputedValues>) -> Option<(&'static str, &'static str)> {
-    use style::computed_values::direction::T::*;
-    use style::computed_values::unicode_bidi::T::*;
-
-    let unicode_bidi = style.get_text().unicode_bidi;
-    let direction = style.get_inherited_box().direction;
-
-    // See the table in http://dev.w3.org/csswg/css-writing-modes/#unicode-bidi
-    match (unicode_bidi, direction) {
-        (Normal, _) => None,
-        (Embed, Ltr) => Some(("\u{202A}", "\u{202C}")),
-        (Embed, Rtl) => Some(("\u{202B}", "\u{202C}")),
-        (Isolate, Ltr) => Some(("\u{2066}", "\u{2069}")),
-        (Isolate, Rtl) => Some(("\u{2067}", "\u{2069}")),
-        (BidiOverride, Ltr) => Some(("\u{202D}", "\u{202C}")),
-        (BidiOverride, Rtl) => Some(("\u{202E}", "\u{202C}")),
-        (IsolateOverride, Ltr) => Some(("\u{2068}\u{202D}", "\u{202C}\u{2069}")),
-        (IsolateOverride, Rtl) => Some(("\u{2068}\u{202E}", "\u{202C}\u{2069}")),
-        (Plaintext, _) => Some(("\u{2068}", "\u{2069}")),
-    }
-}
-
-fn control_chars_to_fragment<E>(
-    node: &InlineFragmentNodeInfo,
-    context: &SharedStyleContext,
-    text: &str,
-    restyle_damage: RestyleDamage,
-) -> Fragment
-where
-    E: TElement,
-{
-    let info = SpecificFragmentInfo::UnscannedText(Box::new(UnscannedTextFragmentInfo::new(
-        Box::<str>::from(text),
-        None,
-    )));
-    let text_style = context.stylist.style_for_anonymous::<E>(
-        &context.guards,
-        &PseudoElement::ServoText,
-        &node.style,
-    );
-
-    Fragment::from_opaque_node_and_style(
-        node.address,
-        node.pseudo,
-        text_style,
-        node.selected_style.clone(),
-        restyle_damage,
-        info,
-    )
-}
-
 /// Convenience methods for computed CSS values
 trait ComputedValueUtils {
     /// Returns true if this node has non-zero padding or border.
@@ -1722,16 +638,9 @@ impl Legalizer {
 
     /// Makes the `child` flow a new child of `parent`. Anonymous flows are automatically inserted
     /// to keep the tree legal.
-    fn add_child<E>(
-        &mut self,
-        context: &SharedStyleContext,
-        parent: &mut FlowRef,
-        mut child: FlowRef,
-    ) where
-        E: TElement,
-    {
+    fn add_child<E>(&mut self, parent: &mut FlowRef, mut child: FlowRef) where E: TElement {
         while !self.stack.is_empty() {
-            if self.try_to_add_child::<E>(context, parent, &mut child) {
+            if self.try_to_add_child::<E>(parent, &mut child) {
                 return;
             }
             self.flush_top_of_stack(parent)
@@ -1753,7 +662,6 @@ impl Legalizer {
     /// true for anonymous block children of flex flows.
     fn try_to_add_child<E>(
         &mut self,
-        context: &SharedStyleContext,
         parent: &mut FlowRef,
         child: &mut FlowRef,
     ) -> bool
@@ -1761,7 +669,6 @@ impl Legalizer {
         E: TElement,
     {
         let parent = self.stack.last_mut().unwrap_or(parent);
-        let (parent_class, child_class) = (parent.class(), child.class());
         parent.add_new_child((*child).clone());
         true
     }
@@ -1771,35 +678,5 @@ impl Legalizer {
         let mut child = self.stack.pop().expect("flush_top_of_stack(): stack empty");
         child.finish();
         self.stack.last_mut().unwrap_or(parent).add_new_child(child)
-    }
-
-    /// Creates a new anonymous flow. The new flow is identical to `reference` except with all
-    /// styles applying to every pseudo-element in `pseudos` applied.
-    ///
-    /// This method invokes the supplied constructor function on the given specific fragment info
-    /// in order to actually generate the flow.
-    fn create_anonymous_flow<E, F>(
-        context: &SharedStyleContext,
-        reference: &FlowRef,
-        pseudos: &[PseudoElement],
-        specific_fragment_info: SpecificFragmentInfo,
-        constructor: fn(Fragment) -> F,
-    ) -> FlowRef
-    where
-        E: TElement,
-        F: Flow,
-    {
-        let reference_block = reference.as_block();
-        let mut new_style = reference_block.fragment.style.clone();
-        for pseudo in pseudos {
-            new_style =
-                context
-                    .stylist
-                    .style_for_anonymous::<E>(&context.guards, pseudo, &new_style);
-        }
-        let fragment = reference_block
-            .fragment
-            .create_similar_anonymous_fragment(new_style, specific_fragment_info);
-        FlowRef::new(Arc::new(constructor(fragment)))
     }
 }

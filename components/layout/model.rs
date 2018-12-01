@@ -541,27 +541,6 @@ pub fn padding_from_style(
     )
 }
 
-/// Returns the explicitly-specified margin lengths from the given style. Percentage and auto
-/// margins are returned as zero.
-///
-/// This is used when calculating intrinsic inline sizes.
-#[inline]
-pub fn specified_margin_from_style(
-    style: &ComputedValues,
-    writing_mode: WritingMode,
-) -> LogicalMargin<Au> {
-    let margin_style = style.get_margin();
-    LogicalMargin::from_physical(
-        writing_mode,
-        SideOffsets2D::new(
-            MaybeAuto::from_style(margin_style.margin_top, Au(0)).specified_or_zero(),
-            MaybeAuto::from_style(margin_style.margin_right, Au(0)).specified_or_zero(),
-            MaybeAuto::from_style(margin_style.margin_bottom, Au(0)).specified_or_zero(),
-            MaybeAuto::from_style(margin_style.margin_left, Au(0)).specified_or_zero(),
-        ),
-    )
-}
-
 /// A min-size and max-size constraint. The constructor has a optional `border`
 /// parameter, and when it is present the constraint will be subtracted. This is
 /// used to adjust the constraint for `box-sizing: border-box`, and when you do so

@@ -19,20 +19,13 @@
 //!   flows also contain a single box to represent their rendered borders, padding, etc.
 //!   The BlockFlow at the root of the tree has special behavior: it stretches to the boundaries of
 //!   the viewport.
-//!
-//! * `InlineFlow`: A flow that establishes an inline context. It has a flat list of child
-//!   fragments/flows that are subject to inline layout and line breaking and structs to represent
-//!   line breaks and mapping to CSS boxes, for the purpose of handling `getClientRects()` and
-//!   similar methods.
 
 use app_units::Au;
-use crate::block::{BlockFlow, FormattingContextType};
+use crate::block::BlockFlow;
 use crate::context::LayoutContext;
-use crate::floats::{Floats, SpeculatedFloatPlacement};
 use crate::flow_list::{FlowList, FlowListIterator, MutFlowListIterator};
 use crate::flow_ref::{FlowRef, WeakFlowRef};
 use crate::fragment::{CoordinateSystem, Fragment, FragmentBorderBoxIterator, Overflow};
-use crate::inline::InlineFlow;
 use crate::model::{CollapsibleMargins, IntrinsicISizes, MarginCollapseInfo};
 use crate::parallel::FlowParallelInfo;
 use euclid::{Point2D, Rect, Size2D, Vector2D};
@@ -46,8 +39,6 @@ use std::iter::Zip;
 use std::slice::IterMut;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use style::computed_values::clear::T as Clear;
-use style::computed_values::float::T as Float;
 use style::computed_values::overflow_x::T as StyleOverflow;
 use style::computed_values::position::T as Position;
 use style::computed_values::text_align::T as TextAlign;
@@ -114,17 +105,6 @@ pub trait Flow: HasBaseFlow + fmt::Debug + Sync + Send + 'static {
         panic!("called as_mut_block() on a non-block flow")
     }
 
-    /// If this is an inline flow, returns the underlying object. Fails otherwise.
-    fn as_inline(&self) -> &InlineFlow {
-        panic!("called as_inline() on a non-inline flow")
-    }
-
-    /// If this is an inline flow, returns the underlying object, borrowed mutably. Fails
-    /// otherwise.
-    fn as_mut_inline(&mut self) -> &mut InlineFlow {
-        panic!("called as_mut_inline() on a non-inline flow")
-    }
-
     // Main methods
 
     /// Pass 1 of reflow: computes minimum and preferred inline-sizes.
@@ -171,9 +151,6 @@ pub trait Flow: HasBaseFlow + fmt::Debug + Sync + Send + 'static {
         None
     }
 
-    /// If this is a float, places it. The default implementation does nothing.
-    fn place_float_if_applicable<'a>(&mut self) {}
-
     /// Assigns block-sizes in-order; or, if this is a float, places the float. The default
     /// implementation simply assigns block-sizes if this flow might have floats in. Returns true
     /// if it was determined that this child might have had floats in or false otherwise.
@@ -181,22 +158,8 @@ pub trait Flow: HasBaseFlow + fmt::Debug + Sync + Send + 'static {
     /// `parent_thread_id` is the thread ID of the parent. This is used for the layout tinting
     /// debug mode; if the block size of this flow was determined by its parent, we should treat
     /// it as laid out by its parent.
-    fn assign_block_size_for_inorder_child_if_necessary(
-        &mut self,
-        layout_context: &LayoutContext,
-        parent_thread_id: u8,
-        _content_box: LogicalRect<Au>,
-    ) -> bool {
-        let might_have_floats_in_or_out =
-            self.base().might_have_floats_in() || self.base().might_have_floats_out();
-        if might_have_floats_in_or_out {
-            self.mut_base().thread_id = parent_thread_id;
-            self.assign_block_size(layout_context);
-            self.mut_base()
-                .restyle_damage
-                .remove(ServoRestyleDamage::REFLOW_OUT_OF_FLOW | ServoRestyleDamage::REFLOW);
-        }
-        might_have_floats_in_or_out
+    fn assign_block_size_for_inorder_child_if_necessary(&mut self) -> bool {
+        false
     }
 
     fn get_overflow_in_parent_coordinates(&self) -> Overflow {
@@ -208,14 +171,6 @@ pub trait Flow: HasBaseFlow + fmt::Debug + Sync + Send + 'static {
             .to_physical(self.base().writing_mode, container_size);
 
         let mut overflow = self.base().overflow;
-
-        match self.class() {
-            FlowClass::Block => {},
-            _ => {
-                overflow.translate(&position.origin.to_vector());
-                return overflow;
-            },
-        }
 
         let border_box = self.as_block().fragment.stacking_relative_border_box(
             &self.base().stacking_relative_position,
@@ -295,13 +250,8 @@ pub trait Flow: HasBaseFlow + fmt::Debug + Sync + Send + 'static {
     fn store_overflow(&mut self, _: &LayoutContext) {
         // Calculate overflow on a per-fragment basis.
         let mut overflow = self.compute_overflow();
-        match self.class() {
-            FlowClass::Block => {
-                for kid in self.mut_base().children.iter_mut() {
-                    overflow.union(&kid.get_overflow_in_parent_coordinates());
-                }
-            },
-            _ => {},
+        for kid in self.mut_base().children.iter_mut() {
+            overflow.union(&kid.get_overflow_in_parent_coordinates());
         }
         self.mut_base().overflow = overflow
     }
@@ -425,18 +375,11 @@ pub trait ImmutableFlowUtils {
     /// Returns true if this flow is a block flow.
     fn is_block_flow(self) -> bool;
 
-    /// Returns true if this flow is an inline flow.
-    fn is_inline_flow(self) -> bool;
-
     /// Dumps the flow tree for debugging.
     fn print(self, title: String);
 
     /// Dumps the flow tree for debugging into the given PrintTree.
     fn print_with_tree(self, print_tree: &mut PrintTree);
-
-    /// Returns true if floats might flow through this flow, as determined by the float placement
-    /// speculation pass.
-    fn floats_might_flow_through(self) -> bool;
 
     fn baseline_offset_of_last_line_box_in_flow(self) -> Option<Au>;
 }
@@ -472,15 +415,11 @@ pub trait MutableOwnedFlowUtils {
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 pub enum FlowClass {
     Block,
-    Inline,
 }
 
 impl FlowClass {
     fn is_block_like(self) -> bool {
-        match self {
-            FlowClass::Block => true,
-            _ => false,
-        }
+        true
     }
 }
 
@@ -491,18 +430,6 @@ bitflags! {
         #[doc = "Whether this flow is absolutely positioned. This is checked all over layout, so a"]
         #[doc = "virtual call is too expensive."]
         const IS_ABSOLUTELY_POSITIONED = 0b0000_0000_0000_0000_0100_0000;
-        #[doc = "Whether this flow clears to the left. This is checked all over layout, so a"]
-        #[doc = "virtual call is too expensive."]
-        const CLEARS_LEFT = 0b0000_0000_0000_0000_1000_0000;
-        #[doc = "Whether this flow clears to the right. This is checked all over layout, so a"]
-        #[doc = "virtual call is too expensive."]
-        const CLEARS_RIGHT = 0b0000_0000_0000_0001_0000_0000;
-        #[doc = "Whether this flow is left-floated. This is checked all over layout, so a"]
-        #[doc = "virtual call is too expensive."]
-        const FLOATS_LEFT = 0b0000_0000_0000_0010_0000_0000;
-        #[doc = "Whether this flow is right-floated. This is checked all over layout, so a"]
-        #[doc = "virtual call is too expensive."]
-        const FLOATS_RIGHT = 0b0000_0000_0000_0100_0000_0000;
         #[doc = "Text alignment. \
 
                  NB: If you update this, update `TEXT_ALIGN_SHIFT` below."]
@@ -550,27 +477,6 @@ impl FlowFlags {
     pub fn set_text_align(&mut self, value: TextAlign) {
         *self = (*self & !FlowFlags::TEXT_ALIGN) |
             FlowFlags::from_bits((value as u32) << TEXT_ALIGN_SHIFT).unwrap();
-    }
-
-    #[inline]
-    pub fn float_kind(&self) -> Float {
-        if self.contains(FlowFlags::FLOATS_LEFT) {
-            Float::Left
-        } else if self.contains(FlowFlags::FLOATS_RIGHT) {
-            Float::Right
-        } else {
-            Float::None
-        }
-    }
-
-    #[inline]
-    pub fn is_float(&self) -> bool {
-        self.contains(FlowFlags::FLOATS_LEFT) || self.contains(FlowFlags::FLOATS_RIGHT)
-    }
-
-    #[inline]
-    pub fn clears_floats(&self) -> bool {
-        self.contains(FlowFlags::CLEARS_LEFT) || self.contains(FlowFlags::CLEARS_RIGHT)
     }
 }
 
@@ -749,15 +655,6 @@ pub struct BaseFlow {
     /// TODO(pcwalton): Group with other transient data to save space.
     pub parallel: FlowParallelInfo,
 
-    /// The floats next to this flow.
-    pub floats: Floats,
-
-    /// Metrics for floats in computed during the float metrics speculation phase.
-    pub speculated_float_placement_in: SpeculatedFloatPlacement,
-
-    /// Metrics for floats out computed during the float metrics speculation phase.
-    pub speculated_float_placement_out: SpeculatedFloatPlacement,
-
     /// The collapsible margins for this flow, if any.
     pub collapsible_margins: CollapsibleMargins,
 
@@ -840,24 +737,10 @@ impl fmt::Debug for BaseFlow {
         write!(
             f,
             "\nsc={:?}\
-             \npos={:?}{}{}\
-             \nfloatspec-in={:?}\
-             \nfloatspec-out={:?}\
+             \npos={:?}\
              \noverflow={:?}{}{}{}",
             self.stacking_context_id,
             self.position,
-            if self.flags.contains(FlowFlags::FLOATS_LEFT) {
-                "FL"
-            } else {
-                ""
-            },
-            if self.flags.contains(FlowFlags::FLOATS_RIGHT) {
-                "FR"
-            } else {
-                ""
-            },
-            self.speculated_float_placement_in,
-            self.speculated_float_placement_out,
             self.overflow,
             child_count_string,
             absolute_descendants_string,
@@ -881,23 +764,9 @@ impl Serialize for BaseFlow {
     }
 }
 
-/// Whether a base flow should be forced to be nonfloated. This can affect e.g. `TableFlow`, which
-/// is never floated because the table wrapper flow is the floated one.
-#[derive(Clone, PartialEq)]
-pub enum ForceNonfloatedFlag {
-    /// The flow should be floated if the node has a `float` property.
-    FloatIfNecessary,
-    /// The flow should be forced to be nonfloated.
-    ForceNonfloated,
-}
-
 impl BaseFlow {
     #[inline]
-    pub fn new(
-        style: Option<&ComputedValues>,
-        writing_mode: WritingMode,
-        force_nonfloated: ForceNonfloatedFlag,
-    ) -> BaseFlow {
+    pub fn new(style: Option<&ComputedValues>, writing_mode: WritingMode) -> BaseFlow {
         let mut flags = FlowFlags::empty();
         match style {
             Some(style) => {
@@ -926,24 +795,6 @@ impl BaseFlow {
                     ),
                 }
 
-                if force_nonfloated == ForceNonfloatedFlag::FloatIfNecessary {
-                    match style.get_box().float {
-                        Float::None => {},
-                        Float::Left => flags.insert(FlowFlags::FLOATS_LEFT),
-                        Float::Right => flags.insert(FlowFlags::FLOATS_RIGHT),
-                    }
-                }
-
-                match style.get_box().clear {
-                    Clear::None => {},
-                    Clear::Left => flags.insert(FlowFlags::CLEARS_LEFT),
-                    Clear::Right => flags.insert(FlowFlags::CLEARS_RIGHT),
-                    Clear::Both => {
-                        flags.insert(FlowFlags::CLEARS_LEFT);
-                        flags.insert(FlowFlags::CLEARS_RIGHT);
-                    },
-                }
-
                 if !style.get_counters().counter_reset.is_empty() ||
                     !style.get_counters().counter_increment.is_empty()
                 {
@@ -965,12 +816,9 @@ impl BaseFlow {
             position: LogicalRect::zero(writing_mode),
             overflow: Overflow::new(),
             parallel: FlowParallelInfo::new(),
-            floats: Floats::new(writing_mode),
             collapsible_margins: CollapsibleMargins::new(),
             stacking_relative_position: Vector2D::zero(),
             abs_descendants: AbsoluteDescendants::new(),
-            speculated_float_placement_in: SpeculatedFloatPlacement::zero(),
-            speculated_float_placement_out: SpeculatedFloatPlacement::zero(),
             block_container_inline_size: Au(0),
             block_container_writing_mode: writing_mode,
             block_container_explicit_block_size: None,
@@ -1023,7 +871,6 @@ impl BaseFlow {
                 ServoRestyleDamage::REFLOW_OUT_OF_FLOW |
                 ServoRestyleDamage::REFLOW,
             parallel: FlowParallelInfo::new(),
-            floats: self.floats.clone(),
             abs_descendants: self.abs_descendants.clone(),
             absolute_cb: self.absolute_cb.clone(),
             clip: self.clip.clone(),
@@ -1048,18 +895,6 @@ impl BaseFlow {
 
     pub fn flow_id(&self) -> usize {
         return self as *const BaseFlow as usize;
-    }
-
-    #[inline]
-    pub fn might_have_floats_in(&self) -> bool {
-        self.speculated_float_placement_in.left > Au(0) ||
-            self.speculated_float_placement_in.right > Au(0)
-    }
-
-    #[inline]
-    pub fn might_have_floats_out(&self) -> bool {
-        self.speculated_float_placement_out.left > Au(0) ||
-            self.speculated_float_placement_out.right > Au(0)
     }
 
     /// Compute the fragment position relative to the parent stacking context. If the fragment
@@ -1101,30 +936,13 @@ impl<'a> ImmutableFlowUtils for &'a dyn Flow {
     /// Non-replaced inline blocks and non-replaced table cells are also block
     /// containers.
     fn is_block_container(self) -> bool {
-        match self.class() {
-            // TODO: Change this when inline-blocks are supported.
-            FlowClass::Block => {
-                // FIXME: Actually check the type of the node
-                self.child_count() != 0
-            },
-            _ => false,
-        }
+        // FIXME: Actually check the type of the node
+        self.child_count() != 0
     }
 
     /// Returns true if this flow is a block flow.
     fn is_block_flow(self) -> bool {
-        match self.class() {
-            FlowClass::Block => true,
-            _ => false,
-        }
-    }
-
-    /// Returns true if this flow is an inline flow.
-    fn is_inline_flow(self) -> bool {
-        match self.class() {
-            FlowClass::Inline => true,
-            _ => false,
-        }
+        true
     }
 
     /// Dumps the flow tree for debugging.
@@ -1143,26 +961,8 @@ impl<'a> ImmutableFlowUtils for &'a dyn Flow {
         print_tree.end_level();
     }
 
-    fn floats_might_flow_through(self) -> bool {
-        if !self.base().might_have_floats_in() && !self.base().might_have_floats_out() {
-            return false;
-        }
-        if self.is_root() {
-            return false;
-        }
-        if !self.is_block_like() {
-            return true;
-        }
-        self.as_block().formatting_context_type() == FormattingContextType::None
-    }
-
     fn baseline_offset_of_last_line_box_in_flow(self) -> Option<Au> {
         for kid in self.base().children.iter().rev() {
-            if kid.is_inline_flow() {
-                if let Some(baseline_offset) = kid.as_inline().baseline_offset_of_last_line() {
-                    return Some(kid.base().position.start.b + baseline_offset);
-                }
-            }
             if kid.is_block_like() && !kid
                 .base()
                 .flags
@@ -1292,8 +1092,6 @@ impl ContainingBlockLink {
                 if flow.is_block_like() {
                     flow.as_block()
                         .explicit_block_containing_size(shared_context)
-                } else if flow.is_inline_flow() {
-                    Some(flow.as_inline().minimum_line_metrics.space_above_baseline)
                 } else {
                     None
                 }

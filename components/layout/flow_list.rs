@@ -31,7 +31,6 @@ impl Serialize for FlowList {
             flow_val.insert("class".to_owned(), to_value(f.class()).unwrap());
             let data = match f.class() {
                 FlowClass::Block => to_value(f.as_block()).unwrap(),
-                FlowClass::Inline => to_value(f.as_inline()).unwrap(),
             };
             flow_val.insert("data".to_owned(), data);
             serializer.serialize_element(&flow_val)?;

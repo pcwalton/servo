@@ -9,7 +9,6 @@ use crate::construct::ConstructionResult;
 use crate::context::LayoutContext;
 use crate::flow::{Flow, GetBaseFlow};
 use crate::fragment::{Fragment, FragmentBorderBoxIterator};
-use crate::inline::InlineFragmentNodeFlags;
 use crate::opaque_node::OpaqueNodeMethods;
 use crate::sequential;
 use crate::wrapper::LayoutNodeLayoutData;
@@ -568,45 +567,6 @@ impl FragmentBorderBoxIterator for ParentOffsetBorderBoxIterator {
             if fragment.style.get_box().position == Position::Fixed {
                 self.parent_nodes.clear();
             }
-        } else if let Some(node) = fragment.inline_context.as_ref().and_then(|inline_context| {
-            inline_context
-                .nodes
-                .iter()
-                .find(|node| node.address == self.node_address)
-        }) {
-            // TODO: Handle cases where the `offsetParent` is an inline
-            // element. This will likely be impossible until
-            // https://github.com/servo/servo/issues/13982 is fixed.
-
-            // Found a fragment in the flow tree whose inline context
-            // contains the DOM node we're looking for, i.e. the node
-            // is inline and contains this fragment.
-            match self.node_offset_box {
-                Some(NodeOffsetBoxInfo {
-                    ref mut rectangle, ..
-                }) => {
-                    *rectangle = rectangle.union(border_box);
-                },
-                None => {
-                    // https://github.com/servo/servo/issues/13982 will
-                    // cause this assertion to fail sometimes, so it's
-                    // commented out for now.
-                    /*assert!(node.flags.contains(FIRST_FRAGMENT_OF_ELEMENT),
-                    "First fragment of inline node found wasn't its first fragment!");*/
-
-                    self.node_offset_box = Some(NodeOffsetBoxInfo {
-                        offset: border_box.origin,
-                        rectangle: *border_box,
-                    });
-                },
-            }
-
-            if node
-                .flags
-                .contains(InlineFragmentNodeFlags::LAST_FRAGMENT_OF_ELEMENT)
-            {
-                self.has_processed_node = true;
-            }
         } else if self.node_offset_box.is_none() {
             // TODO(gw): Is there a less fragile way of checking whether this
             // fragment is the body element, rather than just checking that
@@ -949,9 +909,4 @@ pub fn process_style_query<N: LayoutNode>(requested_node: N) -> StyleResponse {
     let data = element.borrow_data();
 
     StyleResponse(data.map(|d| d.styles.primary().clone()))
-}
-
-enum InnerTextItem {
-    Text(String),
-    RequiredLineBreakCount(u32),
 }

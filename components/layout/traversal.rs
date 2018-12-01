@@ -6,7 +6,7 @@
 
 use crate::construct::FlowConstructor;
 use crate::context::LayoutContext;
-use crate::flow::{Flow, FlowFlags, GetBaseFlow, ImmutableFlowUtils};
+use crate::flow::{Flow, FlowFlags, GetBaseFlow};
 use crate::wrapper::ThreadSafeLayoutNodeHelpers;
 use crate::wrapper::{GetRawData, LayoutNodeLayoutData};
 use script_layout_interface::wrapper_traits::{LayoutNode, ThreadSafeLayoutNode};
@@ -283,22 +283,14 @@ pub struct AssignBSizes<'a> {
 impl<'a> PostorderFlowTraversal for AssignBSizes<'a> {
     #[inline]
     fn process(&self, flow: &mut dyn Flow) {
-        // Can't do anything with anything that floats might flow through until we reach their
-        // inorder parent.
-        //
-        // NB: We must return without resetting the restyle bits for these, as we haven't actually
-        // reflowed anything!
-        if flow.floats_might_flow_through() {
-            return;
-        }
-
         flow.assign_block_size(self.layout_context);
     }
 
     #[inline]
     fn should_process(&self, flow: &mut dyn Flow) -> bool {
         let base = flow.base();
-        base.restyle_damage.intersects(ServoRestyleDamage::REFLOW_OUT_OF_FLOW | ServoRestyleDamage::REFLOW) &&
+        base.restyle_damage.intersects(ServoRestyleDamage::REFLOW_OUT_OF_FLOW |
+            ServoRestyleDamage::REFLOW) &&
         // The fragmentation countainer is responsible for calling
         // Flow::fragment recursively
         !base.flags.contains(FlowFlags::CAN_BE_FRAGMENTED)

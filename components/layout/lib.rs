@@ -11,8 +11,6 @@ extern crate html5ever;
 #[macro_use]
 extern crate log;
 #[macro_use]
-extern crate range;
-#[macro_use]
 extern crate serde;
 
 #[macro_use]
@@ -22,20 +20,15 @@ mod block;
 pub mod construct;
 pub mod context;
 pub mod data;
-mod floats;
 pub mod flow;
 mod flow_list;
 pub mod flow_ref;
 mod fragment;
-mod inline;
-mod linked_list;
 mod model;
 pub mod opaque_node;
 pub mod parallel;
-mod persistent_list;
 pub mod query;
 pub mod sequential;
-mod text;
 pub mod traversal;
 pub mod wrapper;
 

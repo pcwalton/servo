@@ -6,8 +6,7 @@
 
 use app_units::Au;
 use crate::context::LayoutContext;
-use crate::floats::SpeculatedFloatPlacement;
-use crate::flow::{Flow, FlowFlags, GetBaseFlow, ImmutableFlowUtils};
+use crate::flow::{Flow, GetBaseFlow, ImmutableFlowUtils};
 use crate::fragment::{CoordinateSystem, FragmentBorderBoxIterator};
 use crate::traversal::{AssignBSizes, AssignISizes, BubbleISizes};
 use crate::traversal::{PostorderFlowTraversal, PreorderFlowTraversal};
@@ -108,36 +107,4 @@ pub fn store_overflow(layout_context: &LayoutContext, flow: &mut dyn Flow) {
     flow.mut_base()
         .restyle_damage
         .remove(ServoRestyleDamage::STORE_OVERFLOW);
-}
-
-/// Guesses how much inline size will be taken up by floats on the left and right sides of the
-/// given flow. This is needed to speculatively calculate the inline sizes of block formatting
-/// contexts. The speculation typically succeeds, but if it doesn't we have to lay it out again.
-pub fn guess_float_placement(flow: &mut dyn Flow) {
-    if !flow
-        .base()
-        .restyle_damage
-        .intersects(ServoRestyleDamage::REFLOW)
-    {
-        return;
-    }
-
-    let mut floats_in = SpeculatedFloatPlacement::compute_floats_in_for_first_child(flow);
-    for kid in flow.mut_base().child_iter_mut() {
-        if kid
-            .base()
-            .flags
-            .contains(FlowFlags::IS_ABSOLUTELY_POSITIONED)
-        {
-            // Do not propagate floats in or out, but do propogate between kids.
-            guess_float_placement(kid);
-        } else {
-            floats_in.compute_floats_in(kid);
-            kid.mut_base().speculated_float_placement_in = floats_in;
-            guess_float_placement(kid);
-            floats_in = kid.base().speculated_float_placement_out;
-        }
-    }
-    floats_in.compute_floats_out(flow);
-    flow.mut_base().speculated_float_placement_out = floats_in
 }
