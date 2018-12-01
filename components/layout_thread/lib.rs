@@ -10,110 +10,44 @@ extern crate crossbeam_channel;
 #[macro_use]
 extern crate html5ever;
 #[macro_use]
-extern crate layout;
-#[macro_use]
 extern crate lazy_static;
 #[macro_use]
 extern crate log;
-#[macro_use]
-extern crate profile_traits;
 
 mod dom_wrapper;
 
-use app_units::Au;
-use crate::dom_wrapper::drop_style_and_layout_data;
-use crate::dom_wrapper::{ServoLayoutDocument, ServoLayoutElement, ServoLayoutNode};
-use crossbeam_channel::{unbounded, Receiver, Sender};
+use crossbeam_channel::Receiver;
 use embedder_traits::resources::{self, Resource};
-use euclid::{Point2D, Rect, Size2D, TypedScale, TypedSize2D};
+use euclid::{TypedScale, TypedSize2D};
 use fnv::FnvHashMap;
 use fxhash::FxHashMap;
-use gfx::font;
-use gfx::font_cache_thread::FontCacheThread;
-use gfx::font_context;
-use gfx_traits::{node_id_from_scroll_id, Epoch};
-use histogram::Histogram;
-use ipc_channel::ipc::{self, IpcReceiver, IpcSender};
+use ipc_channel::ipc::{self, IpcSender};
 use ipc_channel::router::ROUTER;
-use layout::construct::ConstructionResult;
-use layout::context::malloc_size_of_persistent_local_context;
-use layout::context::LayoutContext;
-use layout::context::RegisteredPainter;
-use layout::context::RegisteredPainters;
-use layout::flow::{Flow, GetBaseFlow, ImmutableFlowUtils, MutableOwnedFlowUtils};
-use layout::flow_ref::FlowRef;
-use layout::parallel;
-use layout::query::{
-    process_content_box_request, process_content_boxes_request, LayoutRPCImpl, LayoutThreadData,
-};
-use layout::query::{process_node_geometry_request};
-use layout::query::{process_node_scroll_area_request, process_node_scroll_id_request};
-use layout::query::{
-    process_offset_parent_query, process_resolved_style_request, process_style_query,
-};
-use layout::sequential;
-use layout::traversal::{
-    ComputeStackingRelativePositions, PreorderFlowTraversal, RecalcStyleAndConstructFlows,
-};
-use layout::wrapper::LayoutNodeLayoutData;
+use layout::context::{RegisteredPainter, RegisteredPainters};
 use layout_traits::{LayoutGlobalInfo, LayoutThreadFactory};
-use libc::c_void;
-use malloc_size_of::{MallocSizeOf, MallocSizeOfOps};
-use metrics::{PaintTimeMetrics, ProfilerMetadataFactory, ProgressiveWebMetric};
-use msg::constellation_msg::PipelineId;
+use metrics::{PaintTimeMetrics, ProfilerMetadataFactory};
 use msg::constellation_msg::TopLevelBrowsingContextId;
-use net_traits::image_cache::{ImageCache, UsePlaceholder};
-use parking_lot::RwLock;
-use profile_traits::mem::ProfilerChan as MemProfilerSender;
-use profile_traits::mem::{self as profile_mem, Report, ReportKind, ReportsChan};
-use profile_traits::time::ProfilerChan as TimeProfilerSender;
-use profile_traits::time::{TimerMetadataFrameType, TimerMetadataReflowType};
-use profile_traits::time::{self as profile_time, profile, TimerMetadata};
-use script_layout_interface::message::Msg as ScriptMsg;
-use script_layout_interface::message::{Msg, NodesFromPointQueryType, Reflow};
-use script_layout_interface::message::{QueryMsg, ReflowComplete, ReflowGoal, ScriptReflow};
-use script_layout_interface::rpc::TextIndexResponse;
-use script_layout_interface::rpc::{LayoutRPC, OffsetParentResponse, StyleResponse};
-use script_layout_interface::wrapper_traits::LayoutNode;
-use script_traits::{ConstellationControlMsg, DrawAPaintImageResult, FrameType, LayoutControlMsg};
-use script_traits::{LayoutMsg as ConstellationMsg, LayoutPerThreadInfo, PaintWorkletError};
-use script_traits::{Painter, ScrollState, UntrustedNodeAddress};
-use selectors::Element;
+use profile_traits::time::{TimerMetadataFrameType, TimerMetadataReflowType, TimerMetadata};
+use script_layout_interface::message::Msg;
+use script_traits::{DrawAPaintImageResult, FrameType, LayoutControlMsg, LayoutPerThreadInfo};
+use script_traits::{PaintWorkletError, Painter};
 use servo_arc::Arc as ServoArc;
 use servo_atoms::Atom;
 use servo_config::opts;
-use servo_config::prefs::PREFS;
-use servo_geometry::MaxRect;
 use servo_url::ServoUrl;
-use std::borrow::ToOwned;
-use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
-use std::ops::{Deref, DerefMut};
 use std::process;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::Arc;
 use std::thread;
-use style::animation::Animation;
 use style::context::{QuirksMode, RegisteredSpeculativePainter, RegisteredSpeculativePainters};
-use style::context::{SharedStyleContext, StyleSystemOptions, ThreadLocalStyleContextCreationInfo};
-use style::dom::{OpaqueNode, ShowSubtree, ShowSubtreeDataAndPrimaryValues, TElement, TNode};
-use style::driver;
 use style::error_reporting::RustLogReporter;
-use style::invalidation::element::restyle_hints::RestyleHint;
-use style::logical_geometry::LogicalPoint;
 use style::media_queries::{Device, MediaList, MediaType};
 use style::properties::PropertyId;
-use style::selector_parser::SnapshotMap;
-use style::servo::restyle_damage::ServoRestyleDamage;
-use style::shared_lock::{SharedRwLock, SharedRwLockReadGuard, StylesheetGuards};
-use style::stylesheets::{
-    DocumentStyleSheet, Origin, Stylesheet, StylesheetInDocument, UserAgentStylesheets,
-};
+use style::shared_lock::{SharedRwLock, SharedRwLockReadGuard};
+use style::stylesheets::{DocumentStyleSheet, Origin, Stylesheet};
+use style::stylesheets::{StylesheetInDocument, UserAgentStylesheets};
 use style::stylist::Stylist;
 use style::thread_state::{self, ThreadState};
-use style::timer::Timer;
-use style::traversal::DomTraversal;
-use style::traversal_flags::TraversalFlags;
 use style_traits::CSSPixel;
 use style_traits::DevicePixel;
 use style_traits::SpeculativePainter;
@@ -135,14 +69,8 @@ pub struct LayoutThread {
     /// The number of Web fonts that have been requested but not yet loaded.
     outstanding_web_fonts: Arc<AtomicUsize>,
 
-    /// The document-specific shared lock used for author-origin stylesheets
-    document_shared_lock: Option<SharedRwLock>,
-
     /// The executors for paint worklets.
     registered_painters: RegisteredPaintersImpl,
-
-    /// Webrender interface.
-    webrender_api: webrender_api::RenderApi,
 }
 
 impl LayoutThreadFactory for LayoutThread {
@@ -215,9 +143,7 @@ impl LayoutThread {
             },
             stylist: Stylist::new(device, QuirksMode::NoQuirks),
             outstanding_web_fonts: Arc::new(AtomicUsize::new(0)),
-            document_shared_lock: None,
             registered_painters: RegisteredPaintersImpl(Default::default()),
-            webrender_api: global_info.webrender_api_sender.create_api(),
             global_info,
             thread_info,
         }
@@ -353,7 +279,7 @@ impl LayoutThread {
                 };
                 self.registered_painters.0.insert(name, registered_painter);
             },
-            Msg::PrepareToExit(response_chan) => {
+            Msg::PrepareToExit(_response_chan) => {
                 // TODO(pcwalton)
                 return false;
             },
@@ -362,7 +288,7 @@ impl LayoutThread {
                 debug!("layout: ExitNow received");
                 return false;
             }
-            Msg::SetNavigationStart(time) => {
+            Msg::SetNavigationStart(_time) => {
                 // TODO(pcwalton)
             }
         }

@@ -11,17 +11,11 @@
 //! maybe it's an absolute or fixed position thing that hasn't found its containing block yet.
 //! Construction items bubble up the tree from children to parents until they find their homes.
 
-use crate::block::BlockFlow;
 use crate::context::LayoutContext;
 use crate::data::{LayoutData, LayoutDataFlags};
-use crate::flow::{AbsoluteDescendants, GetBaseFlow, ImmutableFlowUtils};
-use crate::flow::{FlowFlags, MutableFlowUtils, MutableOwnedFlowUtils};
-use crate::flow_ref::FlowRef;
 use crate::fragment::{CanvasFragmentInfo, Fragment, IframeFragmentInfo};
 use crate::fragment::{ImageFragmentInfo};
 use crate::fragment::{MediaFragmentInfo, SpecificFragmentInfo, SvgFragmentInfo};
-use crate::parallel;
-use crate::traversal::PostorderNodeMutTraversal;
 use crate::wrapper::{LayoutNodeLayoutData, ThreadSafeLayoutNodeHelpers};
 use crate::ServoArc;
 use script_layout_interface::wrapper_traits::{
@@ -49,11 +43,6 @@ pub enum ConstructionResult {
     /// created nodes have their `ConstructionResult` set to.
     None,
 
-    /// This node contributed a flow at the proper position in the tree.
-    /// Nothing more needs to be done for this node. It has bubbled up fixed
-    /// and absolute descendant flows that have a containing block above it.
-    Flow(FlowRef, AbsoluteDescendants),
-
     /// This node contributed some object or objects that will be needed to construct a proper flow
     /// later up the tree, but these objects have not yet found their home.
     ConstructionItem(ConstructionItem),
@@ -70,7 +59,6 @@ impl ConstructionResult {
         match *self {
             ConstructionResult::None => 0,
             ConstructionResult::ConstructionItem(_) => 0,
-            ConstructionResult::Flow(ref flow_ref, _) => flow_ref.base().debug_id(),
         }
     }
 }
@@ -174,22 +162,8 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
 
     fn build_block_flow_using_construction_result_of_child(
         &mut self,
-        flow: &mut FlowRef,
-        kid: ConcreteThreadSafeLayoutNode,
-        abs_descendants: &mut AbsoluteDescendants,
-        legalizer: &mut Legalizer,
+        _: ConcreteThreadSafeLayoutNode,
     ) {
-        match kid.get_construction_result() {
-            ConstructionResult::None => {},
-            ConstructionResult::Flow(kid_flow, kid_abs_descendants) => {
-                legalizer.add_child::<ConcreteThreadSafeLayoutNode::ConcreteElement>(
-                    flow,
-                    kid_flow,
-                );
-                abs_descendants.push_descendants(kid_abs_descendants);
-            },
-            ConstructionResult::ConstructionItem(ConstructionItem::Whitespace(..)) => {},
-        }
     }
 
     /// Constructs a block flow, beginning with the given `initial_fragments` if present and then
@@ -197,48 +171,15 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
     /// splits and absolutely-positioned descendants are handled correctly.
     fn build_flow_for_block_starting_with_fragments(
         &mut self,
-        mut flow: FlowRef,
         node: &ConcreteThreadSafeLayoutNode,
     ) -> ConstructionResult {
         // List of absolute descendants, in tree order.
-        let mut abs_descendants = AbsoluteDescendants::new();
-        let mut legalizer = Legalizer::new();
         if !node.is_replaced_content() {
             for kid in node.children() {
-                if kid.get_pseudo_element_type() != PseudoElementType::Normal {
-                    self.process(&kid);
-                }
-
-                self.build_block_flow_using_construction_result_of_child(
-                    &mut flow,
-                    kid,
-                    &mut abs_descendants,
-                    &mut legalizer,
-                );
+                self.build_block_flow_using_construction_result_of_child(kid);
             }
         }
-
-        // The flow is done.
-        legalizer.finish(&mut flow);
-        flow.finish();
-
-        // Set up the absolute descendants.
-        if flow.is_absolute_containing_block() {
-            // This is the containing block for all the absolute descendants.
-            flow.set_absolute_descendants(abs_descendants);
-
-            abs_descendants = AbsoluteDescendants::new();
-            if flow
-                .base()
-                .flags
-                .contains(FlowFlags::IS_ABSOLUTELY_POSITIONED)
-            {
-                // This is now the only absolute flow in the subtree which hasn't yet
-                // reached its CB.
-                abs_descendants.push(flow.clone());
-            }
-        }
-        ConstructionResult::Flow(flow, abs_descendants)
+        ConstructionResult::None
     }
 
     /// Constructs a flow for the given block node and its children. This method creates an
@@ -252,11 +193,8 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
     ///
     /// FIXME(pcwalton): It is not clear to me that there isn't a cleaner way to handle
     /// `<textarea>`.
-    fn build_flow_for_block_like(
-        &mut self,
-        flow: FlowRef,
-        node: &ConcreteThreadSafeLayoutNode,
-    ) -> ConstructionResult {
+    fn build_flow_for_block_like(&mut self, node: &ConcreteThreadSafeLayoutNode)
+                                 -> ConstructionResult {
         let node_is_input_or_text_area =
             node.type_id() == Some(LayoutNodeType::Element(LayoutElementType::HTMLInputElement)) ||
                 node.type_id() == Some(LayoutNodeType::Element(
@@ -273,7 +211,7 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
                 }
             }
         }
-        self.build_flow_for_block_starting_with_fragments(flow, node)
+        self.build_flow_for_block_starting_with_fragments(node)
     }
 
     /// Builds a flow for a node with `display: block`. This yields a `BlockFlow` with possibly
@@ -281,10 +219,8 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
     /// to happen.
     fn build_flow_for_block(&mut self, node: &ConcreteThreadSafeLayoutNode) -> ConstructionResult {
         let fragment = self.build_fragment_for_block(node);
-        let flow = FlowRef::new(Arc::new(BlockFlow::from_fragment(fragment)));
-        self.build_flow_for_block_like(flow, node)
+        self.build_flow_for_block_like(node)
     }
-
 
     /// Attempts to perform incremental repair to account for recent changes to this node. This
     /// can fail and return false, indicating that flows will need to be reconstructed.
@@ -339,18 +275,6 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
 
             match *node.construction_result_mut(&mut *data) {
                 ConstructionResult::None => true,
-                ConstructionResult::Flow(ref mut flow, _) => {
-                    // The node's flow is of the same type and has the same set of children and can
-                    // therefore be repaired by simply propagating damage and style to the flow.
-                    if !flow.is_block_flow() {
-                        return false;
-                    }
-
-                    let flow = FlowRef::deref_mut(flow);
-                    flow.mut_base().restyle_damage.insert(damage);
-                    flow.repair_style_and_bubble_inline_sizes(&style);
-                    true
-                },
                 ConstructionResult::ConstructionItem(_) => false,
             }
         };
@@ -358,95 +282,6 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
             node.insert_flags(LayoutDataFlags::HAS_NEWLY_CONSTRUCTED_FLOW);
         }
         return result;
-    }
-}
-
-impl<'a, ConcreteThreadSafeLayoutNode> PostorderNodeMutTraversal<ConcreteThreadSafeLayoutNode>
-    for FlowConstructor<'a, ConcreteThreadSafeLayoutNode>
-where
-    ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode,
-{
-    // Construct Flow based on 'display', 'position', and 'float' values.
-    //
-    // CSS 2.1 Section 9.7
-    //
-    // TODO: This should actually consult the table in that section to get the
-    // final computed value for 'display'.
-    fn process(&mut self, node: &ConcreteThreadSafeLayoutNode) {
-        node.insert_flags(LayoutDataFlags::HAS_NEWLY_CONSTRUCTED_FLOW);
-
-        let style = node.style(self.style_context());
-
-        // Bail out if this node is display: none. The style system guarantees
-        // that we don't arrive here for children of those.
-        if style.get_box().display.is_none() {
-            self.set_flow_construction_result(node, ConstructionResult::None);
-            return;
-        }
-
-        // Get the `display` property for this node, and determine whether this node is floated.
-        let (display, float, positioning) = match node.type_id() {
-            None => {
-                // Pseudo-element.
-                (
-                    style.get_box().display,
-                    style.get_box().float,
-                    style.get_box().position,
-                )
-            },
-            Some(LayoutNodeType::Element(_)) => {
-                let original_display = style.get_box().original_display;
-                // FIXME(emilio, #19771): This munged_display business is pretty
-                // wrong. After we fix this we should be able to unify the
-                // pseudo-element path too.
-                let munged_display = match original_display {
-                    Display::Inline | Display::InlineBlock => original_display,
-                    _ => style.get_box().display,
-                };
-                (
-                    munged_display,
-                    style.get_box().float,
-                    style.get_box().position,
-                )
-            },
-            Some(LayoutNodeType::Text) => (Display::Inline, Float::None, Position::Static),
-        };
-
-        debug!(
-            "building flow for node: {:?} {:?} {:?} {:?}",
-            display,
-            float,
-            positioning,
-            node.type_id()
-        );
-
-        // Switch on display and floatedness.
-        match (display, float, positioning) {
-            // `display: none` contributes no flow construction result.
-            (Display::None, _, _) => {
-                self.set_flow_construction_result(node, ConstructionResult::None);
-            },
-
-            // Absolutely positioned elements will have computed value of
-            // `float` as 'none' and `display` as per the table.
-            // Only match here for block items. If an item is absolutely
-            // positioned, but inline we shouldn't try to construct a block
-            // flow here - instead, let it match the inline case
-            // below.
-            (Display::Block, _, Position::Absolute) | (Display::Block, _, Position::Fixed) => {
-                let construction_result = self.build_flow_for_block(node);
-                self.set_flow_construction_result(node, construction_result)
-            },
-
-            // Block flows that are not floated contribute block flow construction results.
-            //
-            // TODO(pcwalton): Make this only trigger for blocks and handle the other `display`
-            // properties separately.
-            (_, _, _) => {
-                let construction_result = self.build_flow_for_block(node);
-                self.set_flow_construction_result(node, construction_result)
-            },
-        }
     }
 }
 
@@ -546,52 +381,6 @@ where
     }
 }
 
-// This must not be public because only the layout constructor can call these
-// methods.
-trait FlowConstructionUtils {
-    /// Adds a new flow as a child of this flow. Removes the flow from the given leaf set if
-    /// it's present.
-    fn add_new_child(&mut self, new_child: FlowRef);
-
-    /// Finishes a flow. Once a flow is finished, no more child flows or boxes may be added to it.
-    /// This will normally run the bubble-inline-sizes (minimum and preferred -- i.e. intrinsic --
-    /// inline-size) calculation, unless the global `bubble_inline-sizes_separately` flag is on.
-    ///
-    /// All flows must be finished at some point, or they will not have their intrinsic inline-
-    /// sizes properly computed. (This is not, however, a memory safety problem.)
-    fn finish(&mut self);
-}
-
-impl FlowConstructionUtils for FlowRef {
-    /// Adds a new flow as a child of this flow. Fails if this flow is marked as a leaf.
-    fn add_new_child(&mut self, mut new_child: FlowRef) {
-        {
-            let kid_base = FlowRef::deref_mut(&mut new_child).mut_base();
-            kid_base.parallel.parent = parallel::mut_owned_flow_to_unsafe_flow(self);
-        }
-
-        let base = FlowRef::deref_mut(self).mut_base();
-        base.children.push_back(new_child);
-        let _ = base.parallel.children_count.fetch_add(1, Ordering::Relaxed);
-    }
-
-    /// Finishes a flow. Once a flow is finished, no more child flows or fragments may be added to
-    /// it. This will normally run the bubble-inline-sizes (minimum and preferred -- i.e. intrinsic
-    /// -- inline-size) calculation, unless the global `bubble_inline-sizes_separately` flag is on.
-    ///
-    /// All flows must be finished at some point, or they will not have their intrinsic inline-sizes
-    /// properly computed. (This is not, however, a memory safety problem.)
-    fn finish(&mut self) {
-        if !opts::get().bubble_inline_sizes_separately {
-            FlowRef::deref_mut(self).bubble_inline_sizes();
-            FlowRef::deref_mut(self)
-                .mut_base()
-                .restyle_damage
-                .remove(ServoRestyleDamage::BUBBLE_ISIZES);
-        }
-    }
-}
-
 /// Convenience methods for computed CSS values
 trait ComputedValueUtils {
     /// Returns true if this node has non-zero padding or border.
@@ -611,72 +400,5 @@ impl ComputedValueUtils for ComputedValues {
             border.border_right_width.px() != 0. ||
             border.border_bottom_width.px() != 0. ||
             border.border_left_width.px() != 0.
-    }
-}
-
-/// Maintains a stack of anonymous boxes needed to ensure that the flow tree is *legal*. The tree
-/// is legal if it follows the rules in CSS 2.1 § 17.2.1.
-///
-/// As an example, the legalizer makes sure that table row flows contain only table cells. If the
-/// flow constructor attempts to place, say, a block flow directly underneath the table row, the
-/// legalizer generates an anonymous table cell in between to hold the block.
-///
-/// Generally, the flow constructor should use `Legalizer::add_child()` instead of calling
-/// `Flow::add_new_child()` directly. This ensures that the flow tree remains legal at all times
-/// and centralizes the anonymous flow generation logic in one place.
-struct Legalizer {
-    /// A stack of anonymous flows that have yet to be finalized (i.e. that still could acquire new
-    /// children).
-    stack: Vec<FlowRef>,
-}
-
-impl Legalizer {
-    /// Creates a new legalizer.
-    fn new() -> Legalizer {
-        Legalizer { stack: vec![] }
-    }
-
-    /// Makes the `child` flow a new child of `parent`. Anonymous flows are automatically inserted
-    /// to keep the tree legal.
-    fn add_child<E>(&mut self, parent: &mut FlowRef, mut child: FlowRef) where E: TElement {
-        while !self.stack.is_empty() {
-            if self.try_to_add_child::<E>(parent, &mut child) {
-                return;
-            }
-            self.flush_top_of_stack(parent)
-        }
-    }
-
-    /// Flushes all flows we've been gathering up.
-    fn finish(mut self, parent: &mut FlowRef) {
-        while !self.stack.is_empty() {
-            self.flush_top_of_stack(parent)
-        }
-    }
-
-    /// Attempts to make `child` a child of `parent`. On success, this returns true. If this would
-    /// make the tree illegal, this method does nothing and returns false.
-    ///
-    /// This method attempts to create anonymous blocks in between `parent` and `child` if and only
-    /// if those blocks will only ever have `child` as their sole child. At present, this is only
-    /// true for anonymous block children of flex flows.
-    fn try_to_add_child<E>(
-        &mut self,
-        parent: &mut FlowRef,
-        child: &mut FlowRef,
-    ) -> bool
-    where
-        E: TElement,
-    {
-        let parent = self.stack.last_mut().unwrap_or(parent);
-        parent.add_new_child((*child).clone());
-        true
-    }
-
-    /// Finalizes the flow on the top of the stack.
-    fn flush_top_of_stack(&mut self, parent: &mut FlowRef) {
-        let mut child = self.stack.pop().expect("flush_top_of_stack(): stack empty");
-        child.finish();
-        self.stack.last_mut().unwrap_or(parent).add_new_child(child)
     }
 }

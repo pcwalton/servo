@@ -7,10 +7,8 @@
 use app_units::Au;
 use crate::construct::ConstructionResult;
 use crate::context::LayoutContext;
-use crate::flow::{Flow, GetBaseFlow};
 use crate::fragment::{Fragment, FragmentBorderBoxIterator};
 use crate::opaque_node::OpaqueNodeMethods;
-use crate::sequential;
 use crate::wrapper::LayoutNodeLayoutData;
 use euclid::{Point2D, Rect, Size2D, Vector2D};
 use ipc_channel::ipc::IpcSender;
@@ -350,26 +348,12 @@ impl FragmentBorderBoxIterator for MarginRetrievingFragmentBorderBoxIterator {
     }
 }
 
-pub fn process_content_box_request<N: LayoutNode>(
-    requested_node: N,
-    layout_root: &mut dyn Flow,
-) -> Option<Rect<Au>> {
-    // FIXME(pcwalton): This has not been updated to handle the stacking context relative
-    // stuff. So the position is wrong in most cases.
-    let mut iterator = UnioningFragmentBorderBoxIterator::new(requested_node.opaque());
-    sequential::iterate_through_flow_tree_fragment_border_boxes(layout_root, &mut iterator);
-    iterator.rect
+pub fn process_content_box_request<N: LayoutNode>(requested_node: N) -> Option<Rect<Au>> {
+    None
 }
 
-pub fn process_content_boxes_request<N: LayoutNode>(
-    requested_node: N,
-    layout_root: &mut dyn Flow,
-) -> Vec<Rect<Au>> {
-    // FIXME(pcwalton): This has not been updated to handle the stacking context relative
-    // stuff. So the position is wrong in most cases.
-    let mut iterator = CollectingFragmentBorderBoxIterator::new(requested_node.opaque());
-    sequential::iterate_through_flow_tree_fragment_border_boxes(layout_root, &mut iterator);
-    iterator.rects
+pub fn process_content_boxes_request<N: LayoutNode>(requested_node: N) -> Vec<Rect<Au>> {
+    vec![]
 }
 
 struct FragmentLocatingFragmentIterator {
@@ -614,13 +598,8 @@ impl FragmentBorderBoxIterator for ParentOffsetBorderBoxIterator {
     }
 }
 
-pub fn process_node_geometry_request<N: LayoutNode>(
-    requested_node: N,
-    layout_root: &mut dyn Flow,
-) -> Rect<i32> {
-    let mut iterator = FragmentLocatingFragmentIterator::new(requested_node.opaque());
-    sequential::iterate_through_flow_tree_fragment_border_boxes(layout_root, &mut iterator);
-    iterator.client_rect
+pub fn process_node_geometry_request<N: LayoutNode>(requested_node: N) -> Rect<i32> {
+    Rect::zero()
 }
 
 pub fn process_node_scroll_id_request<N: LayoutNode>(
@@ -632,52 +611,8 @@ pub fn process_node_scroll_id_request<N: LayoutNode>(
 }
 
 /// https://drafts.csswg.org/cssom-view/#scrolling-area
-pub fn process_node_scroll_area_request<N: LayoutNode>(
-    requested_node: N,
-    layout_root: &mut dyn Flow,
-) -> Rect<i32> {
-    let mut iterator = UnioningFragmentScrollAreaIterator::new(requested_node.opaque());
-    sequential::iterate_through_flow_tree_fragment_border_boxes(layout_root, &mut iterator);
-    match iterator.overflow_direction {
-        OverflowDirection::RightAndDown => {
-            let right = max(
-                iterator.union_rect.size.width,
-                iterator.origin_rect.size.width,
-            );
-            let bottom = max(
-                iterator.union_rect.size.height,
-                iterator.origin_rect.size.height,
-            );
-            Rect::new(iterator.origin_rect.origin, Size2D::new(right, bottom))
-        },
-        OverflowDirection::LeftAndDown => {
-            let bottom = max(
-                iterator.union_rect.size.height,
-                iterator.origin_rect.size.height,
-            );
-            let left = min(iterator.union_rect.origin.x, iterator.origin_rect.origin.x);
-            Rect::new(
-                Point2D::new(left, iterator.origin_rect.origin.y),
-                Size2D::new(iterator.origin_rect.size.width, bottom),
-            )
-        },
-        OverflowDirection::LeftAndUp => {
-            let top = min(iterator.union_rect.origin.y, iterator.origin_rect.origin.y);
-            let left = min(iterator.union_rect.origin.x, iterator.origin_rect.origin.x);
-            Rect::new(Point2D::new(left, top), iterator.origin_rect.size)
-        },
-        OverflowDirection::RightAndUp => {
-            let top = min(iterator.union_rect.origin.y, iterator.origin_rect.origin.y);
-            let right = max(
-                iterator.union_rect.size.width,
-                iterator.origin_rect.size.width,
-            );
-            Rect::new(
-                Point2D::new(iterator.origin_rect.origin.x, top),
-                Size2D::new(right, iterator.origin_rect.size.height),
-            )
-        },
-    }
+pub fn process_node_scroll_area_request<N: LayoutNode>(requested_node: N) -> Rect<i32> {
+    Rect::zero()
 }
 
 /// Return the resolved value of property for a given (pseudo)element.
@@ -687,48 +622,11 @@ pub fn process_resolved_style_request<'a, N>(
     node: N,
     pseudo: &Option<PseudoElement>,
     property: &PropertyId,
-    layout_root: &mut dyn Flow,
 ) -> String
 where
     N: LayoutNode,
 {
-    use style::stylist::RuleInclusion;
-    use style::traversal::resolve_style;
-
-    let element = node.as_element().unwrap();
-
-    // We call process_resolved_style_request after performing a whole-document
-    // traversal, so in the common case, the element is styled.
-    if element.get_data().is_some() {
-        return process_resolved_style_request_internal(node, pseudo, property, layout_root);
-    }
-
-    // In a display: none subtree. No pseudo-element exists.
-    if pseudo.is_some() {
-        return String::new();
-    }
-
-    let mut tlc = ThreadLocalStyleContext::new(&context.style_context);
-    let mut context = StyleContext {
-        shared: &context.style_context,
-        thread_local: &mut tlc,
-    };
-
-    let styles = resolve_style(&mut context, element, RuleInclusion::All, pseudo.as_ref());
-    let style = styles.primary();
-    let longhand_id = match *property {
-        PropertyId::LonghandAlias(id, _) | PropertyId::Longhand(id) => id,
-        // Firefox returns blank strings for the computed value of shorthands,
-        // so this should be web-compatible.
-        PropertyId::ShorthandAlias(..) | PropertyId::Shorthand(_) => return String::new(),
-        PropertyId::Custom(ref name) => {
-            return style.computed_value_to_string(PropertyDeclarationId::Custom(name))
-        },
-    };
-
-    // No need to care about used values here, since we're on a display: none
-    // subtree, use the resolved value.
-    style.computed_value_to_string(PropertyDeclarationId::Longhand(longhand_id))
+    "".to_owned()
 }
 
 /// The primary resolution logic, which assumes that the element is styled.
@@ -736,177 +634,19 @@ fn process_resolved_style_request_internal<'a, N>(
     requested_node: N,
     pseudo: &Option<PseudoElement>,
     property: &PropertyId,
-    layout_root: &mut dyn Flow,
 ) -> String
 where
     N: LayoutNode,
 {
-    let layout_el = requested_node.to_threadsafe().as_element().unwrap();
-    let layout_el = match *pseudo {
-        Some(PseudoElement::Before) => layout_el.get_before_pseudo(),
-        Some(PseudoElement::After) => layout_el.get_after_pseudo(),
-        Some(PseudoElement::DetailsSummary) |
-        Some(PseudoElement::DetailsContent) |
-        Some(PseudoElement::Selection) => None,
-        // FIXME(emilio): What about the other pseudos? Probably they shouldn't
-        // just return the element's style!
-        _ => Some(layout_el),
-    };
-
-    let layout_el = match layout_el {
-        None => {
-            // The pseudo doesn't exist, return nothing.  Chrome seems to query
-            // the element itself in this case, Firefox uses the resolved value.
-            // https://www.w3.org/Bugs/Public/show_bug.cgi?id=29006
-            return String::new();
-        },
-        Some(layout_el) => layout_el,
-    };
-
-    let style = &*layout_el.resolved_style();
-    let longhand_id = match *property {
-        PropertyId::LonghandAlias(id, _) | PropertyId::Longhand(id) => id,
-        // Firefox returns blank strings for the computed value of shorthands,
-        // so this should be web-compatible.
-        PropertyId::ShorthandAlias(..) | PropertyId::Shorthand(_) => return String::new(),
-        PropertyId::Custom(ref name) => {
-            return style.computed_value_to_string(PropertyDeclarationId::Custom(name))
-        },
-    };
-
-    let positioned = match style.get_box().position {
-        Position::Relative | Position::Sticky | Position::Fixed | Position::Absolute => true,
-        _ => false,
-    };
-
-    //TODO: determine whether requested property applies to the element.
-    //      eg. width does not apply to non-replaced inline elements.
-    // Existing browsers disagree about when left/top/right/bottom apply
-    // (Chrome seems to think they never apply and always returns resolved values).
-    // There are probably other quirks.
-    let applies = true;
-
-    fn used_value_for_position_property<N: LayoutNode>(
-        layout_el: <N::ConcreteThreadSafeLayoutNode as ThreadSafeLayoutNode>::ConcreteThreadSafeLayoutElement,
-        layout_root: &mut dyn Flow,
-        requested_node: N,
-        longhand_id: LonghandId,
-    ) -> String {
-        let maybe_data = layout_el.borrow_layout_data();
-        let position = maybe_data.map_or(Point2D::zero(), |data| {
-            match (*data).flow_construction_result {
-                ConstructionResult::Flow(ref flow_ref, _) => flow_ref
-                    .deref()
-                    .base()
-                    .stacking_relative_position
-                    .to_point(),
-                // TODO(dzbarsky) search parents until we find node with a flow ref.
-                // https://github.com/servo/servo/issues/8307
-                _ => Point2D::zero(),
-            }
-        });
-        let property = match longhand_id {
-            LonghandId::Bottom => PositionProperty::Bottom,
-            LonghandId::Top => PositionProperty::Top,
-            LonghandId::Left => PositionProperty::Left,
-            LonghandId::Right => PositionProperty::Right,
-            LonghandId::Width => PositionProperty::Width,
-            LonghandId::Height => PositionProperty::Height,
-            _ => unreachable!(),
-        };
-        let mut iterator = PositionRetrievingFragmentBorderBoxIterator::new(
-            requested_node.opaque(),
-            property,
-            position,
-        );
-        sequential::iterate_through_flow_tree_fragment_border_boxes(layout_root, &mut iterator);
-        iterator
-            .result
-            .map(|r| r.to_css_string())
-            .unwrap_or(String::new())
-    }
-
-    // TODO: we will return neither the computed nor used value for margin and padding.
-    match longhand_id {
-        LonghandId::MarginBottom |
-        LonghandId::MarginTop |
-        LonghandId::MarginLeft |
-        LonghandId::MarginRight |
-        LonghandId::PaddingBottom |
-        LonghandId::PaddingTop |
-        LonghandId::PaddingLeft |
-        LonghandId::PaddingRight
-            if applies && style.get_box().display != Display::None =>
-        {
-            let (margin_padding, side) = match longhand_id {
-                LonghandId::MarginBottom => (MarginPadding::Margin, Side::Bottom),
-                LonghandId::MarginTop => (MarginPadding::Margin, Side::Top),
-                LonghandId::MarginLeft => (MarginPadding::Margin, Side::Left),
-                LonghandId::MarginRight => (MarginPadding::Margin, Side::Right),
-                LonghandId::PaddingBottom => (MarginPadding::Padding, Side::Bottom),
-                LonghandId::PaddingTop => (MarginPadding::Padding, Side::Top),
-                LonghandId::PaddingLeft => (MarginPadding::Padding, Side::Left),
-                LonghandId::PaddingRight => (MarginPadding::Padding, Side::Right),
-                _ => unreachable!(),
-            };
-            let mut iterator = MarginRetrievingFragmentBorderBoxIterator::new(
-                requested_node.opaque(),
-                side,
-                margin_padding,
-                style.writing_mode,
-            );
-            sequential::iterate_through_flow_tree_fragment_border_boxes(layout_root, &mut iterator);
-            iterator
-                .result
-                .map(|r| r.to_css_string())
-                .unwrap_or(String::new())
-        }
-
-        LonghandId::Bottom | LonghandId::Top | LonghandId::Right | LonghandId::Left
-            if applies && positioned && style.get_box().display != Display::None =>
-        {
-            used_value_for_position_property(layout_el, layout_root, requested_node, longhand_id)
-        },
-        LonghandId::Width | LonghandId::Height
-            if applies && style.get_box().display != Display::None =>
-        {
-            used_value_for_position_property(layout_el, layout_root, requested_node, longhand_id)
-        },
-        // FIXME: implement used value computation for line-height
-        _ => style.computed_value_to_string(PropertyDeclarationId::Longhand(longhand_id)),
-    }
+    "".to_owned()
 }
 
 pub fn process_offset_parent_query<N: LayoutNode>(
     requested_node: N,
-    layout_root: &mut dyn Flow,
 ) -> OffsetParentResponse {
-    let mut iterator = ParentOffsetBorderBoxIterator::new(requested_node.opaque());
-    sequential::iterate_through_flow_tree_fragment_border_boxes(layout_root, &mut iterator);
-
-    let node_offset_box = iterator.node_offset_box;
-    let parent_info = iterator
-        .parent_nodes
-        .into_iter()
-        .rev()
-        .filter_map(|info| info)
-        .next();
-    match (node_offset_box, parent_info) {
-        (Some(node_offset_box), Some(parent_info)) => {
-            let origin = node_offset_box.offset - parent_info.origin.to_vector();
-            let size = node_offset_box.rectangle.size;
-            OffsetParentResponse {
-                node_address: Some(parent_info.node_address.to_untrusted_node_address()),
-                rect: Rect::new(origin, size),
-            }
-        },
-        _ => OffsetParentResponse::empty(),
-    }
+    OffsetParentResponse::empty()
 }
 
 pub fn process_style_query<N: LayoutNode>(requested_node: N) -> StyleResponse {
-    let element = requested_node.as_element().unwrap();
-    let data = element.borrow_data();
-
-    StyleResponse(data.map(|d| d.styles.primary().clone()))
+    StyleResponse(None)
 }

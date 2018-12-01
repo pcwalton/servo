@@ -39,7 +39,6 @@ use msg::constellation_msg::{BrowsingContextId, PipelineId};
 use net_traits::image::base::{Image, ImageMetadata};
 use range::Range;
 use script::layout_exports::NodeFlags;
-use script::layout_exports::PendingRestyle;
 use script::layout_exports::{CharacterDataTypeId, ElementTypeId, HTMLElementTypeId, NodeTypeId};
 use script::layout_exports::{Document, Element, Node, Text};
 use script::layout_exports::{LayoutCharacterDataHelpers, LayoutDocumentHelpers};
@@ -55,7 +54,7 @@ use script_layout_interface::wrapper_traits::{
 use script_layout_interface::{
     HTMLCanvasData, HTMLMediaData, LayoutNodeType, OpaqueStyleAndLayoutData,
 };
-use script_layout_interface::{SVGSVGData, StyleData, TrustedNodeAddress};
+use script_layout_interface::{SVGSVGData, StyleData};
 use selectors::attr::{AttrSelectorOperation, CaseSensitivity, NamespaceConstraint};
 use selectors::matching::VisitedHandlingMode;
 use selectors::matching::{ElementSelectorFlags, MatchingContext, QuirksMode};
@@ -81,7 +80,7 @@ use style::font_metrics::ServoMetricsProvider;
 use style::properties::{ComputedValues, PropertyDeclarationBlock};
 use style::selector_parser::{extended_filtering, PseudoElement, SelectorImpl};
 use style::selector_parser::{AttrValue as SelectorAttrValue, Lang, NonTSPseudoClass};
-use style::shared_lock::{Locked as StyleLocked, SharedRwLock as StyleSharedRwLock};
+use style::shared_lock::Locked as StyleLocked;
 use style::str::is_whitespace;
 use style::stylist::CascadeData;
 use style::CaseSensitivityExt;
@@ -128,10 +127,6 @@ impl<'ln> ServoLayoutNode<'ln> {
             node: n,
             chain: PhantomData,
         }
-    }
-
-    pub unsafe fn new(address: &TrustedNodeAddress) -> ServoLayoutNode {
-        ServoLayoutNode::from_layout_js(LayoutDom::from_trusted_node_address(*address))
     }
 
     /// Creates a new layout node with the same lifetime as this layout node.
@@ -348,33 +343,6 @@ impl<'ld> TDocument for ServoLayoutDocument<'ld> {
 }
 
 impl<'ld> ServoLayoutDocument<'ld> {
-    pub fn root_element(&self) -> Option<ServoLayoutElement<'ld>> {
-        self.as_node()
-            .dom_children()
-            .flat_map(|n| n.as_element())
-            .next()
-    }
-
-    pub fn drain_pending_restyles(&self) -> Vec<(ServoLayoutElement<'ld>, PendingRestyle)> {
-        let elements = unsafe { self.document.drain_pending_restyles() };
-        elements
-            .into_iter()
-            .map(|(el, snapshot)| (ServoLayoutElement::from_layout_js(el), snapshot))
-            .collect()
-    }
-
-    pub fn needs_paint_from_layout(&self) {
-        unsafe { self.document.needs_paint_from_layout() }
-    }
-
-    pub fn will_paint(&self) {
-        unsafe { self.document.will_paint() }
-    }
-
-    pub fn style_shared_lock(&self) -> &StyleSharedRwLock {
-        unsafe { self.document.style_shared_lock() }
-    }
-
     pub fn from_layout_js(doc: LayoutDom<Document>) -> ServoLayoutDocument<'ld> {
         ServoLayoutDocument {
             document: doc,
@@ -658,31 +626,6 @@ impl<'le> ServoLayoutElement<'le> {
         unsafe {
             self.get_style_and_layout_data()
                 .map(|d| &*(d.ptr.as_ptr() as *mut StyleData))
-        }
-    }
-
-    pub unsafe fn unset_snapshot_flags(&self) {
-        self.as_node()
-            .node
-            .set_flag(NodeFlags::HAS_SNAPSHOT | NodeFlags::HANDLED_SNAPSHOT, false);
-    }
-
-    pub unsafe fn set_has_snapshot(&self) {
-        self.as_node().node.set_flag(NodeFlags::HAS_SNAPSHOT, true);
-    }
-
-    pub unsafe fn note_dirty_descendant(&self) {
-        use selectors::Element;
-
-        let mut current = Some(*self);
-        while let Some(el) = current {
-            // FIXME(bholley): Ideally we'd have the invariant that any element
-            // with has_dirty_descendants also has the bit set on all its
-            // ancestors.  However, there are currently some corner-cases where
-            // we get that wrong.  I have in-flight patches to fix all this
-            // stuff up, so we just always propagate this bit for now.
-            el.set_dirty_descendants();
-            current = el.parent_element();
         }
     }
 }

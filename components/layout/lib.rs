@@ -13,20 +13,13 @@ extern crate log;
 #[macro_use]
 extern crate serde;
 
-mod block;
 pub mod construct;
 pub mod context;
 pub mod data;
-pub mod flow;
-mod flow_list;
-pub mod flow_ref;
 mod fragment;
 mod model;
 pub mod opaque_node;
-pub mod parallel;
 pub mod query;
-pub mod sequential;
-pub mod traversal;
 pub mod wrapper;
 
 // For unit tests:
