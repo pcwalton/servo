@@ -8,7 +8,6 @@ use app_units::Au;
 use canvas_traits::canvas::{CanvasId, CanvasMsg};
 use crate::context::LayoutContext;
 #[cfg(debug_assertions)]
-use crate::layout_debug;
 use crate::model::style_length;
 use crate::model::{self, IntrinsicISizes, IntrinsicISizesContribution, MaybeAuto, SizeConstraint};
 use crate::wrapper::ThreadSafeLayoutNodeHelpers;
@@ -119,11 +118,6 @@ pub struct Fragment {
     /// Various flags for this fragment.
     pub flags: FragmentFlags,
 
-    /// A debug ID that is consistent for the life of this fragment (via transform etc).
-    /// This ID should not be considered stable across multiple layouts or fragment
-    /// manipulations.
-    debug_id: DebugId,
-
     /// The ID of the StackingContext that contains this fragment. This is initialized
     /// to 0, but it assigned during the collect_stacking_contexts phase of display
     /// list construction.
@@ -133,7 +127,6 @@ pub struct Fragment {
 impl Serialize for Fragment {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let mut serializer = serializer.serialize_struct("fragment", 3)?;
-        serializer.serialize_field("id", &self.debug_id)?;
         serializer.serialize_field("border_box", &self.border_box)?;
         serializer.serialize_field("margin", &self.margin)?;
         serializer.end()
@@ -526,7 +519,6 @@ impl Fragment {
             specific: specific,
             pseudo: node.get_pseudo_element_type(),
             flags: FragmentFlags::empty(),
-            debug_id: DebugId::new(),
             stacking_context_id: StackingContextId::root(),
         }
     }
@@ -555,7 +547,6 @@ impl Fragment {
             specific: specific,
             pseudo: pseudo,
             flags: FragmentFlags::empty(),
-            debug_id: DebugId::new(),
             stacking_context_id: StackingContextId::root(),
         }
     }
@@ -580,7 +571,6 @@ impl Fragment {
             specific: specific,
             pseudo: self.pseudo,
             flags: FragmentFlags::empty(),
-            debug_id: DebugId::new(),
             stacking_context_id: StackingContextId::root(),
         }
     }
@@ -605,7 +595,6 @@ impl Fragment {
             specific: info,
             pseudo: self.pseudo.clone(),
             flags: FragmentFlags::empty(),
-            debug_id: self.debug_id.clone(),
             stacking_context_id: StackingContextId::root(),
         }
     }
@@ -2180,9 +2169,8 @@ impl fmt::Debug for Fragment {
 
         write!(
             f,
-            "\n{}({}) [{:?}]\nborder_box={:?}{}{}{}",
+            "\n{} [{:?}]\nborder_box={:?}{}{}{}",
             self.specific.get_type(),
-            self.debug_id,
             self.specific,
             self.border_box,
             border_padding_string,
@@ -2307,54 +2295,4 @@ bitflags! {
 pub struct SpeculatedInlineContentEdgeOffsets {
     pub start: Au,
     pub end: Au,
-}
-
-#[cfg(not(debug_assertions))]
-#[derive(Clone)]
-struct DebugId;
-
-#[cfg(debug_assertions)]
-#[derive(Clone)]
-struct DebugId(u16);
-
-#[cfg(not(debug_assertions))]
-impl DebugId {
-    pub fn new() -> DebugId {
-        DebugId
-    }
-}
-
-#[cfg(debug_assertions)]
-impl DebugId {
-    pub fn new() -> DebugId {
-        DebugId(layout_debug::generate_unique_debug_id())
-    }
-}
-
-#[cfg(not(debug_assertions))]
-impl fmt::Display for DebugId {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:p}", &self)
-    }
-}
-
-#[cfg(debug_assertions)]
-impl fmt::Display for DebugId {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-#[cfg(not(debug_assertions))]
-impl Serialize for DebugId {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(&format!("{:p}", &self))
-    }
-}
-
-#[cfg(debug_assertions)]
-impl Serialize for DebugId {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_u16(self.0)
-    }
 }

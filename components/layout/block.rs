@@ -35,7 +35,6 @@ use crate::flow_list::FlowList;
 use crate::fragment::{
     CoordinateSystem, Fragment, FragmentBorderBoxIterator, FragmentFlags, Overflow,
 };
-use crate::layout_debug;
 use crate::model::{
     AdjoiningMargins, CollapsibleMargins, IntrinsicISizes, MarginCollapseInfo, MaybeAuto,
 };
@@ -826,8 +825,6 @@ impl BlockFlow {
         mut fragmentation_context: Option<FragmentationContext>,
         margins_may_collapse: MarginsMayCollapseFlag,
     ) -> Option<Arc<dyn Flow>> {
-        let _scope = layout_debug_scope!("assign_block_size_block_base {:x}", self.base.debug_id());
-
         let mut break_at = None;
         if self
             .base
@@ -1417,8 +1414,6 @@ impl BlockFlow {
 
     /// Computes intrinsic inline sizes for a block.
     pub fn bubble_inline_sizes_for_block(&mut self, consult_children: bool) {
-        let _scope = layout_debug_scope!("block::bubble_inline_sizes {:x}", self.base.debug_id());
-
         let mut flags = self.base.flags;
         if self.definitely_has_zero_block_size() {
             // This is kind of a hack for Acid2. But it's a harmless one, because (a) this behavior
@@ -1645,8 +1640,6 @@ impl Flow for BlockFlow {
     /// Dual fragments consume some inline-size first, and the remainder is assigned to all child
     /// (block) contexts.
     fn assign_inline_sizes(&mut self, layout_context: &LayoutContext) {
-        let _scope = layout_debug_scope!("block::assign_inline_sizes {:x}", self.base.debug_id());
-
         let shared_context = layout_context.shared_context();
         self.compute_inline_sizes(shared_context);
 
@@ -1694,11 +1687,6 @@ impl Flow for BlockFlow {
         fragmentation_context: Option<FragmentationContext>,
     ) -> Option<Arc<dyn Flow>> {
         if self.fragment.is_replaced() {
-            let _scope = layout_debug_scope!(
-                "assign_replaced_block_size_if_necessary {:x}",
-                self.base.debug_id()
-            );
-
             // Assign block-size for fragment if it is an image fragment.
             self.fragment.assign_replaced_block_size_if_necessary();
             if !self
