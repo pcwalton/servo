@@ -1078,6 +1078,11 @@ dependencies = [
 ]
 
 [[package]]
+name = "evmap"
+version = "4.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
 name = "expat-sys"
 version = "2.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1584,6 +1589,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "hash_hasher"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
+name = "hashbrown"
+version = "0.1.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+dependencies = [
+ "byteorder 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "scopeguard 0.3.2 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
 name = "hashglobe"
 version = "0.1.0"
 dependencies = [
@@ -1947,10 +1966,13 @@ dependencies = [
  "canvas_traits 0.0.1",
  "crossbeam-channel 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "euclid 0.19.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "evmap 4.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "fnv 1.0.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "fxhash 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "gfx 0.0.1",
  "gfx_traits 0.0.1",
+ "hash_hasher 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "hashbrown 0.1.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "html5ever 0.22.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "ipc-channel 0.11.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "libc 0.2.42 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -4916,6 +4938,7 @@ dependencies = [
 "checksum env_logger 0.6.0 (registry+https://github.com/rust-lang/crates.io-index)" = "afb070faf94c85d17d50ca44f6ad076bce18ae92f0037d350947240a36e9d42e"
 "checksum error-chain 0.12.0 (registry+https://github.com/rust-lang/crates.io-index)" = "07e791d3be96241c77c43846b665ef1384606da2cd2a48730abe606a12906e02"
 "checksum euclid 0.19.0 (registry+https://github.com/rust-lang/crates.io-index)" = "70a2ebdf55fb9d6329046e026329a55ef8fbaae5ea833f56e170beb3125a8a5f"
+"checksum evmap 4.0.1 (registry+https://github.com/rust-lang/crates.io-index)" = "9a77aa885ad8f918dfd1e2100d1f985a37e21e76d3c0c1613419ce6e89875813"
 "checksum expat-sys 2.1.6 (registry+https://github.com/rust-lang/crates.io-index)" = "658f19728920138342f68408b7cf7644d90d4784353d8ebc32e7e8663dbe45fa"
 "checksum fake-simd 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)" = "e88a8acf291dafb59c2d96e8f59828f3838bb1a70398823ade51a84de6a6deed"
 "checksum fixedbitset 0.1.9 (registry+https://github.com/rust-lang/crates.io-index)" = "86d4de0081402f5e88cdac65c8dcdcc73118c1a7a465e2a05f0da05843a8ea33"
@@ -4960,6 +4983,8 @@ dependencies = [
 "checksum h2 0.1.12 (registry+https://github.com/rust-lang/crates.io-index)" = "a27e7ed946e8335bdf9a191bc1b9b14a03ba822d013d2f58437f4fabcbd7fc2c"
 "checksum half 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)" = "63d68db75012a85555434ee079e7e6337931f87a087ab2988becbadf64673a7f"
 "checksum harfbuzz-sys 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)" = "87a29ce223fee4727c0c4810a1419a3412f65b29146339fb6a47ee39456c34ea"
+"checksum hash_hasher 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)" = "8b066189442340b83aa8bfbeb60e07277507839196e60d3b242208ecf24b02c4"
+"checksum hashbrown 0.1.6 (registry+https://github.com/rust-lang/crates.io-index)" = "72d9de4ebc5b184289fc3db3a3c023b072e56c649e32fcfcd434636e7ba912d4"
 "checksum headers-core 0.0.1 (registry+https://github.com/rust-lang/crates.io-index)" = "7794c3bca3a5fb812a06d43f715cf857f7b037d52d6d8e054231d439dd839073"
 "checksum headers-derive 0.0.1 (registry+https://github.com/rust-lang/crates.io-index)" = "93b8509be5e3893b8c9c37805a05aa57e4561cf1f1a2aab30cec4931127f36ca"
 "checksum headers-ext 0.0.3 (registry+https://github.com/rust-lang/crates.io-index)" = "6657fda27978455d69652a0c817d5c73d6d3694d97027924477a1e1c66e33f61"

@@ -27,6 +27,9 @@ Servo.app
 /glfw
 capture_webrender/
 /screenshots
+/components/layout/target
+/components/layout_thread/target
+/components/style/target
 # Editors
 
 # IntelliJ

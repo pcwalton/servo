@@ -21,6 +21,8 @@ use embedder_traits::resources::{self, Resource};
 use euclid::TypedScale;
 use ipc_channel::ipc::{self, IpcSender};
 use ipc_channel::router::ROUTER;
+use layout::box_model::BoxModelComponent;
+use layout::display_list_builder::DisplayListBuilderSystem;
 use layout_traits::{LayoutGlobalInfo, LayoutThreadFactory};
 use metrics::{PaintTimeMetrics, ProfilerMetadataFactory};
 use msg::constellation_msg::TopLevelBrowsingContextId;
@@ -59,7 +61,25 @@ pub struct LayoutThread {
 
     /// The number of Web fonts that have been requested but not yet loaded.
     outstanding_web_fonts: Arc<AtomicUsize>,
+
+    /// All layout components.
+    components: Components,
 }
+
+struct Components {
+    box_model: BoxModelComponent,
+}
+
+impl BoxModelComponent for LayoutThread {
+    fn get_box_model(&self, entity: Entity) -> &BoxModelData {
+        &self.components.box_model
+    }
+
+    fn get_box_model_mut(&mut self, entity: Entity) -> &mut BoxModelData {
+    }
+}
+
+impl DisplayListBuilderSystem for LayoutThread {}
 
 impl LayoutThreadFactory for LayoutThread {
     type Message = Msg;

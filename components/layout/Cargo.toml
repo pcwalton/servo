@@ -19,10 +19,13 @@ bitflags = "1.0"
 canvas_traits = {path = "../canvas_traits"}
 crossbeam-channel = "0.3"
 euclid = "0.19"
+evmap = "4.0"
 fnv = "1.0"
 fxhash = "0.2"
 gfx = {path = "../gfx"}
 gfx_traits = {path = "../gfx_traits"}
+hash_hasher = "1.0"
+hashbrown = "0.1"
 html5ever = "0.22"
 ipc-channel = "0.11"
 libc = "0.2"
