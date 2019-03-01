@@ -958,7 +958,7 @@ impl LayoutThread {
             _ => return None,
         };
 
-        FlowRef::deref_mut(&mut flow).mark_as_root();
+        flow.write().mark_as_root();
 
         Some(flow)
     }
@@ -974,13 +974,10 @@ impl LayoutThread {
     }
 
     /// Performs layout constraint solving in parallel.
-    ///
-    /// This corresponds to `Reflow()` in Gecko and `layout()` in WebKit/Blink and should be
-    /// benchmarked against those two. It is marked `#[inline(never)]` to aid profiling.
     #[inline(never)]
     fn solve_constraints_parallel(
         traversal: &rayon::ThreadPool,
-        layout_root: &mut dyn Flow,
+        layout_root: FlowRef,
         profiler_metadata: Option<TimerMetadata>,
         time_profiler_chan: profile_time::ProfilerChan,
         layout_context: &LayoutContext,
@@ -1335,7 +1332,7 @@ impl LayoutThread {
 
         if viewport_size_changed {
             if let Some(mut flow) = self.try_get_layout_root(element.as_node()) {
-                LayoutThread::reflow_all_nodes(FlowRef::deref_mut(&mut flow));
+                LayoutThread::reflow_all_nodes(&mut *flow.write());
             }
         }
 
@@ -1503,14 +1500,16 @@ impl LayoutThread {
             Some(root_flow) => root_flow,
             None => return,
         };
-        let root_flow = FlowRef::deref_mut(&mut root_flow);
+        let mut root_flow = root_flow.write();
         match *reflow_goal {
             ReflowGoal::LayoutQuery(ref querymsg, _) => match querymsg {
                 &QueryMsg::ContentBoxQuery(node) => {
-                    rw_data.content_box_response = process_content_box_request(node, root_flow);
+                    rw_data.content_box_response =
+                        process_content_box_request(node, &mut *root_flow);
                 },
                 &QueryMsg::ContentBoxesQuery(node) => {
-                    rw_data.content_boxes_response = process_content_boxes_request(node, root_flow);
+                    rw_data.content_boxes_response =
+                        process_content_boxes_request(node, &mut *root_flow);
                 },
                 &QueryMsg::TextIndexQuery(node, point_in_node) => {
                     let point_in_node = Point2D::new(
@@ -1521,11 +1520,12 @@ impl LayoutThread {
                         TextIndexResponse(rw_data.indexable_text.text_index(node, point_in_node));
                 },
                 &QueryMsg::NodeGeometryQuery(node) => {
-                    rw_data.client_rect_response = process_node_geometry_request(node, root_flow);
+                    rw_data.client_rect_response =
+                        process_node_geometry_request(node, &mut *root_flow);
                 },
                 &QueryMsg::NodeScrollGeometryQuery(node) => {
                     rw_data.scroll_area_response =
-                        process_node_scroll_area_request(node, root_flow);
+                        process_node_scroll_area_request(node, &mut *root_flow);
                 },
                 &QueryMsg::NodeScrollIdQuery(node) => {
                     let node = unsafe { ServoLayoutNode::new(&node) };
@@ -1535,10 +1535,15 @@ impl LayoutThread {
                 &QueryMsg::ResolvedStyleQuery(node, ref pseudo, ref property) => {
                     let node = unsafe { ServoLayoutNode::new(&node) };
                     rw_data.resolved_style_response =
-                        process_resolved_style_request(context, node, pseudo, property, root_flow);
+                        process_resolved_style_request(context,
+                                                       node,
+                                                       pseudo,
+                                                       property,
+                                                       &mut *root_flow);
                 },
                 &QueryMsg::OffsetParentQuery(node) => {
-                    rw_data.offset_parent_response = process_offset_parent_query(node, root_flow);
+                    rw_data.offset_parent_response =
+                        process_offset_parent_query(node, &mut *root_flow);
                 },
                 &QueryMsg::StyleQuery(node) => {
                     let node = unsafe { ServoLayoutNode::new(&node) };
@@ -1645,7 +1650,7 @@ impl LayoutThread {
                     || {
                         animation::recalc_style_for_animations::<ServoLayoutElement>(
                             &layout_context,
-                            FlowRef::deref_mut(&mut root_flow),
+                            &mut *root_flow.write(),
                             &animations,
                         )
                     },
@@ -1703,12 +1708,12 @@ impl LayoutThread {
             || {
                 // Call `compute_layout_damage` even in non-incremental mode, because it sets flags
                 // that are needed in both incremental and non-incremental traversals.
-                let damage = FlowRef::deref_mut(root_flow).compute_layout_damage();
+                let damage = root_flow.write().compute_layout_damage();
 
                 if opts::get().nonincremental_layout ||
                     damage.contains(SpecialRestyleDamage::REFLOW_ENTIRE_DOCUMENT)
                 {
-                    FlowRef::deref_mut(root_flow).reflow_entire_document()
+                    root_flow.write().reflow_entire_document()
                 }
             },
         );
@@ -1722,7 +1727,7 @@ impl LayoutThread {
             profile_time::ProfilerCategory::LayoutGeneratedContent,
             self.profiler_metadata(),
             self.time_profiler_chan.clone(),
-            || sequential::resolve_generated_content(FlowRef::deref_mut(root_flow), &context),
+            || sequential::resolve_generated_content(&mut *root_flow.write(), &context),
         );
 
         // Guess float placement.
@@ -1730,12 +1735,13 @@ impl LayoutThread {
             profile_time::ProfilerCategory::LayoutFloatPlacementSpeculation,
             self.profiler_metadata(),
             self.time_profiler_chan.clone(),
-            || sequential::guess_float_placement(FlowRef::deref_mut(root_flow)),
+            || sequential::guess_float_placement(&mut *root_flow.write()),
         );
 
         // Perform the primary layout passes over the flow tree to compute the locations of all
         // the boxes.
         if root_flow
+            .read()
             .base()
             .restyle_damage
             .intersects(ServoRestyleDamage::REFLOW | ServoRestyleDamage::REFLOW_OUT_OF_FLOW)
@@ -1757,14 +1763,14 @@ impl LayoutThread {
                         // Parallel mode.
                         LayoutThread::solve_constraints_parallel(
                             pool,
-                            FlowRef::deref_mut(root_flow),
+                            root_flow.clone(),
                             profiler_metadata,
                             self.time_profiler_chan.clone(),
                             &*context,
                         );
                     } else {
                         //Sequential mode
-                        LayoutThread::solve_constraints(FlowRef::deref_mut(root_flow), &context)
+                        LayoutThread::solve_constraints(&mut *root_flow.write(), &context)
                     }
                 },
             );
@@ -1775,7 +1781,7 @@ impl LayoutThread {
             self.profiler_metadata(),
             self.time_profiler_chan.clone(),
             || {
-                sequential::store_overflow(context, FlowRef::deref_mut(root_flow) as &mut dyn Flow);
+                sequential::store_overflow(context, &mut *root_flow.write() as &mut dyn Flow);
             },
         );
 
@@ -1803,7 +1809,7 @@ impl LayoutThread {
             data,
             reflow_goal,
             document,
-            FlowRef::deref_mut(&mut root_flow),
+            &mut *root_flow.write(),
             &mut *layout_context,
             rw_data,
         );
@@ -1813,7 +1819,7 @@ impl LayoutThread {
         }
 
         if opts::get().dump_flow_tree {
-            root_flow.print("Post layout flow tree".to_owned());
+            root_flow.read().print("Post layout flow tree".to_owned());
         }
 
         self.generation.set(self.generation.get() + 1);
@@ -1828,8 +1834,8 @@ impl LayoutThread {
                 ServoRestyleDamage::REPOSITION,
         );
 
-        for child in flow.mut_base().child_iter_mut() {
-            LayoutThread::reflow_all_nodes(child);
+        for child in flow.mut_base().child_iter() {
+            LayoutThread::reflow_all_nodes(&mut *child.write());
         }
     }
 
@@ -1878,10 +1884,11 @@ fn get_root_flow_background_color(flow: &mut dyn Flow) -> webrender_api::ColorF 
     }
 
     let block_flow = flow.as_mut_block();
-    let kid = match block_flow.base.children.iter_mut().next() {
+    let kid = match block_flow.base.children.iter().next() {
         None => return transparent,
         Some(kid) => kid,
     };
+    let kid = kid.read();
     if !kid.is_block_like() {
         return transparent;
     }

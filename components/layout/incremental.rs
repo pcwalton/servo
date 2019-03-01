@@ -38,7 +38,8 @@ impl dyn Flow {
             // Take a snapshot of the parent damage before updating it with damage from children.
             let parent_damage = self_base.restyle_damage;
 
-            for kid in self_base.children.iter_mut() {
+            for kid in self_base.children.iter() {
+                let mut kid = kid.write();
                 let child_is_absolutely_positioned = kid
                     .base()
                     .flags
@@ -48,7 +49,7 @@ impl dyn Flow {
                         .damage_for_child(is_absolutely_positioned, child_is_absolutely_positioned),
                 );
                 {
-                    let kid: &mut dyn Flow = kid;
+                    let kid: &mut dyn Flow = &mut *kid;
                     special_damage.insert(kid.compute_layout_damage());
                 }
                 self_base.restyle_damage.insert(
@@ -94,8 +95,8 @@ impl dyn Flow {
         self_base
             .restyle_damage
             .remove(ServoRestyleDamage::RECONSTRUCT_FLOW);
-        for kid in self_base.children.iter_mut() {
-            kid.reflow_entire_document();
+        for kid in self_base.children.iter() {
+            kid.write().reflow_entire_document();
         }
     }
 }

@@ -103,6 +103,7 @@ impl TableCellFlow {
         // We end up with a "end" that's before the "start," but the math still works out.
         let mut extents = None;
         for kid in self.base().children.iter() {
+            let kid = kid.read();
             let kid_base = kid.base();
             if kid_base.flags.contains(FlowFlags::IS_ABSOLUTELY_POSITIONED) {
                 continue;
@@ -128,6 +129,7 @@ impl TableCellFlow {
                 None => extents = Some((start, end)),
             }
         }
+
         let (first_start, last_end) = match extents {
             Some(extents) => extents,
             None => return,
@@ -149,7 +151,8 @@ impl TableCellFlow {
             return;
         }
 
-        for kid in self.mut_base().children.iter_mut() {
+        for kid in self.mut_base().child_iter() {
+            let mut kid = kid.write();
             let kid_base = kid.mut_base();
             if !kid_base.flags.contains(FlowFlags::IS_ABSOLUTELY_POSITIONED) {
                 kid_base.position.start.b += offset

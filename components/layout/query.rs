@@ -851,7 +851,7 @@ where
         let position = maybe_data.map_or(Point2D::zero(), |data| {
             match (*data).flow_construction_result {
                 ConstructionResult::Flow(ref flow_ref, _) => flow_ref
-                    .deref()
+                    .read()
                     .base()
                     .stacking_relative_position
                     .to_point(),

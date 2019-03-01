@@ -14,6 +14,7 @@ use crate::ServoArc;
 use app_units::Au;
 use euclid::{Point2D, Vector2D};
 use gfx_traits::print_tree::PrintTree;
+use parking_lot::RwLock;
 use std::cmp::{max, min};
 use std::fmt;
 use std::sync::Arc;
@@ -183,9 +184,7 @@ impl Flow for MulticolFlow {
         self.block_flow.assign_block_size(ctx);
 
         loop {
-            let remaining = Arc::get_mut(&mut column)
-                .unwrap()
-                .fragment(ctx, fragmentation_context);
+            let remaining = column.write().fragment(ctx, fragmentation_context);
             self.block_flow.base.children.push_back_arc(column);
             column = match remaining {
                 Some(remaining) => remaining,
@@ -199,7 +198,8 @@ impl Flow for MulticolFlow {
             .compute_stacking_relative_position(layout_context);
         let pitch = LogicalSize::new(self.block_flow.base.writing_mode, self.column_pitch, Au(0));
         let pitch = pitch.to_physical(self.block_flow.base.writing_mode);
-        for (i, child) in self.block_flow.base.children.iter_mut().enumerate() {
+        for (i, child) in self.block_flow.base.children.iter().enumerate() {
+            let mut child = child.write();
             let point = &mut child.mut_base().stacking_relative_position;
             *point = *point + Vector2D::new(pitch.width * i as i32, pitch.height * i as i32);
         }
@@ -300,7 +300,7 @@ impl Flow for MulticolColumnFlow {
         &mut self,
         layout_context: &LayoutContext,
         fragmentation_context: Option<FragmentationContext>,
-    ) -> Option<Arc<dyn Flow>> {
+    ) -> Option<Arc<RwLock<dyn Flow>>> {
         Flow::fragment(&mut self.block_flow, layout_context, fragmentation_context)
     }
 

@@ -3,10 +3,6 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 //! Implements parallel traversals over the DOM and flow trees.
-//!
-//! This code is highly unsafe. Keep this file small and easy to audit.
-
-#![allow(unsafe_code)]
 
 use crate::block::BlockFlow;
 use crate::context::LayoutContext;
@@ -24,36 +20,21 @@ use std::sync::atomic::{AtomicIsize, Ordering};
 /// Traversal chunk size.
 const CHUNK_SIZE: usize = 16;
 
-pub type FlowList = SmallVec<[UnsafeFlow; CHUNK_SIZE]>;
-
-/// Vtable + pointer representation of a Flow trait object.
-#[derive(Clone, Copy, Eq, PartialEq)]
-pub struct UnsafeFlow(*const dyn Flow);
-
-unsafe impl Sync for UnsafeFlow {}
-unsafe impl Send for UnsafeFlow {}
-
-fn null_unsafe_flow() -> UnsafeFlow {
-    UnsafeFlow(ptr::null::<BlockFlow>())
-}
-
-pub fn mut_owned_flow_to_unsafe_flow(flow: *mut FlowRef) -> UnsafeFlow {
-    unsafe { UnsafeFlow(&**flow) }
-}
+pub type FlowList = SmallVec<[FlowRef; CHUNK_SIZE]>;
 
 /// Information that we need stored in each flow.
 pub struct FlowParallelInfo {
     /// The number of children that still need work done.
     pub children_count: AtomicIsize,
     /// The address of the parent flow.
-    pub parent: UnsafeFlow,
+    pub parent: Option<FlowRef>,
 }
 
 impl FlowParallelInfo {
     pub fn new() -> FlowParallelInfo {
         FlowParallelInfo {
             children_count: AtomicIsize::new(0),
-            parent: null_unsafe_flow(),
+            parent: None,
         }
     }
 }
@@ -69,43 +50,40 @@ impl FlowParallelInfo {
 ///
 /// The only communication between siblings is that they both
 /// fetch-and-subtract the parent's children count.
-fn bottom_up_flow(mut unsafe_flow: UnsafeFlow, assign_bsize_traversal: &AssignBSizes) {
+fn bottom_up_flow(mut flow_ref: FlowRef, assign_bsize_traversal: &AssignBSizes) {
     loop {
-        // Get a real flow.
-        let flow: &mut dyn Flow = unsafe { mem::transmute(unsafe_flow) };
+        let parent;
+        {
+            // Get a real flow.
+            let mut flow = flow_ref.write();
 
-        // Perform the appropriate traversal.
-        if assign_bsize_traversal.should_process(flow) {
-            assign_bsize_traversal.process(flow);
-        }
+            if assign_bsize_traversal.should_process(&mut *flow) {
+                assign_bsize_traversal.process(&mut *flow);
+            }
 
-        let base = flow.mut_base();
+            let base = flow.mut_base();
 
-        // Reset the count of children for the next layout traversal.
-        base.parallel
-            .children_count
-            .store(base.children.len() as isize, Ordering::Relaxed);
+            // Reset the count of children for the next layout traversal.
+            base.parallel
+                .children_count
+                .store(base.children.len() as isize, Ordering::Relaxed);
 
-        // Possibly enqueue the parent.
-        let unsafe_parent = base.parallel.parent;
-        if unsafe_parent == null_unsafe_flow() {
-            // We're done!
-            break;
+            // Possibly enqueue the parent.
+            parent = match base.parallel.parent {
+                None => {
+                    // We're done!
+                    break;
+                }
+                Some(ref parent) => (*parent).clone(),
+            };
         }
 
         // No, we're not at the root yet. Then are we the last child
         // of our parent to finish processing? If so, we can continue
         // on with our parent; otherwise, we've gotta wait.
-        let parent: &mut dyn Flow = unsafe { &mut *(unsafe_parent.0 as *mut dyn Flow) };
-        let parent_base = parent.mut_base();
-        if parent_base
-            .parallel
-            .children_count
-            .fetch_sub(1, Ordering::Relaxed) ==
-            1
-        {
+        if parent.write().mut_base().parallel.children_count.fetch_sub(1, Ordering::Relaxed) == 1 {
             // We were the last child of our parent. Reflow our parent.
-            unsafe_flow = unsafe_parent
+            flow_ref = parent
         } else {
             // Stop.
             break;
@@ -114,7 +92,7 @@ fn bottom_up_flow(mut unsafe_flow: UnsafeFlow, assign_bsize_traversal: &AssignBS
 }
 
 fn top_down_flow<'scope>(
-    unsafe_flows: &[UnsafeFlow],
+    flow_refs: &[FlowRef],
     pool: &'scope rayon::ThreadPool,
     scope: &rayon::Scope<'scope>,
     assign_isize_traversal: &'scope AssignISizes,
@@ -122,28 +100,26 @@ fn top_down_flow<'scope>(
 ) {
     let mut discovered_child_flows = FlowList::new();
 
-    for unsafe_flow in unsafe_flows {
+    for flow_ref in flow_refs {
         let mut had_children = false;
-        unsafe {
-            // Get a real flow.
-            let flow: &mut dyn Flow = mem::transmute(*unsafe_flow);
-            flow.mut_base().thread_id = pool.current_thread_index().unwrap() as u8;
 
-            if assign_isize_traversal.should_process(flow) {
-                // Perform the appropriate traversal.
-                assign_isize_traversal.process(flow);
-            }
+        // Get a real flow.
+        let mut flow = flow_ref.write();
 
-            // Possibly enqueue the children.
-            for kid in flow.mut_base().child_iter_mut() {
-                had_children = true;
-                discovered_child_flows.push(UnsafeFlow(kid));
-            }
+        if assign_isize_traversal.should_process(&mut *flow) {
+            // Perform the appropriate traversal.
+            assign_isize_traversal.process(&mut *flow);
+        }
+
+        // Possibly enqueue the children.
+        for kid in flow.mut_base().child_iter() {
+            had_children = true;
+            discovered_child_flows.push(kid.clone());
         }
 
         // If there were no more children, start assigning block-sizes.
         if !had_children {
-            bottom_up_flow(*unsafe_flow, &assign_bsize_traversal)
+            bottom_up_flow((*flow_ref).clone(), &assign_bsize_traversal)
         }
     }
 
@@ -190,7 +166,7 @@ fn top_down_flow<'scope>(
 
 /// Run the main layout passes in parallel.
 pub fn reflow(
-    root: &mut dyn Flow,
+    root: FlowRef,
     profiler_metadata: Option<TimerMetadata>,
     time_profiler_chan: time::ProfilerChan,
     context: &LayoutContext,
@@ -200,7 +176,7 @@ pub fn reflow(
         let bubble_inline_sizes = BubbleISizes {
             layout_context: &context,
         };
-        bubble_inline_sizes.traverse(root);
+        bubble_inline_sizes.traverse(&mut *root.write());
     }
 
     let assign_isize_traversal = &AssignISizes {
@@ -209,7 +185,7 @@ pub fn reflow(
     let assign_bsize_traversal = &AssignBSizes {
         layout_context: &context,
     };
-    let nodes = [UnsafeFlow(root)];
+    let nodes = [root];
 
     queue.install(move || {
         rayon::scope(move |scope| {

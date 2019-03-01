@@ -48,6 +48,7 @@ use crate::text::TextRunScanner;
 use crate::traversal::PostorderNodeMutTraversal;
 use crate::wrapper::{LayoutNodeLayoutData, TextContent, ThreadSafeLayoutNodeHelpers};
 use crate::ServoArc;
+use parking_lot::RwLock;
 use script_layout_interface::wrapper_traits::{
     PseudoElementType, ThreadSafeLayoutElement, ThreadSafeLayoutNode,
 };
@@ -102,7 +103,7 @@ impl ConstructionResult {
         match *self {
             ConstructionResult::None => 0,
             ConstructionResult::ConstructionItem(_) => 0,
-            ConstructionResult::Flow(ref flow_ref, _) => flow_ref.base().debug_id(),
+            ConstructionResult::Flow(ref flow_ref, _) => flow_ref.read().base().debug_id(),
         }
     }
 }
@@ -520,10 +521,10 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
                     mem::replace(&mut fragments.fragments, LinkedList::new()),
                 )
             });
-        let mut inline_flow_ref = FlowRef::new(Arc::new(InlineFlow::from_fragments(
+        let mut inline_flow_ref = FlowRef::new(Arc::new(RwLock::new(InlineFlow::from_fragments(
             scanned_fragments,
             node.style(self.style_context()).writing_mode,
-        )));
+        ))));
 
         // Add all the inline-block fragments as children of the inline flow.
         for inline_block_flow in &inline_block_flows {
@@ -546,8 +547,8 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
         absolute_descendants.push_descendants(fragments.absolute_descendants);
 
         {
-            // FIXME(#6503): Use Arc::get_mut().unwrap() here.
-            let inline_flow = FlowRef::deref_mut(&mut inline_flow_ref).as_mut_inline();
+            let mut inline_flow = inline_flow_ref.write();
+            let inline_flow = inline_flow.as_mut_inline();
             inline_flow.minimum_line_metrics =
                 with_thread_local_font_context(self.layout_context, |font_context| {
                     inline_flow
@@ -577,12 +578,13 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
             ConstructionResult::Flow(kid_flow, kid_abs_descendants) => {
                 // If kid_flow is TableCaptionFlow, kid_flow should be added under
                 // TableWrapperFlow.
-                if flow.is_table() && kid_flow.is_table_caption() {
+                if flow.read().is_table() && kid_flow.read().is_table_caption() {
                     let construction_result =
                         ConstructionResult::Flow(kid_flow, AbsoluteDescendants::new());
                     self.set_flow_construction_result(&kid, construction_result)
                 } else {
                     if !kid_flow
+                        .read()
                         .base()
                         .flags
                         .contains(FlowFlags::IS_ABSOLUTELY_POSITIONED)
@@ -737,12 +739,13 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
         flow.finish();
 
         // Set up the absolute descendants.
-        if flow.is_absolute_containing_block() {
+        if flow.read().is_absolute_containing_block() {
             // This is the containing block for all the absolute descendants.
             flow.set_absolute_descendants(abs_descendants);
 
             abs_descendants = AbsoluteDescendants::new();
             if flow
+                .read()
                 .base()
                 .flags
                 .contains(FlowFlags::IS_ABSOLUTELY_POSITIONED)
@@ -887,9 +890,9 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
         }
 
         let fragment = self.build_fragment_for_block(node);
-        let flow = FlowRef::new(Arc::new(BlockFlow::from_fragment_and_float_kind(
+        let flow = FlowRef::new(Arc::new(RwLock::new(BlockFlow::from_fragment_and_float_kind(
             fragment, float_kind,
-        )));
+        ))));
         self.build_flow_for_block_like(flow, node)
     }
 
@@ -944,6 +947,7 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
                 ConstructionResult::None => {},
                 ConstructionResult::Flow(flow, kid_abs_descendants) => {
                     if !flow
+                        .read()
                         .base()
                         .flags
                         .contains(FlowFlags::IS_ABSOLUTELY_POSITIONED)
@@ -957,11 +961,12 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
                         abs_descendants.push_descendants(kid_abs_descendants);
                     } else {
                         // Push the absolutely-positioned kid as an inline containing block.
-                        let kid_node = flow.as_block().fragment.node;
-                        let kid_pseudo = flow.as_block().fragment.pseudo.clone();
-                        let kid_style = flow.as_block().fragment.style.clone();
-                        let kid_selected_style = flow.as_block().fragment.selected_style.clone();
-                        let kid_restyle_damage = flow.as_block().fragment.restyle_damage;
+                        let kid_node = flow.read().as_block().fragment.node;
+                        let kid_pseudo = flow.read().as_block().fragment.pseudo.clone();
+                        let kid_style = flow.read().as_block().fragment.style.clone();
+                        let kid_selected_style =
+                            flow.read().as_block().fragment.selected_style.clone();
+                        let kid_restyle_damage = flow.read().as_block().fragment.restyle_damage;
                         let fragment_info = SpecificFragmentInfo::InlineAbsolute(
                             InlineAbsoluteFragmentInfo::new(flow),
                         );
@@ -1266,8 +1271,9 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
         for kid in node.children() {
             match kid.get_construction_result() {
                 ConstructionResult::Flow(kid_flow, _) => {
-                    if kid_flow.is_table_caption() &&
+                    if kid_flow.read().is_table_caption() &&
                         kid_flow
+                            .read()
                             .as_block()
                             .fragment
                             .style()
@@ -1291,7 +1297,8 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
         float_kind: Option<FloatKind>,
     ) -> ConstructionResult {
         let fragment = Fragment::new(node, SpecificFragmentInfo::Multicol, self.layout_context);
-        let mut flow = FlowRef::new(Arc::new(MulticolFlow::from_fragment(fragment, float_kind)));
+        let mut flow = FlowRef::new(Arc::new(RwLock::new(MulticolFlow::from_fragment(
+            fragment, float_kind))));
 
         let column_fragment = Fragment::new(
             node,
@@ -1299,7 +1306,8 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
             self.layout_context,
         );
         let column_flow =
-            FlowRef::new(Arc::new(MulticolColumnFlow::from_fragment(column_fragment)));
+            FlowRef::new(Arc::new(RwLock::new(
+                MulticolColumnFlow::from_fragment(column_fragment))));
 
         // First populate the column flow with its children.
         let construction_result = self.build_flow_for_block_like(column_flow, node);
@@ -1313,13 +1321,14 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
 
         // The flow is done.
         flow.finish();
-        if flow.is_absolute_containing_block() {
+        if flow.read().is_absolute_containing_block() {
             // This is the containing block for all the absolute descendants.
             flow.set_absolute_descendants(abs_descendants);
 
             abs_descendants = AbsoluteDescendants::new();
 
             if flow
+                .read()
                 .base()
                 .flags
                 .contains(FlowFlags::IS_ABSOLUTELY_POSITIONED)
@@ -1364,12 +1373,13 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
             SpecificFragmentInfo::TableWrapper,
         );
         let wrapper_float_kind = FloatKind::from_property(float_value);
-        let mut wrapper_flow = FlowRef::new(Arc::new(
+        let mut wrapper_flow = FlowRef::new(Arc::new(RwLock::new(
             TableWrapperFlow::from_fragment_and_float_kind(wrapper_fragment, wrapper_float_kind),
-        ));
+        )));
 
         let table_fragment = Fragment::new(node, SpecificFragmentInfo::Table, self.layout_context);
-        let table_flow = FlowRef::new(Arc::new(TableFlow::from_fragment(table_fragment)));
+        let table_flow = FlowRef::new(Arc::new(RwLock::new(
+            TableFlow::from_fragment(table_fragment))));
 
         // First populate the table flow with its children.
         let construction_result = self.build_flow_for_block_like(table_flow, node);
@@ -1405,13 +1415,14 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
         legalizer.finish(&mut wrapper_flow);
         wrapper_flow.finish();
 
-        if wrapper_flow.is_absolute_containing_block() {
+        if wrapper_flow.read().is_absolute_containing_block() {
             // This is the containing block for all the absolute descendants.
             wrapper_flow.set_absolute_descendants(abs_descendants);
 
             abs_descendants = AbsoluteDescendants::new();
 
             if wrapper_flow
+                .read()
                 .base()
                 .flags
                 .contains(FlowFlags::IS_ABSOLUTELY_POSITIONED)
@@ -1432,7 +1443,7 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
         node: &ConcreteThreadSafeLayoutNode,
     ) -> ConstructionResult {
         let fragment = self.build_fragment_for_block(node);
-        let flow = FlowRef::new(Arc::new(TableCaptionFlow::from_fragment(fragment)));
+        let flow = FlowRef::new(Arc::new(RwLock::new(TableCaptionFlow::from_fragment(fragment))));
         self.build_flow_for_block_like(flow, node)
     }
 
@@ -1443,7 +1454,7 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
         node: &ConcreteThreadSafeLayoutNode,
     ) -> ConstructionResult {
         let fragment = Fragment::new(node, SpecificFragmentInfo::TableRow, self.layout_context);
-        let flow = FlowRef::new(Arc::new(TableRowGroupFlow::from_fragment(fragment)));
+        let flow = FlowRef::new(Arc::new(RwLock::new(TableRowGroupFlow::from_fragment(fragment))));
         self.build_flow_for_block_like(flow, node)
     }
 
@@ -1454,7 +1465,7 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
         node: &ConcreteThreadSafeLayoutNode,
     ) -> ConstructionResult {
         let fragment = Fragment::new(node, SpecificFragmentInfo::TableRow, self.layout_context);
-        let flow = FlowRef::new(Arc::new(TableRowFlow::from_fragment(fragment)));
+        let flow = FlowRef::new(Arc::new(RwLock::new(TableRowFlow::from_fragment(fragment))));
         self.build_flow_for_block_like(flow, node)
     }
 
@@ -1479,9 +1490,9 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
                 !kid.is_content() || position == Position::Absolute || position == Position::Fixed
             });
 
-        let flow = FlowRef::new(Arc::new(
+        let flow = FlowRef::new(Arc::new(RwLock::new(
             TableCellFlow::from_node_fragment_and_visibility_flag(node, fragment, !hide),
-        ));
+        )));
         self.build_flow_for_block_like(flow, node)
     }
 
@@ -1548,20 +1559,21 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
             .get_list()
             .list_style_position
         {
-            ListStylePosition::Outside => Arc::new(ListItemFlow::from_fragments_and_flotation(
-                main_fragment,
-                marker_fragments,
-                flotation,
-            )),
+            ListStylePosition::Outside => Arc::new(RwLock::new(
+                ListItemFlow::from_fragments_and_flotation(
+                    main_fragment,
+                    marker_fragments,
+                    flotation,
+                ))),
             ListStylePosition::Inside => {
                 for marker_fragment in marker_fragments {
                     initial_fragments.fragments.push_back(marker_fragment)
                 }
-                Arc::new(ListItemFlow::from_fragments_and_flotation(
+                Arc::new(RwLock::new(ListItemFlow::from_fragments_and_flotation(
                     main_fragment,
                     vec![],
                     flotation,
-                ))
+                )))
             },
         };
 
@@ -1618,10 +1630,10 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
             let specific = SpecificFragmentInfo::TableColumn(TableColumnFragmentInfo::new(node));
             col_fragments.push(Fragment::new(node, specific, self.layout_context));
         }
-        let mut flow = FlowRef::new(Arc::new(TableColGroupFlow::from_fragments(
+        let mut flow = FlowRef::new(Arc::new(RwLock::new(TableColGroupFlow::from_fragments(
             fragment,
             col_fragments,
-        )));
+        ))));
         flow.finish();
 
         ConstructionResult::Flow(flow, AbsoluteDescendants::new())
@@ -1634,7 +1646,8 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
         float_kind: Option<FloatKind>,
     ) -> ConstructionResult {
         let fragment = self.build_fragment_for_block(node);
-        let flow = FlowRef::new(Arc::new(FlexFlow::from_fragment(fragment, float_kind)));
+        let flow = FlowRef::new(Arc::new(RwLock::new(FlexFlow::from_fragment(fragment,
+                                                                             float_kind))));
         self.build_flow_for_block_like(flow, node)
     }
 
@@ -1694,11 +1707,11 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
                 ConstructionResult::Flow(ref mut flow, _) => {
                     // The node's flow is of the same type and has the same set of children and can
                     // therefore be repaired by simply propagating damage and style to the flow.
-                    if !flow.is_block_flow() {
+                    if !flow.read().is_block_flow() {
                         return false;
                     }
 
-                    let flow = FlowRef::deref_mut(flow);
+                    let mut flow = flow.write();
                     flow.mut_base().restyle_damage.insert(damage);
                     flow.repair_style_and_bubble_inline_sizes(&style);
                     true
@@ -1726,8 +1739,7 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
 
                         match fragment.specific {
                             SpecificFragmentInfo::InlineBlock(ref mut inline_block_fragment) => {
-                                let flow_ref =
-                                    FlowRef::deref_mut(&mut inline_block_fragment.flow_ref);
+                                let mut flow_ref = inline_block_fragment.flow_ref.write();
                                 flow_ref.mut_base().restyle_damage.insert(damage);
                                 // FIXME(pcwalton): Fragment restyle damage too?
                                 flow_ref.repair_style_and_bubble_inline_sizes(&style);
@@ -1735,9 +1747,8 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
                             SpecificFragmentInfo::InlineAbsoluteHypothetical(
                                 ref mut inline_absolute_hypothetical_fragment,
                             ) => {
-                                let flow_ref = FlowRef::deref_mut(
-                                    &mut inline_absolute_hypothetical_fragment.flow_ref,
-                                );
+                                let mut flow_ref = inline_absolute_hypothetical_fragment.flow_ref
+                                                                                        .write();
                                 flow_ref.mut_base().restyle_damage.insert(damage);
                                 // FIXME(pcwalton): Fragment restyle damage too?
                                 flow_ref.repair_style_and_bubble_inline_sizes(&style);
@@ -1745,8 +1756,7 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
                             SpecificFragmentInfo::InlineAbsolute(
                                 ref mut inline_absolute_fragment,
                             ) => {
-                                let flow_ref =
-                                    FlowRef::deref_mut(&mut inline_absolute_fragment.flow_ref);
+                                let mut flow_ref = inline_absolute_fragment.flow_ref.write();
                                 flow_ref.mut_base().restyle_damage.insert(damage);
                                 // FIXME(pcwalton): Fragment restyle damage too?
                                 flow_ref.repair_style_and_bubble_inline_sizes(&style);
@@ -2028,11 +2038,13 @@ impl FlowRef {
     /// Adds a new flow as a child of this flow. Fails if this flow is marked as a leaf.
     fn add_new_child(&mut self, mut new_child: FlowRef) {
         {
-            let kid_base = FlowRef::deref_mut(&mut new_child).mut_base();
-            kid_base.parallel.parent = parallel::mut_owned_flow_to_unsafe_flow(self);
+            let mut kid = new_child.write();
+            let kid_base = kid.mut_base();
+            kid_base.parallel.parent = Some(self.clone());
         }
 
-        let base = FlowRef::deref_mut(self).mut_base();
+        let mut this = self.write();
+        let base = this.mut_base();
         base.children.push_back(new_child);
         let _ = base.parallel.children_count.fetch_add(1, Ordering::Relaxed);
     }
@@ -2045,8 +2057,8 @@ impl FlowRef {
     /// properly computed. (This is not, however, a memory safety problem.)
     fn finish(&mut self) {
         if !opts::get().bubble_inline_sizes_separately {
-            FlowRef::deref_mut(self).bubble_inline_sizes();
-            FlowRef::deref_mut(self)
+            self.write().bubble_inline_sizes();
+            self.write()
                 .mut_base()
                 .restyle_damage
                 .remove(ServoRestyleDamage::BUBBLE_ISIZES);
@@ -2252,7 +2264,7 @@ impl Legalizer {
         E: TElement,
     {
         let parent = self.stack.last_mut().unwrap_or(parent);
-        let (parent_class, child_class) = (parent.class(), child.class());
+        let (parent_class, child_class) = (parent.read().class(), child.read().class());
         match (parent_class, child_class) {
             (FlowClass::TableWrapper, FlowClass::Table) |
             (FlowClass::Table, FlowClass::TableColGroup) |
@@ -2277,7 +2289,8 @@ impl Legalizer {
             (_, FlowClass::TableCell) => false,
 
             (FlowClass::Flex, FlowClass::Inline) => {
-                FlowRef::deref_mut(child)
+                child
+                    .write()
                     .mut_base()
                     .flags
                     .insert(FlowFlags::MARGINS_CANNOT_COLLAPSE);
@@ -2290,12 +2303,13 @@ impl Legalizer {
                 );
 
                 {
-                    let flag = if parent.as_flex().main_mode() == Direction::Inline {
+                    let flag = if parent.read().as_flex().main_mode() == Direction::Inline {
                         FragmentFlags::IS_INLINE_FLEX_ITEM
                     } else {
                         FragmentFlags::IS_BLOCK_FLEX_ITEM
                     };
-                    let block = FlowRef::deref_mut(&mut block_wrapper).as_mut_block();
+                    let mut block = block_wrapper.write();
+                    let block = block.as_mut_block();
                     block.base.flags.insert(FlowFlags::MARGINS_CANNOT_COLLAPSE);
                     block.fragment.flags.insert(flag);
                 }
@@ -2307,12 +2321,13 @@ impl Legalizer {
 
             (FlowClass::Flex, _) => {
                 {
-                    let flag = if parent.as_flex().main_mode() == Direction::Inline {
+                    let flag = if parent.read().as_flex().main_mode() == Direction::Inline {
                         FragmentFlags::IS_INLINE_FLEX_ITEM
                     } else {
                         FragmentFlags::IS_BLOCK_FLEX_ITEM
                     };
-                    let block = FlowRef::deref_mut(child).as_mut_block();
+                    let mut child = child.write();
+                    let block = child.as_mut_block();
                     block.base.flags.insert(FlowFlags::MARGINS_CANNOT_COLLAPSE);
                     block.fragment.flags.insert(flag);
                 }
@@ -2340,7 +2355,7 @@ impl Legalizer {
     where
         E: TElement,
     {
-        let parent_class = self.stack.last().unwrap_or(parent).class();
+        let parent_class = self.stack.last().unwrap_or(parent).read().class();
         match parent_class {
             FlowClass::TableRow => self.push_new_anonymous_flow::<E, _>(
                 context,
@@ -2414,6 +2429,7 @@ impl Legalizer {
         E: TElement,
         F: Flow,
     {
+        let reference = reference.read();
         let reference_block = reference.as_block();
         let mut new_style = reference_block.fragment.style.clone();
         for pseudo in pseudos {
@@ -2425,7 +2441,7 @@ impl Legalizer {
         let fragment = reference_block
             .fragment
             .create_similar_anonymous_fragment(new_style, specific_fragment_info);
-        FlowRef::new(Arc::new(constructor(fragment)))
+        FlowRef::new(Arc::new(RwLock::new(constructor(fragment))))
     }
 }
 

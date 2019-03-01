@@ -52,6 +52,7 @@ use crate::traversal::PreorderFlowTraversal;
 use app_units::{Au, MAX_AU};
 use euclid::{Point2D, Rect, SideOffsets2D, Size2D};
 use gfx_traits::print_tree::PrintTree;
+use parking_lot::RwLock;
 use serde::{Serialize, Serializer};
 use servo_geometry::MaxRect;
 use std::cmp::{max, min};
@@ -848,7 +849,8 @@ impl BlockFlow {
 
         // Shift all kids down (or up, if margins are negative) if necessary.
         if block_start_margin_value != Au(0) {
-            for kid in self.base.child_iter_mut() {
+            for kid in self.base.child_iter() {
+                let mut kid = kid.write();
                 let kid_base = kid.mut_base();
                 kid_base.position.start.b = kid_base.position.start.b + block_start_margin_value
             }
@@ -886,8 +888,8 @@ impl BlockFlow {
     /// Writes in the size of the relative containing block for children. (This information
     /// is also needed to handle RTL.)
     fn propagate_early_absolute_position_info_to_children(&mut self) {
-        for kid in self.base.child_iter_mut() {
-            kid.mut_base().early_absolute_position_info = EarlyAbsolutePositionInfo {
+        for kid in self.base.child_iter() {
+            kid.write().mut_base().early_absolute_position_info = EarlyAbsolutePositionInfo {
                 relative_containing_block_size: self.fragment.content_box().size,
                 relative_containing_block_mode: self.fragment.style().writing_mode,
             }
@@ -921,7 +923,7 @@ impl BlockFlow {
         layout_context: &LayoutContext,
         mut fragmentation_context: Option<FragmentationContext>,
         margins_may_collapse: MarginsMayCollapseFlag,
-    ) -> Option<Arc<dyn Flow>> {
+    ) -> Option<Arc<RwLock<dyn Flow>>> {
         let _scope = layout_debug_scope!("assign_block_size_block_base {:x}", self.base.debug_id());
 
         let mut break_at = None;
@@ -972,7 +974,8 @@ impl BlockFlow {
             let mut floats = self.base.floats.clone();
             let thread_id = self.base.thread_id;
             let (mut had_floated_children, mut had_children_with_clearance) = (false, false);
-            for (child_index, kid) in self.base.child_iter_mut().enumerate() {
+            for (child_index, kid) in self.base.child_iter().enumerate() {
+                let mut kid = kid.write();
                 if kid
                     .base()
                     .flags
@@ -1247,8 +1250,8 @@ impl BlockFlow {
             // We don't need to reflow, but we still need to perform in-order traversals if
             // necessary.
             let thread_id = self.base.thread_id;
-            for kid in self.base.child_iter_mut() {
-                kid.assign_block_size_for_inorder_child_if_necessary(
+            for kid in self.base.child_iter() {
+                kid.write().assign_block_size_for_inorder_child_if_necessary(
                     layout_context,
                     thread_id,
                     content_box,
@@ -1291,7 +1294,8 @@ impl BlockFlow {
                 if let Some(child) = child_remaining {
                     children.push_front_arc(child);
                 }
-                Some(Arc::new(self.clone_with_children(children)) as Arc<dyn Flow>)
+                Some(Arc::new(RwLock::new(self.clone_with_children(children))) as
+                     Arc<RwLock<dyn Flow>>)
             }
         })
     }
@@ -1606,8 +1610,9 @@ impl BlockFlow {
         let mut inline_start_margin_edge = inline_start_content_edge;
         let mut inline_end_margin_edge = inline_end_content_edge;
 
-        let mut iterator = self.base.child_iter_mut().enumerate().peekable();
+        let mut iterator = self.base.child_iter().enumerate().peekable();
         while let Some((i, kid)) = iterator.next() {
+            let mut kid = kid.write();
             kid.mut_base().block_container_explicit_block_size = explicit_content_size;
 
             // The inline-start margin edge of the child flow is at our inline-start content edge,
@@ -1649,7 +1654,7 @@ impl BlockFlow {
             // Call the callback to propagate extra inline size information down to the child. This
             // is currently used for tables.
             callback(
-                kid,
+                &mut *kid,
                 i,
                 content_inline_size,
                 containing_block_mode,
@@ -1815,8 +1820,8 @@ impl BlockFlow {
             // Assign final-final inline sizes on all our children.
             self.assign_inline_sizes(layout_context);
             // Re-run layout on our children.
-            for child in self.base.child_iter_mut() {
-                sequential::reflow(child, layout_context, RelayoutMode::Force);
+            for child in self.base.child_iter() {
+                sequential::reflow(&mut *child.write(), layout_context, RelayoutMode::Force);
             }
             // Assign our final-final block size.
             self.assign_block_size(layout_context);
@@ -1864,6 +1869,7 @@ impl BlockFlow {
             flags.remove(FlowFlags::CONTAINS_TEXT_OR_REPLACED_FRAGMENTS);
             for kid in self.base.children.iter() {
                 if kid
+                    .read()
                     .base()
                     .flags
                     .contains(FlowFlags::CONTAINS_TEXT_OR_REPLACED_FRAGMENTS)
@@ -1884,7 +1890,8 @@ impl BlockFlow {
         let (mut left_float_width, mut right_float_width) = (Au(0), Au(0));
         let (mut left_float_width_accumulator, mut right_float_width_accumulator) = (Au(0), Au(0));
         let mut preferred_inline_size_of_children_without_text_or_replaced_fragments = Au(0);
-        for kid in self.base.child_iter_mut() {
+        for kid in self.base.child_iter() {
+            let mut kid = kid.write();
             if kid
                 .base()
                 .flags
@@ -2258,7 +2265,7 @@ impl Flow for BlockFlow {
         &mut self,
         layout_context: &LayoutContext,
         fragmentation_context: Option<FragmentationContext>,
-    ) -> Option<Arc<dyn Flow>> {
+    ) -> Option<Arc<RwLock<dyn Flow>>> {
         if self.fragment.is_replaced() {
             let _scope = layout_debug_scope!(
                 "assign_replaced_block_size_if_necessary {:x}",
@@ -2459,7 +2466,8 @@ impl Flow for BlockFlow {
         };
 
         // Process children.
-        for kid in self.base.child_iter_mut() {
+        for kid in self.base.child_iter() {
+            let mut kid = kid.write();
             if kid
                 .base()
                 .flags

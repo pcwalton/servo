@@ -205,7 +205,7 @@ fn do_recalc_style_for_animations<E>(
 
     let base = flow.mut_base();
     base.restyle_damage.insert(damage);
-    for kid in base.children.iter_mut() {
-        do_recalc_style_for_animations::<E>(context, kid, animations, invalid_nodes)
+    for kid in base.children.iter() {
+        do_recalc_style_for_animations::<E>(context, &mut *kid.write(), animations, invalid_nodes)
     }
 }

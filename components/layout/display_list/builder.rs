@@ -596,17 +596,17 @@ impl Fragment {
     ) -> bool {
         match self.specific {
             SpecificFragmentInfo::InlineBlock(ref mut block_flow) => {
-                let block_flow = FlowRef::deref_mut(&mut block_flow.flow_ref);
+                let mut block_flow = block_flow.flow_ref.write();
                 block_flow.collect_stacking_contexts(state);
                 true
             },
             SpecificFragmentInfo::InlineAbsoluteHypothetical(ref mut block_flow) => {
-                let block_flow = FlowRef::deref_mut(&mut block_flow.flow_ref);
+                let mut block_flow = block_flow.flow_ref.write();
                 block_flow.collect_stacking_contexts(state);
                 true
             },
             SpecificFragmentInfo::InlineAbsolute(ref mut block_flow) => {
-                let block_flow = FlowRef::deref_mut(&mut block_flow.flow_ref);
+                let mut block_flow = block_flow.flow_ref.write();
                 block_flow.collect_stacking_contexts(state);
                 true
             },

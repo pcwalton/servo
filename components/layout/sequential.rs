@@ -24,9 +24,9 @@ pub fn resolve_generated_content(root: &mut dyn Flow, layout_context: &LayoutCon
 }
 
 /// Run the main layout passes sequentially.
-pub fn reflow(root: &mut dyn Flow, layout_context: &LayoutContext, relayout_mode: RelayoutMode) {
+pub fn reflow(root: FlowRef, layout_context: &LayoutContext, relayout_mode: RelayoutMode) {
     fn doit(
-        flow: &mut dyn Flow,
+        flow: FlowRef,
         assign_inline_sizes: AssignISizes,
         assign_block_sizes: AssignBSizes,
         relayout_mode: RelayoutMode,
@@ -43,8 +43,8 @@ pub fn reflow(root: &mut dyn Flow, layout_context: &LayoutContext, relayout_mode
             assign_inline_sizes.process(flow);
         }
 
-        for kid in flow.mut_base().child_iter_mut() {
-            doit(kid, assign_inline_sizes, assign_block_sizes, relayout_mode);
+        for kid in flow.mut_base().child_iter() {
+            doit(&mut *kid.write(), assign_inline_sizes, assign_block_sizes, relayout_mode);
         }
 
         if assign_block_sizes.should_process(flow) {
@@ -94,7 +94,8 @@ pub fn iterate_through_flow_tree_fragment_border_boxes(
     ) {
         flow.iterate_through_fragment_border_boxes(iterator, level, stacking_context_position);
 
-        for kid in flow.mut_base().child_iter_mut() {
+        for kid in flow.mut_base().child_iter() {
+            let mut kid = kid.write();
             let mut stacking_context_position = *stacking_context_position;
             if kid.is_block_flow() && kid.as_block().fragment.establishes_stacking_context() {
                 stacking_context_position =
@@ -113,7 +114,7 @@ pub fn iterate_through_flow_tree_fragment_border_boxes(
                         )
                 }
             }
-            doit(kid, level + 1, iterator, &stacking_context_position);
+            doit(&mut *kid, level + 1, iterator, &stacking_context_position);
         }
     }
 
@@ -129,8 +130,8 @@ pub fn store_overflow(layout_context: &LayoutContext, flow: &mut dyn Flow) {
         return;
     }
 
-    for kid in flow.mut_base().child_iter_mut() {
-        store_overflow(layout_context, kid);
+    for kid in flow.mut_base().child_iter() {
+        store_overflow(layout_context, &mut *kid.write());
     }
 
     flow.store_overflow(layout_context);
@@ -153,18 +154,19 @@ pub fn guess_float_placement(flow: &mut dyn Flow) {
     }
 
     let mut floats_in = SpeculatedFloatPlacement::compute_floats_in_for_first_child(flow);
-    for kid in flow.mut_base().child_iter_mut() {
+    for kid in flow.mut_base().child_iter() {
+        let mut kid = kid.write();
         if kid
             .base()
             .flags
             .contains(FlowFlags::IS_ABSOLUTELY_POSITIONED)
         {
             // Do not propagate floats in or out, but do propogate between kids.
-            guess_float_placement(kid);
+            guess_float_placement(&mut *kid);
         } else {
-            floats_in.compute_floats_in(kid);
+            floats_in.compute_floats_in(&mut *kid);
             kid.mut_base().speculated_float_placement_in = floats_in;
-            guess_float_placement(kid);
+            guess_float_placement(&mut *kid);
             floats_in = kid.base().speculated_float_placement_out;
         }
     }

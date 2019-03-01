@@ -15,7 +15,8 @@ use crate::flow::{
     BaseFlow, EarlyAbsolutePositionInfo, Flow, FlowClass, GetBaseFlow, ImmutableFlowUtils,
     OpaqueFlow,
 };
-use crate::flow_list::{FlowListIterator, MutFlowListIterator};
+use crate::flow_list::FlowListIterator;
+use crate::flow_ref::FlowRef;
 use crate::fragment::{Fragment, FragmentBorderBoxIterator, Overflow};
 use crate::layout_debug;
 use crate::model::{IntrinsicISizes, IntrinsicISizesContribution, MaybeAuto};
@@ -26,6 +27,7 @@ use crate::table_wrapper::TableLayout;
 use app_units::Au;
 use euclid::Point2D;
 use gfx_traits::print_tree::PrintTree;
+use servo_arc::Arc;
 use std::{cmp, fmt};
 use style::computed_values::{border_collapse, border_spacing, table_layout};
 use style::context::SharedStyleContext;
@@ -219,12 +221,13 @@ impl TableFlow {
             .block_flow
             .base
             .child_iter()
-            .filter(|kid| kid.is_table_colgroup())
+            .filter(|kid| kid.read().is_table_colgroup())
         {
             // XXXManishearth these as_foo methods should return options
             // so that we can filter_map
+            let group = group.read();
             let group = group.as_table_colgroup();
-            let colgroup_style = group.fragment.as_ref().map(|f| f.style());
+            let colgroup_style = group.fragment.as_ref().map(|f| f.style.clone());
 
             // The colgroup's span attribute is only relevant when
             // it has no children
@@ -245,8 +248,8 @@ impl TableFlow {
                     // XXXManishearth Arc-cloning colgroup_style is suboptimal
                     styles.push(ColumnStyle {
                         span: col.column_span(),
-                        colgroup_style: colgroup_style,
-                        col_style: Some(col.style()),
+                        colgroup_style: colgroup_style.clone(),
+                        col_style: Some(col.style.clone()),
                     })
                 }
             }
@@ -294,9 +297,10 @@ impl Flow for TableFlow {
         for kid in self
             .block_flow
             .base
-            .child_iter_mut()
-            .filter(|kid| kid.is_table_colgroup())
+            .child_iter()
+            .filter(|kid| kid.read().is_table_colgroup())
         {
+            let mut kid = kid.write();
             for specified_inline_size in &kid.as_mut_table_colgroup().inline_sizes {
                 self.column_intrinsic_inline_sizes
                     .push(ColumnIntrinsicInlineSize {
@@ -355,8 +359,9 @@ impl Flow for TableFlow {
         {
             let mut iterator = TableRowIterator::new(&mut self.block_flow.base).peekable();
             while let Some(row) = iterator.next() {
+                let mut row = row.write();
                 TableFlow::update_column_inline_sizes_for_row(
-                    row,
+                    row.as_table_row(),
                     &mut self.column_intrinsic_inline_sizes,
                     &mut computation,
                     first_row,
@@ -367,10 +372,12 @@ impl Flow for TableFlow {
                     let next_index_and_sibling = iterator.peek();
                     let next_collapsed_borders_in_block_direction = match next_index_and_sibling {
                         Some(next_sibling) => NextBlockCollapsedBorders::FromNextRow(
-                            &next_sibling
+                            next_sibling
+                                .read()
                                 .as_table_row()
                                 .preliminary_collapsed_borders
-                                .block_start,
+                                .block_start
+                                .clone(),
                         ),
                         None => NextBlockCollapsedBorders::FromTable(CollapsedBorder::block_end(
                             &*self.block_flow.fragment.style,
@@ -378,7 +385,7 @@ impl Flow for TableFlow {
                         )),
                     };
                     perform_border_collapse_for_row(
-                        row,
+                        row.as_mut_table_row(),
                         table_inline_collapsed_borders.as_ref().unwrap(),
                         previous_collapsed_block_end_borders,
                         next_collapsed_borders_in_block_direction,
@@ -387,7 +394,7 @@ impl Flow for TableFlow {
                     );
                     previous_collapsed_block_end_borders =
                         PreviousBlockCollapsedBorders::FromPreviousRow(
-                            row.final_collapsed_borders.block_end.clone(),
+                            row.as_table_row().final_collapsed_borders.block_end.clone(),
                         );
                 }
                 first_row = false
@@ -587,10 +594,12 @@ impl Flow for TableFlow {
         self.block_flow
             .build_display_list_for_block(state, border_painting_mode);
 
+        /*
         let iter = TableCellStyleIterator::new(&self);
         for style in iter {
             style.build_display_list(state)
         }
+        */
     }
 
     fn collect_stacking_contexts(&mut self, state: &mut StackingContextCollectionState) {
@@ -632,10 +641,10 @@ impl Flow for TableFlow {
 }
 
 #[derive(Debug)]
-struct ColumnStyle<'table> {
+struct ColumnStyle {
     span: u32,
-    colgroup_style: Option<&'table ComputedValues>,
-    col_style: Option<&'table ComputedValues>,
+    colgroup_style: Option<Arc<ComputedValues>>,
+    col_style: Option<Arc<ComputedValues>>,
 }
 
 impl fmt::Debug for TableFlow {
@@ -832,7 +841,7 @@ fn perform_border_collapse_for_row(
     {
         let next_block = next_block.push_or_set(i, *this_block_border);
         match next_block_borders {
-            NextBlockCollapsedBorders::FromNextRow(next_block_borders) => {
+            NextBlockCollapsedBorders::FromNextRow(ref next_block_borders) => {
                 if next_block_borders.len() > i {
                     next_block.combine(&next_block_borders[i])
                 }
@@ -895,7 +904,8 @@ impl TableLikeFlow for BlockFlow {
             // First pass: Compute block-direction border spacings
             // XXXManishearth this can be done in tandem with the second pass,
             // provided we never hit any rowspan cases
-            for kid in self.base.child_iter_mut() {
+            for kid in self.base.child_iter() {
+                let kid = kid.read();
                 if kid.is_table_row() {
                     // skip the first row, it is accounted for
                     if first {
@@ -921,7 +931,8 @@ impl TableLikeFlow for BlockFlow {
             // Second pass: Compute row block sizes
             // [expensive: iterates over cells]
             let mut i = 0;
-            for kid in self.base.child_iter_mut() {
+            for kid in self.base.child_iter() {
+                let mut kid = kid.write();
                 if kid.is_table_row() {
                     let size = kid.as_mut_table_row().compute_block_size_table_row_base(
                         layout_context,
@@ -944,7 +955,8 @@ impl TableLikeFlow for BlockFlow {
             // At this point, `current_block_offset` is at the content edge of our box. Now iterate
             // over children.
             let mut i = 0;
-            for kid in self.base.child_iter_mut() {
+            for kid in self.base.child_iter() {
+                let mut kid = kid.write();
                 if kid.is_table_row() {
                     has_rows = true;
                     let row = kid.as_mut_table_row();
@@ -1006,8 +1018,8 @@ impl TableLikeFlow for BlockFlow {
             // Fourth pass: Assign absolute position info
             // Write in the size of the relative containing block for children. (This information
             // is also needed to handle RTL.)
-            for kid in self.base.child_iter_mut() {
-                kid.mut_base().early_absolute_position_info = EarlyAbsolutePositionInfo {
+            for kid in self.base.child_iter() {
+                kid.write().mut_base().early_absolute_position_info = EarlyAbsolutePositionInfo {
                     relative_containing_block_size: self.fragment.content_box().size,
                     relative_containing_block_mode: self.fragment.style().writing_mode,
                 };
@@ -1034,8 +1046,8 @@ enum PreviousBlockCollapsedBorders {
     FromTable(CollapsedBorder),
 }
 
-enum NextBlockCollapsedBorders<'a> {
-    FromNextRow(&'a [CollapsedBorder]),
+enum NextBlockCollapsedBorders {
+    FromNextRow(Vec<CollapsedBorder>),
     FromTable(CollapsedBorder),
 }
 
@@ -1043,7 +1055,7 @@ enum NextBlockCollapsedBorders<'a> {
 /// provides the Fragment for rowgroups if any
 struct TableRowAndGroupIterator<'a> {
     kids: FlowListIterator<'a>,
-    group: Option<(&'a Fragment, FlowListIterator<'a>)>,
+    group: Option<(FlowRef /* rowgroup */, usize /* row */)>,
 }
 
 impl<'a> TableRowAndGroupIterator<'a> {
@@ -1056,72 +1068,28 @@ impl<'a> TableRowAndGroupIterator<'a> {
 }
 
 impl<'a> Iterator for TableRowAndGroupIterator<'a> {
-    type Item = (Option<&'a Fragment>, &'a TableRowFlow);
+    type Item = (Option<FlowRef> /* rowgroup */, FlowRef /* row */);
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         // If we're inside a rowgroup, iterate through the rowgroup's children.
         if let Some(ref mut group) = self.group {
-            if let Some(grandkid) = group.1.next() {
-                return Some((Some(group.0), grandkid.as_table_row()));
+            // FIXME(pcwalton): O(n^2)!
+            if let Some(grandkid) = group.0.read().base().child_iter().skip(group.1).next() {
+                group.1 += 1;
+                return Some((Some(group.0.clone()), grandkid.clone()));
             }
         }
         // Otherwise, iterate through the table's children.
         self.group = None;
         match self.kids.next() {
-            Some(kid) => {
+            Some(kid_ref) => {
+                let kid = kid_ref.read();
                 if kid.is_table_rowgroup() {
                     let rowgroup = kid.as_table_rowgroup();
-                    let iter = rowgroup.block_flow.base.child_iter();
-                    self.group = Some((&rowgroup.block_flow.fragment, iter));
+                    self.group = Some((kid_ref.clone(), 0));
                     self.next()
                 } else if kid.is_table_row() {
-                    Some((None, kid.as_table_row()))
-                } else {
-                    self.next() // Skip children that are not rows or rowgroups
-                }
-            },
-            None => None,
-        }
-    }
-}
-
-/// Iterator over all the rows of a table, which also
-/// provides the Fragment for rowgroups if any
-struct MutTableRowAndGroupIterator<'a> {
-    kids: MutFlowListIterator<'a>,
-    group: Option<(&'a Fragment, MutFlowListIterator<'a>)>,
-}
-
-impl<'a> MutTableRowAndGroupIterator<'a> {
-    fn new(base: &'a mut BaseFlow) -> Self {
-        MutTableRowAndGroupIterator {
-            kids: base.child_iter_mut(),
-            group: None,
-        }
-    }
-}
-
-impl<'a> Iterator for MutTableRowAndGroupIterator<'a> {
-    type Item = (Option<&'a Fragment>, &'a mut TableRowFlow);
-    #[inline]
-    fn next(&mut self) -> Option<Self::Item> {
-        // If we're inside a rowgroup, iterate through the rowgroup's children.
-        if let Some(ref mut group) = self.group {
-            if let Some(grandkid) = group.1.next() {
-                return Some((Some(group.0), grandkid.as_mut_table_row()));
-            }
-        }
-        // Otherwise, iterate through the table's children.
-        self.group = None;
-        match self.kids.next() {
-            Some(kid) => {
-                if kid.is_table_rowgroup() {
-                    let rowgroup = kid.as_mut_table_rowgroup();
-                    let iter = rowgroup.block_flow.base.child_iter_mut();
-                    self.group = Some((&rowgroup.block_flow.fragment, iter));
-                    self.next()
-                } else if kid.is_table_row() {
-                    Some((None, kid.as_mut_table_row()))
+                    Some((None, kid_ref.clone()))
                 } else {
                     self.next() // Skip children that are not rows or rowgroups
                 }
@@ -1132,22 +1100,23 @@ impl<'a> Iterator for MutTableRowAndGroupIterator<'a> {
 }
 
 /// Iterator over all the rows of a table
-struct TableRowIterator<'a>(MutTableRowAndGroupIterator<'a>);
+struct TableRowIterator<'a>(TableRowAndGroupIterator<'a>);
 
 impl<'a> TableRowIterator<'a> {
     fn new(base: &'a mut BaseFlow) -> Self {
-        TableRowIterator(MutTableRowAndGroupIterator::new(base))
+        TableRowIterator(TableRowAndGroupIterator::new(base))
     }
 }
 
 impl<'a> Iterator for TableRowIterator<'a> {
-    type Item = &'a mut TableRowFlow;
+    type Item = FlowRef;
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        self.0.next().map(|n| n.1)
+        self.0.next().map(|n| n.1.clone())
     }
 }
 
+/*
 /// An iterator over table cells, yielding all relevant style objects
 /// for each cell
 ///
@@ -1161,9 +1130,9 @@ struct TableCellStyleIterator<'table> {
 }
 
 struct TableCellStyleIteratorRowInfo<'table> {
-    row: &'table TableRowFlow,
-    rowgroup: Option<&'table Fragment>,
-    cell_iterator: FlowListIterator<'table>,
+    row: FlowRef,
+    rowgroup: Option<FlowRef>,
+    cell_iterator: Option<usize>,
 }
 
 impl<'table> TableCellStyleIterator<'table> {
@@ -1189,7 +1158,7 @@ impl<'table> TableCellStyleIterator<'table> {
 }
 
 struct TableCellStyleInfo<'table> {
-    cell: &'table TableCellFlow,
+    cell: FlowRef,
     colgroup_style: Option<&'table ComputedValues>,
     col_style: Option<&'table ComputedValues>,
     rowgroup_style: Option<&'table ComputedValues>,
@@ -1376,3 +1345,4 @@ impl<'table> TableCellStyleInfo<'table> {
             .build_display_list_for_block_no_damage(state, border_painting_mode)
     }
 }
+*/

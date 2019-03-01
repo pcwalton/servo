@@ -31,7 +31,7 @@ use crate::display_list::items::ClippingAndScrolling;
 use crate::display_list::{DisplayListBuildState, StackingContextCollectionState};
 use crate::flex::FlexFlow;
 use crate::floats::{Floats, SpeculatedFloatPlacement};
-use crate::flow_list::{FlowList, FlowListIterator, MutFlowListIterator};
+use crate::flow_list::{FlowList, FlowListIterator};
 use crate::flow_ref::{FlowRef, WeakFlowRef};
 use crate::fragment::{CoordinateSystem, Fragment, FragmentBorderBoxIterator, Overflow};
 use crate::inline::InlineFlow;
@@ -50,6 +50,7 @@ use euclid::{Point2D, Rect, Size2D, Vector2D};
 use gfx_traits::print_tree::PrintTree;
 use gfx_traits::StackingContextId;
 use num_traits::cast::FromPrimitive;
+use parking_lot::{RwLock, RwLockWriteGuard};
 use serde::ser::{Serialize, SerializeStruct, Serializer};
 use servo_geometry::{au_rect_to_f32_rect, f32_rect_to_au_rect, MaxRect};
 use std::fmt;
@@ -256,13 +257,13 @@ pub trait Flow: HasBaseFlow + fmt::Debug + Sync + Send + 'static {
         &mut self,
         layout_context: &LayoutContext,
         _fragmentation_context: Option<FragmentationContext>,
-    ) -> Option<Arc<dyn Flow>> {
+    ) -> Option<Arc<RwLock<dyn Flow>>> {
         fn recursive_assign_block_size<F: ?Sized + Flow + GetBaseFlow>(
             flow: &mut F,
             ctx: &LayoutContext,
         ) {
-            for child in flow.mut_base().child_iter_mut() {
-                recursive_assign_block_size(child, ctx)
+            for child in flow.mut_base().child_iter() {
+                recursive_assign_block_size(&mut *child.write(), ctx)
             }
             flow.assign_block_size(ctx);
         }
@@ -398,8 +399,8 @@ pub trait Flow: HasBaseFlow + fmt::Debug + Sync + Send + 'static {
         let mut overflow = self.compute_overflow();
         match self.class() {
             FlowClass::Block | FlowClass::TableCaption | FlowClass::TableCell => {
-                for kid in self.mut_base().children.iter_mut() {
-                    overflow.union(&kid.get_overflow_in_parent_coordinates());
+                for kid in self.mut_base().children.iter() {
+                    overflow.union(&kid.read().get_overflow_in_parent_coordinates());
                 }
             },
             _ => {},
@@ -814,11 +815,9 @@ pub struct AbsoluteDescendantIter<'a> {
 }
 
 impl<'a> Iterator for AbsoluteDescendantIter<'a> {
-    type Item = &'a mut dyn Flow;
-    fn next(&mut self) -> Option<&'a mut dyn Flow> {
-        self.iter
-            .next()
-            .map(|info| FlowRef::deref_mut(&mut info.flow))
+    type Item = &'a FlowRef;
+    fn next(&mut self) -> Option<&'a FlowRef> {
+        self.iter.next().map(|info| &info.flow)
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
@@ -1196,10 +1195,6 @@ impl BaseFlow {
         self.children.iter()
     }
 
-    pub fn child_iter_mut(&mut self) -> MutFlowListIterator {
-        self.children.iter_mut()
-    }
-
     pub fn debug_id(&self) -> usize {
         let p = self as *const _;
         p as usize
@@ -1213,8 +1208,8 @@ impl BaseFlow {
         &mut self,
         state: &mut StackingContextCollectionState,
     ) {
-        for kid in self.children.iter_mut() {
-            kid.collect_stacking_contexts(state);
+        for kid in self.children.iter() {
+            kid.write().collect_stacking_contexts(state);
         }
     }
 
@@ -1381,7 +1376,7 @@ impl<'a> ImmutableFlowUtils for &'a dyn Flow {
         print_tree.new_level(format!("{:?}", self));
         self.print_extra_flow_children(print_tree);
         for kid in self.base().child_iter() {
-            kid.print_with_tree(print_tree);
+            kid.read().print_with_tree(print_tree);
         }
         print_tree.end_level();
     }
@@ -1401,6 +1396,7 @@ impl<'a> ImmutableFlowUtils for &'a dyn Flow {
 
     fn baseline_offset_of_last_line_box_in_flow(self) -> Option<Au> {
         for kid in self.base().children.iter().rev() {
+            let kid = kid.read();
             if kid.is_inline_flow() {
                 if let Some(baseline_offset) = kid.as_inline().baseline_offset_of_last_line() {
                     return Some(kid.base().position.start.b + baseline_offset);
@@ -1439,13 +1435,15 @@ impl MutableOwnedFlowUtils for FlowRef {
     /// flows. This is enforced by the fact that we have a mutable `FlowRef`, which only flow
     /// construction is allowed to possess.
     fn set_absolute_descendants(&mut self, abs_descendants: AbsoluteDescendants) {
-        let this = self.clone();
-        let base = FlowRef::deref_mut(self).mut_base();
+        let this_ref = self.clone();
+        let mut this = this_ref.write();
+        let base = this.mut_base();
         base.abs_descendants = abs_descendants;
         for descendant_link in base.abs_descendants.descendant_links.iter_mut() {
             debug_assert!(!descendant_link.has_reached_containing_block);
-            let descendant_base = FlowRef::deref_mut(&mut descendant_link.flow).mut_base();
-            descendant_base.absolute_cb.set(this.clone());
+            let mut descendant = descendant_link.flow.write();
+            let descendant_base = descendant.mut_base();
+            descendant_base.absolute_cb.set(this_ref.clone());
         }
     }
 
@@ -1473,12 +1471,14 @@ impl MutableOwnedFlowUtils for FlowRef {
             .descendant_links
             .retain(|descendant| !descendant.has_reached_containing_block);
 
-        let this = self.clone();
-        let base = FlowRef::deref_mut(self).mut_base();
+        let this_ref = self.clone();
+        let mut this = self.write();
+        let base = this.mut_base();
         base.abs_descendants = applicable_absolute_descendants;
         for descendant_link in base.abs_descendants.iter() {
-            let descendant_base = descendant_link.mut_base();
-            descendant_base.absolute_cb.set(this.clone());
+            let mut descendant = descendant_link.write();
+            let descendant_base = descendant.mut_base();
+            descendant_base.absolute_cb.set(this_ref.clone());
         }
     }
 }
@@ -1515,6 +1515,7 @@ impl ContainingBlockLink {
             ),
             Some(ref link) => {
                 let flow = link.upgrade().unwrap();
+                let flow = flow.read();
                 flow.generated_containing_block_size(for_flow)
             },
         }
@@ -1532,11 +1533,12 @@ impl ContainingBlockLink {
             ),
             Some(ref link) => {
                 let flow = link.upgrade().unwrap();
-                if flow.is_block_like() {
-                    flow.as_block()
+                if flow.read().is_block_like() {
+                    flow.read()
+                        .as_block()
                         .explicit_block_containing_size(shared_context)
-                } else if flow.is_inline_flow() {
-                    Some(flow.as_inline().minimum_line_metrics.space_above_baseline)
+                } else if flow.read().is_inline_flow() {
+                    Some(flow.read().as_inline().minimum_line_metrics.space_above_baseline)
                 } else {
                     None
                 }

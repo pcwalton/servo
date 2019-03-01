@@ -63,7 +63,7 @@ impl Scope {
     pub fn new(name: String) -> Scope {
         STATE_KEY.with(|ref r| {
             if let Some(ref mut state) = *r.borrow_mut() {
-                let flow_trace = to_value(&state.flow_root.base()).unwrap();
+                let flow_trace = to_value(&state.flow_root.read().base()).unwrap();
                 let data = Box::new(ScopeData::new(name.clone(), flow_trace));
                 state.scope_stack.push(data);
             }
@@ -78,7 +78,7 @@ impl Drop for Scope {
         STATE_KEY.with(|ref r| {
             if let Some(ref mut state) = *r.borrow_mut() {
                 let mut current_scope = state.scope_stack.pop().unwrap();
-                current_scope.post = to_value(&state.flow_root.base()).unwrap();
+                current_scope.post = to_value(&state.flow_root.read().base()).unwrap();
                 let previous_scope = state.scope_stack.last_mut().unwrap();
                 previous_scope.children.push(current_scope);
             }
@@ -100,7 +100,7 @@ pub fn begin_trace(flow_root: FlowRef) {
     assert!(STATE_KEY.with(|ref r| r.borrow().is_none()));
 
     STATE_KEY.with(|ref r| {
-        let flow_trace = to_value(&flow_root.base()).unwrap();
+        let flow_trace = to_value(&flow_root.read().base()).unwrap();
         let state = State {
             scope_stack: vec![Box::new(ScopeData::new("root".to_owned(), flow_trace))],
             flow_root: flow_root.clone(),
@@ -116,7 +116,7 @@ pub fn end_trace(generation: u32) {
     let mut thread_state = STATE_KEY.with(|ref r| r.borrow_mut().take().unwrap());
     assert_eq!(thread_state.scope_stack.len(), 1);
     let mut root_scope = thread_state.scope_stack.pop().unwrap();
-    root_scope.post = to_value(&thread_state.flow_root.base()).unwrap();
+    root_scope.post = to_value(&thread_state.flow_root.read().base()).unwrap();
 
     let result = to_string(&root_scope).unwrap();
     let mut file = File::create(format!("layout_trace-{}.json", generation)).unwrap();

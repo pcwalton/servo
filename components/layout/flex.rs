@@ -426,18 +426,18 @@ impl FlexFlow {
         let mut margin_count = 0;
 
         let items = &mut self.items[start..];
-        let mut children = self.block_flow.base.children.random_access_mut();
+        let mut children = self.block_flow.base.children.random_access();
         for item in items {
-            let kid = children.get(item.index);
-            item.init_sizes(kid, container_size, self.main_mode);
-            let outer_main_size = item.outer_main_size(kid, self.main_mode);
+            let mut kid = children.get(item.index).write();
+            item.init_sizes(&mut *kid, container_size, self.main_mode);
+            let outer_main_size = item.outer_main_size(&*kid, self.main_mode);
             if total_line_size + outer_main_size > container_size &&
                 end != start &&
                 self.is_wrappable
             {
                 break;
             }
-            margin_count += item.auto_margin_count(kid, self.main_mode);
+            margin_count += item.auto_margin_count(&*kid, self.main_mode);
             total_line_size += outer_main_size;
             end += 1;
         }
@@ -457,7 +457,8 @@ impl FlexFlow {
 
         let mut computation = self.block_flow.fragment.compute_intrinsic_inline_sizes();
         if !fixed_width {
-            for kid in self.block_flow.base.children.iter_mut() {
+            for kid in self.block_flow.base.children.iter() {
+                let mut kid = kid.write();
                 let base = kid.mut_base();
                 let is_absolutely_positioned =
                     base.flags.contains(FlowFlags::IS_ABSOLUTELY_POSITIONED);
@@ -483,7 +484,8 @@ impl FlexFlow {
 
         let mut computation = self.block_flow.fragment.compute_intrinsic_inline_sizes();
         if !fixed_width {
-            for kid in self.block_flow.base.children.iter_mut() {
+            for kid in self.block_flow.base.children.iter() {
+                let mut kid = kid.write();
                 let base = kid.mut_base();
                 let is_absolutely_positioned =
                     base.flags.contains(FlowFlags::IS_ABSOLUTELY_POSITIONED);
@@ -529,9 +531,10 @@ impl FlexFlow {
             AxisSize::Infinite => content_inline_size,
         };
 
-        let mut children = self.block_flow.base.children.random_access_mut();
+        let mut children = self.block_flow.base.children.random_access();
         for kid in &mut self.items {
-            let kid_base = children.get(kid.index).mut_base();
+            let mut kid = children.get(kid.index).write();
+            let kid_base = kid.mut_base();
             kid_base.block_container_explicit_block_size = container_block_size;
             if kid_base
                 .flags
@@ -648,9 +651,10 @@ impl FlexFlow {
                 _ => {},
             }
 
-            let mut children = self.block_flow.base.children.random_access_mut();
-            for item in items.iter_mut() {
-                let block = children.get(item.index).as_mut_block();
+            let mut children = self.block_flow.base.children.random_access();
+            for item in items.iter() {
+                let mut block = children.get(item.index).write();
+                let block = block.as_mut_block();
 
                 block.base.block_container_writing_mode = container_mode;
                 block.base.block_container_inline_size = inline_size;
@@ -699,9 +703,10 @@ impl FlexFlow {
             self.block_flow.fragment.border_box.size.block
         };
 
-        let mut children = self.block_flow.base.children.random_access_mut();
+        let mut children = self.block_flow.base.children.random_access();
         for item in &mut self.items {
-            let base = children.get(item.index).mut_base();
+            let mut item = children.get(item.index).write();
+            let base = item.mut_base();
             if !self.main_reverse {
                 base.position.start.b = cur_b;
                 cur_b = cur_b + base.position.size.block;
@@ -727,10 +732,11 @@ impl FlexFlow {
         let mut line_interval = Au(0);
 
         {
-            let mut children = self.block_flow.base.children.random_access_mut();
+            let mut children = self.block_flow.base.children.random_access();
             for line in self.lines.iter_mut() {
                 for item in &self.items[line.range.clone()] {
-                    let fragment = &children.get(item.index).as_block().fragment;
+                    let item = children.get(item.index).read();
+                    let fragment = &item.as_block().fragment;
                     line.cross_size = max(
                         line.cross_size,
                         fragment.border_box.size.block + fragment.margin.block_start_end(),
@@ -792,10 +798,11 @@ impl FlexFlow {
             }
         }
 
-        let mut children = self.block_flow.base.children.random_access_mut();
+        let mut children = self.block_flow.base.children.random_access();
         for line in &self.lines {
             for item in self.items[line.range.clone()].iter_mut() {
-                let block = children.get(item.index).as_mut_block();
+                let mut block = children.get(item.index).write();
+                let block: &mut BlockFlow = block.as_mut_block();
                 let auto_margin_count = item.auto_margin_count(block, Direction::Block);
                 let margin = block.fragment.style().logical_margin();
 
@@ -909,12 +916,13 @@ impl Flow for FlexFlow {
             .enumerate()
             .filter(|&(_, flow)| {
                 !flow
+                    .read()
                     .as_block()
                     .base
                     .flags
                     .contains(FlowFlags::IS_ABSOLUTELY_POSITIONED)
             })
-            .map(|(index, flow)| FlexItem::new(index, flow))
+            .map(|(index, flow)| FlexItem::new(index, &*flow.read()))
             .collect();
 
         items.sort_by_key(|item| item.order);

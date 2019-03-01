@@ -113,8 +113,8 @@ pub trait PreorderFlowTraversal {
         if self.should_process(flow) {
             self.process(flow);
         }
-        for kid in flow.mut_base().child_iter_mut() {
-            self.traverse(kid);
+        for kid in flow.mut_base().child_iter() {
+            self.traverse(&mut *kid.write());
         }
     }
 
@@ -129,7 +129,7 @@ pub trait PreorderFlowTraversal {
             self.process(flow);
         }
         for descendant_link in flow.mut_base().abs_descendants.iter() {
-            self.traverse_absolute_flows(descendant_link)
+            self.traverse_absolute_flows(&mut *descendant_link.write())
         }
     }
 }
@@ -148,8 +148,8 @@ pub trait PostorderFlowTraversal {
 
     /// Traverses the tree in postorder.
     fn traverse(&self, flow: &mut dyn Flow) {
-        for kid in flow.mut_base().child_iter_mut() {
-            self.traverse(kid);
+        for kid in flow.mut_base().child_iter() {
+            self.traverse(&mut *kid.write());
         }
         if self.should_process(flow) {
             self.process(flow);
@@ -174,8 +174,8 @@ pub trait InorderFlowTraversal {
             return;
         }
         self.process(flow, level);
-        for kid in flow.mut_base().child_iter_mut() {
-            self.traverse(kid, level + 1);
+        for kid in flow.mut_base().child_iter() {
+            self.traverse(&mut *kid.write(), level + 1);
         }
     }
 }
@@ -346,8 +346,8 @@ impl<'a> BuildDisplayList<'a> {
             .restyle_damage
             .remove(ServoRestyleDamage::REPAINT);
 
-        for kid in flow.mut_base().child_iter_mut() {
-            self.traverse(kid);
+        for kid in flow.mut_base().child_iter() {
+            self.traverse(&mut *kid.write());
         }
 
         self.state.current_stacking_context_id = parent_stacking_context_id;

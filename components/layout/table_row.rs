@@ -12,7 +12,7 @@ use crate::display_list::{
 use crate::flow::{
     EarlyAbsolutePositionInfo, Flow, FlowClass, GetBaseFlow, ImmutableFlowUtils, OpaqueFlow,
 };
-use crate::flow_list::MutFlowListIterator;
+use crate::flow_list::FlowListIterator;
 use crate::fragment::{Fragment, FragmentBorderBoxIterator, Overflow};
 use crate::layout_debug;
 use crate::table::{ColumnComputedInlineSize, ColumnIntrinsicInlineSize, InternalTable, VecExt};
@@ -150,7 +150,8 @@ impl TableRowFlow {
             self.block_flow.fragment.margin;
 
         let mut col = 0;
-        for kid in self.block_flow.base.child_iter_mut() {
+        for kid in self.block_flow.base.child_iter() {
+            let mut kid = kid.write();
             include_sizes_from_previous_rows(
                 &mut col,
                 &self.incoming_rowspan,
@@ -225,7 +226,8 @@ impl TableRowFlow {
     ) {
         // Assign the block-size of kid fragments, which is the same value as own block-size.
         let block_size = sizes[index].size;
-        for kid in self.block_flow.base.child_iter_mut() {
+        for kid in self.block_flow.base.child_iter() {
+            let mut kid = kid.write();
             let child_table_cell = kid.as_mut_table_cell();
             let block_size = if child_table_cell.row_span != 1 {
                 let mut row_span = child_table_cell.row_span;
@@ -392,8 +394,9 @@ impl Flow for TableRowFlow {
 
         {
             let children_count = self.block_flow.base.children.len();
-            let mut iterator = self.block_flow.base.child_iter_mut().enumerate().peekable();
+            let mut iterator = self.block_flow.base.child_iter().enumerate().peekable();
             while let Some((i, kid)) = iterator.next() {
+                let mut kid = kid.write();
                 assert!(kid.is_table_cell());
 
                 // Collect the specified column inline-size of the cell. This is used in both
@@ -914,9 +917,10 @@ pub fn propagate_column_inline_sizes_to_child(
             incoming_rowspan.clear();
             let child_table_rowgroup_flow = child_flow.as_mut_table_rowgroup();
             child_table_rowgroup_flow.spacing = *border_spacing;
-            for kid in child_table_rowgroup_flow.block_flow.base.child_iter_mut() {
+            for kid in child_table_rowgroup_flow.block_flow.base.child_iter() {
+                let mut kid = kid.write();
                 propagate_column_inline_sizes_to_child(
-                    kid,
+                    &mut *kid,
                     table_writing_mode,
                     column_computed_inline_sizes,
                     border_spacing,
@@ -1095,7 +1099,7 @@ fn perform_inline_direction_border_collapse_for_row(
     children_count: usize,
     child_index: usize,
     child_table_cell: &mut TableCellFlow,
-    iterator: &mut Peekable<Enumerate<MutFlowListIterator>>,
+    iterator: &mut Peekable<Enumerate<FlowListIterator>>,
     preliminary_collapsed_borders: &mut CollapsedBordersForRow,
 ) {
     // In the first cell, combine its border with the one coming from the row.
@@ -1116,6 +1120,7 @@ fn perform_inline_direction_border_collapse_for_row(
     );
 
     if let Some(&(_, ref next_child_flow)) = iterator.peek() {
+        let next_child_flow = next_child_flow.read();
         let next_child_flow = next_child_flow.as_block();
         inline_collapsed_border.combine(&CollapsedBorder::inline_start(
             &*next_child_flow.fragment.style,
