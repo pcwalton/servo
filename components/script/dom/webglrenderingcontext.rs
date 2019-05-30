@@ -4305,7 +4305,7 @@ impl TexPixels {
 }
 
 #[derive(JSTraceable)]
-pub(crate) struct WebGLCommandSender {
+pub struct WebGLCommandSender {
     sender: WebGLChan,
     waker: Option<Box<dyn EventLoopWaker>>,
 }

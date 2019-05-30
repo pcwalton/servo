@@ -7,6 +7,7 @@ use gleam::gl;
 use gleam::gl::Gl;
 use ipc_channel::ipc::{IpcBytesReceiver, IpcBytesSender, IpcSharedMemory};
 use pixels::PixelFormat;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::borrow::Cow;
 use std::fmt;
 use std::num::NonZeroU32;
@@ -35,6 +36,34 @@ pub struct WebGLCommandBacktrace {
     pub js_backtrace: Option<String>,
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+pub struct WebGLLockMessage {
+    pub texture_id: u32,
+    pub size: Size2D<i32>,
+    pub io_surface_id: Option<u32>,
+    pub gl_sync: WebGLSync,
+    pub alpha: bool,
+}
+
+#[derive(Debug)]
+pub struct WebGLSync(pub gl::GLsync);
+
+#[allow(unsafe_code)]
+unsafe impl Send for WebGLSync {}
+
+impl Serialize for WebGLSync {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        (self.0 as usize).serialize(s)
+    }
+}
+
+impl<'de> Deserialize<'de> for WebGLSync {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<WebGLSync, D::Error> {
+        let ptr: usize = Deserialize::deserialize(d)?;
+        Ok(WebGLSync(ptr as gl::GLsync))
+    }
+}
+
 /// WebGL Message API
 #[derive(Debug, Deserialize, Serialize)]
 pub enum WebGLMsg {
@@ -58,7 +87,7 @@ pub enum WebGLMsg {
     /// WR locks a external texture when it wants to use the shared texture contents.
     /// The WR client should not change the shared texture content until the Unlock call.
     /// Currently OpenGL Sync Objects are used to implement the synchronization mechanism.
-    Lock(WebGLContextId, WebGLSender<(u32, Size2D<i32>, usize)>),
+    Lock(WebGLContextId, WebGLSender<WebGLLockMessage>),
     /// Unlocks a specific WebGLContext. Unlock messages are used for a correct synchronization
     /// with WebRender external image API.
     /// The WR unlocks a context when it finished reading the shared texture contents.
@@ -68,6 +97,8 @@ pub enum WebGLMsg {
     UpdateWebRenderImage(WebGLContextId, WebGLSender<ImageKey>),
     /// Commands used for the DOMToTexture feature.
     DOMToTextureCommand(DOMToTextureCommand),
+    /// Tells the WebGL contexts to swap their underlying texture targets
+    Swap(WebGLSender<()>),
     /// Frees all resources and closes the thread.
     Exit,
 }

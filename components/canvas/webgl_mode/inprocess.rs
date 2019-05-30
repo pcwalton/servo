@@ -5,12 +5,14 @@ use crate::gl_context::GLContextFactory;
 use crate::webgl_thread::{WebGLMainThread, WebGLThread, WebGLThreadInit};
 use canvas_traits::webgl::webgl_channel;
 use canvas_traits::webgl::DOMToTextureCommand;
-use canvas_traits::webgl::{WebGLChan, WebGLContextId, WebGLMsg, WebGLPipeline, WebGLReceiver};
-use canvas_traits::webgl::{WebGLSender, WebVRRenderHandler};
+use canvas_traits::webgl::{WebGLChan, WebGLContextId, WebGLLockMessage, WebGLMsg, WebGLPipeline};
+use canvas_traits::webgl::{WebGLReceiver, WebGLSender, WebVRRenderHandler};
 use embedder_traits::EventLoopWaker;
 use euclid::default::Size2D;
 use fnv::FnvHashMap;
 use gleam::gl;
+#[cfg(target_os = "macos")]
+use io_surface;
 use servo_config::pref;
 use std::default::Default;
 use std::rc::Rc;
@@ -20,6 +22,8 @@ use webxr_api::WebGLExternalImageApi;
 
 /// WebGL Threading API entry point that lives in the constellation.
 pub struct WebGLThreads(WebGLSender<WebGLMsg>);
+
+type IOSurfaceId = u32;
 
 pub enum ThreadMode {
     MainThread(Box<dyn EventLoopWaker>),
@@ -101,10 +105,12 @@ impl WebGLThreads {
 /// Bridge between the webxr_api::ExternalImage callbacks and the WebGLThreads.
 struct SendableWebGLExternalImages {
     webgl_channel: WebGLSender<WebGLMsg>,
+    // Mapping between an IOSurface and the texture it is bound on the WR thread
+    textures: FnvHashMap<IOSurfaceId, gl::GLuint>,
     // Used to avoid creating a new channel on each received WebRender request.
     lock_channel: (
-        WebGLSender<(u32, Size2D<i32>, usize)>,
-        WebGLReceiver<(u32, Size2D<i32>, usize)>,
+        WebGLSender<WebGLLockMessage>,
+        WebGLReceiver<WebGLLockMessage>,
     ),
 }
 
@@ -112,6 +118,7 @@ impl SendableWebGLExternalImages {
     fn new(channel: WebGLSender<WebGLMsg>) -> Self {
         Self {
             webgl_channel: channel,
+            textures: FnvHashMap::default(),
             lock_channel: webgl_channel().unwrap(),
         }
     }
@@ -137,8 +144,9 @@ impl SendableWebGLExternalImages {
                     self.lock_channel.0.clone(),
                 ))
                 .unwrap();
-            let (image_id, size, gl_sync) = self.lock_channel.1.recv().unwrap();
-            (image_id, size, Some(gl_sync as gl::GLsync))
+            let lock_message = self.lock_channel.1.recv().unwrap();
+            let sync = lock_message.gl_sync.0 as gl::GLsync;
+            (lock_message.texture_id, lock_message.size, Some(sync))
         }
     }
 }
@@ -185,14 +193,51 @@ impl WebGLExternalImages {
 
 impl WebrenderExternalImageApi for WebGLExternalImages {
     fn lock(&mut self, id: u64) -> (u32, Size2D<i32>) {
-        let (image_id, size, gl_sync) = self.sendable.lock_and_get_current_texture(id as usize);
-        // The next glWaitSync call is run on the WR thread and it's used to synchronize the two
-        // flows of OpenGL commands in order to avoid WR using a semi-ready WebGL texture.
-        // glWaitSync doesn't block WR thread, it affects only internal OpenGL subsystem.
-        if let Some(gl_sync) = gl_sync {
-            self.webrender_gl.wait_sync(gl_sync, 0, gl::TIMEOUT_IGNORED);
-        }
-        (image_id, size)
+        // WebGL Thread has it's own GL command queue that we need to synchronize with the WR GL command queue.
+        // The WebGLMsg::Lock message inserts a fence in the WebGL command queue.
+        self.sendable
+            .webgl_channel
+            .send(WebGLMsg::Lock(
+                WebGLContextId(id as usize),
+                self.sendable.lock_channel.0.clone(),
+            ))
+            .unwrap();
+        let WebGLLockMessage {
+            texture_id,
+            size,
+            io_surface_id,
+            gl_sync,
+            alpha,
+        } = self.sendable.lock_channel.1.recv().unwrap();
+
+        // If we have a new IOSurface bind it to a new texture on the WR thread,
+        // or if it's already bound use that texture.
+        // In the case of IOsurfaces we send these textures to WR.
+        let texture_id = match io_surface_id {
+            Some(_io_surface_id) => {
+                #[cfg(target_os = "macos")]
+                let gl = &self.webrender_gl;
+                #[cfg(target_os = "macos")]
+                let texture_id = *self.sendable.textures.entry(_io_surface_id).or_insert_with(|| {
+                    let texture_id = gl.gen_textures(1)[0];
+                    gl.bind_texture(gl::TEXTURE_RECTANGLE_ARB, texture_id);
+                    let io_surface = io_surface::lookup(_io_surface_id);
+                    io_surface.bind_to_gl_texture(size.width, size.height, alpha);
+                    texture_id
+                });
+                texture_id
+            },
+            None => {
+                // The next glWaitSync call is run on the WR thread and it's used to synchronize the two
+                // flows of OpenGL commands in order to avoid WR using a semi-ready WebGL texture.
+                // glWaitSync doesn't block WR thread, it affects only internal OpenGL subsystem.
+                self.webrender_gl
+                    .wait_sync(gl_sync.0 as gl::GLsync, 0, gl::TIMEOUT_IGNORED);
+                texture_id
+            },
+        };
+
+        (texture_id, size)
     }
 
     fn unlock(&mut self, id: u64) {
