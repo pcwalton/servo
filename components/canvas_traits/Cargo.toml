@@ -29,3 +29,6 @@ typetag = "0.1"
 webrender_api = {git = "https://github.com/servo/webrender", features = ["ipc"]}
 webvr_traits = {path = "../webvr_traits"}
 webxr-api = {git = "https://github.com/servo/webxr"}
+
+[target.x86_64-apple-darwin.dependencies]
+io-surface = "0.11.1"

@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+use crate::platform::default::NativeSurface;
 use euclid::default::{Rect, Size2D};
 use gleam::gl;
 use gleam::gl::Gl;
@@ -38,11 +39,8 @@ pub struct WebGLCommandBacktrace {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct WebGLLockMessage {
-    pub texture_id: u32,
-    pub size: Size2D<i32>,
-    pub io_surface_id: Option<u32>,
-    pub gl_sync: WebGLSync,
-    pub alpha: bool,
+    pub surface: NativeSurface,
+    pub sync: WebGLSync,
 }
 
 #[derive(Debug)]

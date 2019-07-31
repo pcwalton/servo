@@ -1,8 +1,10 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
+
 use crate::gl_context::GLContextFactory;
 use crate::webgl_thread::{WebGLMainThread, WebGLThread, WebGLThreadInit};
+use canvas_traits::platform::default::NativeSurfaceTexture;
 use canvas_traits::webgl::webgl_channel;
 use canvas_traits::webgl::DOMToTextureCommand;
 use canvas_traits::webgl::{WebGLChan, WebGLContextId, WebGLLockMessage, WebGLMsg, WebGLPipeline};
@@ -105,8 +107,8 @@ impl WebGLThreads {
 /// Bridge between the webxr_api::ExternalImage callbacks and the WebGLThreads.
 struct SendableWebGLExternalImages {
     webgl_channel: WebGLSender<WebGLMsg>,
-    // Mapping between an IOSurface and the texture it is bound on the WR thread
-    textures: FnvHashMap<IOSurfaceId, gl::GLuint>,
+    // The texture on the WebRender side.
+    surface_texture: Option<NativeSurfaceTexture>,
     // Used to avoid creating a new channel on each received WebRender request.
     lock_channel: (
         WebGLSender<WebGLLockMessage>,
@@ -118,7 +120,7 @@ impl SendableWebGLExternalImages {
     fn new(channel: WebGLSender<WebGLMsg>) -> Self {
         Self {
             webgl_channel: channel,
-            textures: FnvHashMap::default(),
+            surface_texture: None,
             lock_channel: webgl_channel().unwrap(),
         }
     }
@@ -193,8 +195,8 @@ impl WebGLExternalImages {
 
 impl WebrenderExternalImageApi for WebGLExternalImages {
     fn lock(&mut self, id: u64) -> (u32, Size2D<i32>) {
-        // WebGL Thread has it's own GL command queue that we need to synchronize with the WR GL command queue.
-        // The WebGLMsg::Lock message inserts a fence in the WebGL command queue.
+        // WebGL Thread has it's own GL command queue that we need to synchronize with the WR GL
+        // command queue. The WebGLMsg::Lock message inserts a fence in the WebGL command queue.
         self.sendable
             .webgl_channel
             .send(WebGLMsg::Lock(
@@ -202,42 +204,24 @@ impl WebrenderExternalImageApi for WebGLExternalImages {
                 self.sendable.lock_channel.0.clone(),
             ))
             .unwrap();
-        let WebGLLockMessage {
-            texture_id,
-            size,
-            io_surface_id,
-            gl_sync,
-            alpha,
-        } = self.sendable.lock_channel.1.recv().unwrap();
 
-        // If we have a new IOSurface bind it to a new texture on the WR thread,
-        // or if it's already bound use that texture.
-        // In the case of IOsurfaces we send these textures to WR.
-        let texture_id = match io_surface_id {
-            Some(_io_surface_id) => {
-                #[cfg(target_os = "macos")]
-                let gl = &self.webrender_gl;
-                #[cfg(target_os = "macos")]
-                let texture_id = *self.sendable.textures.entry(_io_surface_id).or_insert_with(|| {
-                    let texture_id = gl.gen_textures(1)[0];
-                    gl.bind_texture(gl::TEXTURE_RECTANGLE_ARB, texture_id);
-                    let io_surface = io_surface::lookup(_io_surface_id);
-                    io_surface.bind_to_gl_texture(size.width, size.height, alpha);
-                    texture_id
-                });
-                texture_id
-            },
-            None => {
-                // The next glWaitSync call is run on the WR thread and it's used to synchronize the two
-                // flows of OpenGL commands in order to avoid WR using a semi-ready WebGL texture.
-                // glWaitSync doesn't block WR thread, it affects only internal OpenGL subsystem.
-                self.webrender_gl
-                    .wait_sync(gl_sync.0 as gl::GLsync, 0, gl::TIMEOUT_IGNORED);
-                texture_id
-            },
-        };
+        // Take the surface from WebGL and wrap it in a native surface texture. We try to reuse a
+        // native surface texture if it has the same size and format; otherwise, we create a new
+        // one.
+        let WebGLLockMessage { mut surface, sync } = self.sendable.lock_channel.1.recv().unwrap();
+        loop {
+            if let Some(ref mut surface_texture) = self.sendable.surface_texture {
+                match surface_texture.bind(&self.webrender_gl, surface) {
+                    Ok(()) => break,
+                    Err(failed_surface) => surface = failed_surface,
+                };
+            }
+            self.sendable.surface_texture = Some(NativeSurfaceTexture::new(&self.webrender_gl,  
+                                                                           surface.size(),
+                                                                           surface.format()));
+        }
 
-        (texture_id, size)
+        (self.sendable.surface_texture.gl_texture(), self.sendable.surface_texture.size())
     }
 
     fn unlock(&mut self, id: u64) {
