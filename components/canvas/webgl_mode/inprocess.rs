@@ -4,7 +4,6 @@
 
 use crate::gl_context::GLContextFactory;
 use crate::webgl_thread::{WebGLMainThread, WebGLThread, WebGLThreadInit};
-use canvas_traits::platform::default::NativeSurfaceTexture;
 use canvas_traits::webgl::webgl_channel;
 use canvas_traits::webgl::DOMToTextureCommand;
 use canvas_traits::webgl::{WebGLChan, WebGLContextId, WebGLLockMessage, WebGLMsg, WebGLPipeline};
@@ -15,6 +14,7 @@ use fnv::FnvHashMap;
 use gleam::gl;
 #[cfg(target_os = "macos")]
 use io_surface;
+use offscreen_gl_context::{NativeSurface, NativeSurfaceTexture};
 use servo_config::pref;
 use std::default::Default;
 use std::rc::Rc;
@@ -48,7 +48,9 @@ impl WebGLThreads {
         Box<dyn WebrenderExternalImageApi>,
         Option<Box<dyn webrender::OutputImageHandler>>,
     ) {
+        println!("WebGLThreads::new()");
         let (sender, receiver) = webgl_channel::<WebGLMsg>().unwrap();
+
         // This implementation creates a single `WebGLThread` for all the pipelines.
         let init = WebGLThreadInit {
             gl_factory,
@@ -107,8 +109,6 @@ impl WebGLThreads {
 /// Bridge between the webxr_api::ExternalImage callbacks and the WebGLThreads.
 struct SendableWebGLExternalImages {
     webgl_channel: WebGLSender<WebGLMsg>,
-    // The texture on the WebRender side.
-    surface_texture: Option<NativeSurfaceTexture>,
     // Used to avoid creating a new channel on each received WebRender request.
     lock_channel: (
         WebGLSender<WebGLLockMessage>,
@@ -120,43 +120,15 @@ impl SendableWebGLExternalImages {
     fn new(channel: WebGLSender<WebGLMsg>) -> Self {
         Self {
             webgl_channel: channel,
-            surface_texture: None,
             lock_channel: webgl_channel().unwrap(),
-        }
-    }
-}
-
-impl SendableWebGLExternalImages {
-    fn lock_and_get_current_texture(&self, id: usize) -> (u32, Size2D<i32>, Option<gl::GLsync>) {
-        if let Some(main_thread) = WebGLMainThread::on_current_thread() {
-            // If we're on the same thread as WebGL, we can get the data directly
-            let (image_id, size) = main_thread
-                .thread_data
-                .borrow_mut()
-                .handle_lock_unsync(WebGLContextId(id as usize));
-            // We don't need a GLsync object if we're running on the main thread
-            // Might be better to return an option?
-            (image_id, size, None)
-        } else {
-            // WebGL Thread has it's own GL command queue that we need to synchronize with the WR GL command queue.
-            // The WebGLMsg::Lock message inserts a fence in the WebGL command queue.
-            self.webgl_channel
-                .send(WebGLMsg::Lock(
-                    WebGLContextId(id as usize),
-                    self.lock_channel.0.clone(),
-                ))
-                .unwrap();
-            let lock_message = self.lock_channel.1.recv().unwrap();
-            let sync = lock_message.gl_sync.0 as gl::GLsync;
-            (lock_message.texture_id, lock_message.size, Some(sync))
         }
     }
 }
 
 impl webxr_api::WebGLExternalImageApi for SendableWebGLExternalImages {
     fn lock(&self, id: usize) -> Option<gl::GLsync> {
-        let (_, _, gl_sync) = self.lock_and_get_current_texture(id);
-        gl_sync
+        // TODO(pcwalton)
+        None
     }
 
     fn unlock(&self, id: usize) {
@@ -181,6 +153,8 @@ impl webxr_api::WebGLExternalImageApi for SendableWebGLExternalImages {
 /// Bridge between the webrender::ExternalImage callbacks and the WebGLThreads.
 struct WebGLExternalImages {
     webrender_gl: Rc<dyn gl::Gl>,
+    // The surface on the WebRender side.
+    surface_texture: Option<NativeSurfaceTexture>,
     sendable: SendableWebGLExternalImages,
 }
 
@@ -188,6 +162,7 @@ impl WebGLExternalImages {
     fn new(webrender_gl: Rc<dyn gl::Gl>, channel: WebGLSender<WebGLMsg>) -> Self {
         Self {
             webrender_gl,
+            surface_texture: None,
             sendable: SendableWebGLExternalImages::new(channel),
         }
     }
@@ -201,27 +176,20 @@ impl WebrenderExternalImageApi for WebGLExternalImages {
             .webgl_channel
             .send(WebGLMsg::Lock(
                 WebGLContextId(id as usize),
+                self.surface_texture.take().map(|surface_texture| {
+                    surface_texture.into_surface(&*self.webrender_gl)
+                }),
                 self.sendable.lock_channel.0.clone(),
             ))
             .unwrap();
 
-        // Take the surface from WebGL and wrap it in a native surface texture. We try to reuse a
-        // native surface texture if it has the same size and format; otherwise, we create a new
-        // one.
+        // Take the surface from WebGL and wrap it in a native surface texture.
         let WebGLLockMessage { mut surface, sync } = self.sendable.lock_channel.1.recv().unwrap();
-        loop {
-            if let Some(ref mut surface_texture) = self.sendable.surface_texture {
-                match surface_texture.bind(&self.webrender_gl, surface) {
-                    Ok(()) => break,
-                    Err(failed_surface) => surface = failed_surface,
-                };
-            }
-            self.sendable.surface_texture = Some(NativeSurfaceTexture::new(&self.webrender_gl,  
-                                                                           surface.size(),
-                                                                           surface.format()));
-        }
+        self.surface_texture = Some(NativeSurfaceTexture::new(&*self.webrender_gl, surface));
 
-        (self.sendable.surface_texture.gl_texture(), self.sendable.surface_texture.size())
+        let surface_texture = self.surface_texture.as_ref().unwrap();
+        println!("returning gl texture: {:?}", surface_texture.gl_texture());
+        (surface_texture.gl_texture(), surface_texture.surface().size())
     }
 
     fn unlock(&mut self, id: u64) {

@@ -2,11 +2,11 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-use crate::platform::default::NativeSurface;
 use euclid::default::{Rect, Size2D};
 use gleam::gl;
 use gleam::gl::Gl;
 use ipc_channel::ipc::{IpcBytesReceiver, IpcBytesSender, IpcSharedMemory};
+use offscreen_gl_context::NativeSurface;
 use pixels::PixelFormat;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::borrow::Cow;
@@ -85,7 +85,7 @@ pub enum WebGLMsg {
     /// WR locks a external texture when it wants to use the shared texture contents.
     /// The WR client should not change the shared texture content until the Unlock call.
     /// Currently OpenGL Sync Objects are used to implement the synchronization mechanism.
-    Lock(WebGLContextId, WebGLSender<WebGLLockMessage>),
+    Lock(WebGLContextId, Option<NativeSurface>, WebGLSender<WebGLLockMessage>),
     /// Unlocks a specific WebGLContext. Unlock messages are used for a correct synchronization
     /// with WebRender external image API.
     /// The WR unlocks a context when it finished reading the shared texture contents.
