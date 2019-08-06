@@ -228,6 +228,7 @@ impl WebGLThread {
     /// Handles a generic WebGLMsg message
     fn handle_msg(&mut self, msg: WebGLMsg, webgl_chan: &WebGLChan) -> bool {
         trace!("processing {:?}", msg);
+        println!("msg: {:?}", msg);
         match msg {
             WebGLMsg::CreateContext(version, size, attributes, result_sender) => {
                 let result = self.create_webgl_context(version, size, attributes);
@@ -311,6 +312,7 @@ impl WebGLThread {
 
     /// Swap the underlying native surfaces.
     fn swap_draw_buffers(&mut self, sender: WebGLSender<()>) {
+        println!("WebGLThread::swap_draw_buffers(): TODO");
         // TODO(pcwalton)
     }
 
@@ -367,6 +369,8 @@ impl WebGLThread {
                    context_id: WebGLContextId,
                    old_surface: Option<NativeSurface>,
                    sender: WebGLSender<WebGLLockMessage>) {
+        println!("WebGLThread::handle_lock()");
+
         let data = Self::make_current_if_needed_mut(
             context_id, 
             &mut self.contexts,
@@ -421,6 +425,8 @@ impl WebGLThread {
         size: Size2D<u32>,
         attributes: GLContextAttributes,
     ) -> Result<(WebGLContextId, GLLimits, WebGLContextShareMode), String> {
+        println!("WebGLThread::create_webgl_context()");
+
         // Creating a new GLContext may make the current bound context_id dirty.
         // Clear it to ensure that  make_current() is called in subsequent commands.
         self.bound_context_id = None;
@@ -429,16 +435,8 @@ impl WebGLThread {
         // Fallback to readback mode if the shared context creation fails.
         let (ctx, share_mode) = self
             .gl_factory
-            .new_shared_context(version, size, attributes)
+            .new_context(version, size, attributes)
             .map(|r| (r, WebGLContextShareMode::SharedTexture))
-            .or_else(|err| {
-                warn!(
-                    "Couldn't create shared GL context ({}), using slow readback context instead.",
-                    err
-                );
-                let ctx = self.gl_factory.new_context(version, size, attributes)?;
-                Ok((ctx, WebGLContextShareMode::Readback))
-            })
             .map_err(|msg: &str| msg.to_owned())?;
 
         let id = WebGLContextId(
@@ -1636,6 +1634,15 @@ impl WebGLImpl {
         let error = ctx.gl().get_error();
         if error != gl::NO_ERROR {
             error!("Last GL operation failed: {:?}", command);
+            if error == gl::INVALID_FRAMEBUFFER_OPERATION {
+                let mut framebuffer_bindings = [0];
+                unsafe {
+                    ctx.gl().get_integer_v(gl::DRAW_FRAMEBUFFER_BINDING, &mut framebuffer_bindings);
+                }
+                println!("(thread {:?}) Current draw framebuffer binding: {}",
+                         ::std::thread::current().id(),
+                         framebuffer_bindings[0]);
+            }
             #[cfg(feature = "webgl_backtrace")]
             {
                 error!("Backtrace from failed WebGL API:\n{}", _backtrace.backtrace);
@@ -1644,12 +1651,14 @@ impl WebGLImpl {
                 }
             }
         }
+
         assert_eq!(
             error,
             gl::NO_ERROR,
-            "Unexpected WebGL error: 0x{:x} ({})",
+            "Unexpected WebGL error: 0x{:x} ({}) [{:?}]",
             error,
-            error
+            error,
+            command
         );
     }
 
@@ -1941,6 +1950,7 @@ impl WebGLImpl {
             },
         };
 
+        println!("WebGLImpl::bind_framebuffer: {:?}", id);
         gl.bind_framebuffer(target, id);
     }
 
