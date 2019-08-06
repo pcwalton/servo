@@ -20,6 +20,7 @@ use std::cell::Cell;
 use std::cell::RefCell;
 use std::mem;
 use std::rc::Rc;
+use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use webrender_traits::{WebrenderExternalImageRegistry, WebrenderImageHandlerType};
@@ -81,6 +82,8 @@ pub(crate) struct WebGLThread {
     receiver: WebGLReceiver<WebGLMsg>,
     /// The receiver that should be used to send WebGL messages for processing.
     sender: WebGLSender<WebGLMsg>,
+    buffer_receiver: Receiver<Option<NativeSurface>>,
+    buffer_sender: Sender<NativeSurface>,
 }
 
 #[derive(PartialEq)]
@@ -146,6 +149,8 @@ impl WebGLThread {
             external_images,
             sender,
             receiver,
+            buffer_sender,
+            buffer_receiver,
         }: WebGLThreadInit,
     ) -> Self {
         WebGLThread {
@@ -159,6 +164,8 @@ impl WebGLThread {
             external_images,
             sender,
             receiver,
+            buffer_sender,
+            buffer_receiver,
         }
     }
 
@@ -287,12 +294,12 @@ impl WebGLThread {
             WebGLMsg::WebVRCommand(ctx_id, command) => {
                 self.handle_webvr_command(ctx_id, command);
             },
-            WebGLMsg::Lock(ctx_id, old_surface, sender) => {
+            /*WebGLMsg::Lock(ctx_id, old_surface, sender) => {
                 self.handle_lock(ctx_id, old_surface, sender);
             },
             WebGLMsg::Unlock(ctx_id) => {
                 self.handle_unlock(ctx_id);
-            },
+            },*/
             WebGLMsg::UpdateWebRenderImage(ctx_id, sender) => {
                 self.handle_update_wr_image(ctx_id, sender);
             },

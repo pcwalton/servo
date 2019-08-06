@@ -18,9 +18,18 @@ use offscreen_gl_context::{NativeSurface, NativeSurfaceTexture};
 use servo_config::pref;
 use std::default::Default;
 use std::rc::Rc;
-use std::sync::{Arc, Mutex};
+use std::sync::mpsc;
+use std::sync::{Arc, Condvar, Mutex};
 use webrender_traits::{WebrenderExternalImageApi, WebrenderExternalImageRegistry};
 use webxr_api::WebGLExternalImageApi;
+
+pub struct WebGLComm {
+    pub webgl_threads: WebGLThreads,
+    pub main_thread_data: Option<Rc<WebGLMainThread>>,
+    pub webxr_handler: Box<dyn webxr_api::WebGLExternalImageApi>,
+    pub image_handler: Box<dyn WebrenderExternalImageApi>,
+    pub output_handler: Option<Box<dyn webrender::OutputImageHandler>>,
+}
 
 /// WebGL Threading API entry point that lives in the constellation.
 pub struct WebGLThreads(WebGLSender<WebGLMsg>);
@@ -32,8 +41,8 @@ pub enum ThreadMode {
     OffThread,
 }
 
-impl WebGLThreads {
-    /// Creates a new WebGLThreads object
+impl WebGLComm {
+    /// Creates a new `WebGLComm` object.
     pub fn new(
         gl_factory: GLContextFactory,
         webrender_gl: Rc<dyn gl::Gl>,
@@ -41,15 +50,13 @@ impl WebGLThreads {
         webvr_compositor: Option<Box<dyn WebVRRenderHandler>>,
         external_images: Arc<Mutex<WebrenderExternalImageRegistry>>,
         mode: ThreadMode,
-    ) -> (
-        WebGLThreads,
-        Option<Rc<WebGLMainThread>>,
-        Box<dyn webxr_api::WebGLExternalImageApi>,
-        Box<dyn WebrenderExternalImageApi>,
-        Option<Box<dyn webrender::OutputImageHandler>>,
-    ) {
+    ) -> WebGLComm {
         println!("WebGLThreads::new()");
         let (sender, receiver) = webgl_channel::<WebGLMsg>().unwrap();
+
+        // Make a pair of channels for buffer swaps.
+        let (webgl_to_wr_buffer_sender, webgl_to_wr_buffer_receiver) = mpsc::channel().unwrap();
+        let (wr_to_webgl_buffer_sender, wr_to_webgl_buffer_receiver) = mpsc::channel().unwrap();
 
         // This implementation creates a single `WebGLThread` for all the pipelines.
         let init = WebGLThreadInit {
@@ -57,8 +64,11 @@ impl WebGLThreads {
             webrender_api_sender,
             webvr_compositor,
             external_images,
+            front_buffer: front_buffer.clone(),
             sender: sender.clone(),
             receiver,
+            buffer_receiver: wr_to_webgl_buffer_receiver,
+            buffer_sender: webgl_to_wr_buffer_sender,
         };
 
         let output_handler = if pref!(dom.webgl.dom_to_texture.enabled) {
@@ -70,7 +80,9 @@ impl WebGLThreads {
             None
         };
 
-        let external = WebGLExternalImages::new(webrender_gl, sender.clone());
+        let external = WebGLExternalImages::new(webrender_gl,
+                                                webgl_to_wr_buffer_receiver,
+                                                wr_to_webgl_buffer_sender);
 
         let webgl_thread = match mode {
             ThreadMode::MainThread(event_loop_waker) => {
@@ -83,15 +95,17 @@ impl WebGLThreads {
             },
         };
 
-        (
-            WebGLThreads(sender),
-            webgl_thread,
-            external.sendable.clone_box(),
-            Box::new(external),
-            output_handler.map(|b| b as Box<_>),
-        )
+        WebGLComm {
+            webgl_threads: WebGLThreads(sender),
+            main_thread_data: webgl_thread,
+            webxr_handler: external.sendable.clone_box(),
+            image_handler: Box::new(external),
+            output_handler: output_handler.map(|b| b as Box<_>),
+        }
     }
+}
 
+impl WebGLThreads {
     /// Gets the WebGLThread handle for each script pipeline.
     pub fn pipeline(&self) -> WebGLPipeline {
         // This mode creates a single thread, so the existing WebGLChan is just cloned.
@@ -153,16 +167,22 @@ impl webxr_api::WebGLExternalImageApi for SendableWebGLExternalImages {
 /// Bridge between the webrender::ExternalImage callbacks and the WebGLThreads.
 struct WebGLExternalImages {
     webrender_gl: Rc<dyn gl::Gl>,
-    // The surface on the WebRender side.
-    surface_texture: Option<NativeSurfaceTexture>,
+    front_buffer: Option<NativeSurfaceTexture>,
+    buffer_receiver: Receiver<NativeSurface>,
+    buffer_sender: Sender<NativeSurface>,
     sendable: SendableWebGLExternalImages,
 }
 
 impl WebGLExternalImages {
-    fn new(webrender_gl: Rc<dyn gl::Gl>, channel: WebGLSender<WebGLMsg>) -> Self {
+    fn new(webrender_gl: Rc<dyn gl::Gl>,
+           buffer_receiver: Receiver<NativeSurface>,
+           buffer_sender: Sender<NativeSurface>)
+           -> Self {
         Self {
             webrender_gl,
-            surface_texture: None,
+            front_buffer: None,
+            buffer_receiver,
+            buffer_sender,
             sendable: SendableWebGLExternalImages::new(channel),
         }
     }
@@ -170,6 +190,7 @@ impl WebGLExternalImages {
 
 impl WebrenderExternalImageApi for WebGLExternalImages {
     fn lock(&mut self, id: u64) -> (u32, Size2D<i32>) {
+        /*
         // WebGL Thread has it's own GL command queue that we need to synchronize with the WR GL
         // command queue. The WebGLMsg::Lock message inserts a fence in the WebGL command queue.
         self.sendable
@@ -186,14 +207,18 @@ impl WebrenderExternalImageApi for WebGLExternalImages {
         // Take the surface from WebGL and wrap it in a native surface texture.
         let WebGLLockMessage { mut surface, sync } = self.sendable.lock_channel.1.recv().unwrap();
         self.surface_texture = Some(NativeSurfaceTexture::new(&*self.webrender_gl, surface));
+        */
 
-        let surface_texture = self.surface_texture.as_ref().unwrap();
-        println!("returning gl texture: {:?}", surface_texture.gl_texture());
-        (surface_texture.gl_texture(), surface_texture.surface().size())
+        let front_buffer = self.buffer_receiver.recv().unwrap();
+        let (gl_texture, size) = (front_buffer.gl_texture(), front_buffer.surface().size());
+        self.front_buffer = Some(front_buffer);
+        println!("returning gl texture: {:?}", gl_texture);
+        (gl_texture, size)
     }
 
     fn unlock(&mut self, id: u64) {
         self.sendable.unlock(id as usize);
+        self.buffer_sender.send(self.front_buffer.take().unwrap());
     }
 }
 

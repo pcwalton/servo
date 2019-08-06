@@ -80,6 +80,7 @@ pub enum WebGLMsg {
     WebGLCommand(WebGLContextId, WebGLCommand, WebGLCommandBacktrace),
     /// Runs a WebVRCommand in a specific WebGLContext.
     WebVRCommand(WebGLContextId, WebVRCommand),
+    /*
     /// Locks a specific WebGLContext. Lock messages are used for a correct synchronization
     /// with WebRender external image API.
     /// WR locks a external texture when it wants to use the shared texture contents.
@@ -91,6 +92,7 @@ pub enum WebGLMsg {
     /// The WR unlocks a context when it finished reading the shared texture contents.
     /// Unlock messages are always sent after a Lock message.
     Unlock(WebGLContextId),
+    */
     /// Creates or updates the image keys required for WebRender.
     UpdateWebRenderImage(WebGLContextId, WebGLSender<ImageKey>),
     /// Commands used for the DOMToTexture feature.
