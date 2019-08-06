@@ -177,6 +177,7 @@ impl WebGLMsgSender {
     /// Send a WebGLCommand message
     #[inline]
     pub fn send(&self, command: WebGLCommand, backtrace: WebGLCommandBacktrace) -> WebGLSendResult {
+        println!("sending msg: {:?}", command);
         self.sender
             .send(WebGLMsg::WebGLCommand(self.ctx_id, command, backtrace))
     }
