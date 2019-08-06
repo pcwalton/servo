@@ -64,8 +64,9 @@ fn webdriver(_port: u16, _constellation: Sender<ConstellationMsg>) {}
 
 use bluetooth::BluetoothThreadFactory;
 use bluetooth_traits::BluetoothRequest;
+use canvas::WebGLComm;
 use canvas::gl_context::{CloneableDispatcher, GLContextFactory};
-use canvas::webgl_thread::{ThreadMode, WebGLComm, WebGLMainThread, WebGLThreads};
+use canvas::webgl_thread::{ThreadMode, WebGLMainThread, WebGLThreads};
 use compositing::compositor_thread::{
     CompositorProxy, CompositorReceiver, InitialCompositorState, Msg,
 };
@@ -429,11 +430,11 @@ where
         let webgl_result = gl_factory.map(|factory| {
             let WebGLComm {
                 webgl_threads,
-                thread_data,
+                main_thread_data,
                 webxr_handler,
                 image_handler,
                 output_handler,
-            } = WebGLThreads::new(
+            } = WebGLComm::new(
                     factory,
                     window.gl(),
                     webrender_api_sender.clone(),
@@ -457,7 +458,7 @@ where
                 webrender.set_output_image_handler(output_handler);
             }
 
-            (webgl_threads, thread_data)
+            (webgl_threads, main_thread_data)
         });
         let (webgl_threads, webgl_thread_data) = match webgl_result {
             Some((a, b)) => (Some(a), b),

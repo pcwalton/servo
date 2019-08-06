@@ -17,9 +17,10 @@ use io_surface;
 use offscreen_gl_context::{NativeSurface, NativeSurfaceTexture};
 use servo_config::pref;
 use std::default::Default;
+use std::mem;
 use std::rc::Rc;
 use std::sync::mpsc;
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use webrender_traits::{WebrenderExternalImageApi, WebrenderExternalImageRegistry};
 use webxr_api::WebGLExternalImageApi;
 
@@ -54,9 +55,8 @@ impl WebGLComm {
         println!("WebGLThreads::new()");
         let (sender, receiver) = webgl_channel::<WebGLMsg>().unwrap();
 
-        // Make a pair of channels for buffer swaps.
-        let (webgl_to_wr_buffer_sender, webgl_to_wr_buffer_receiver) = mpsc::channel().unwrap();
-        let (wr_to_webgl_buffer_sender, wr_to_webgl_buffer_receiver) = mpsc::channel().unwrap();
+        // Make a front buffer.
+        let front_buffer = Arc::new(FrontBuffer::new());
 
         // This implementation creates a single `WebGLThread` for all the pipelines.
         let init = WebGLThreadInit {
@@ -64,11 +64,9 @@ impl WebGLComm {
             webrender_api_sender,
             webvr_compositor,
             external_images,
-            front_buffer: front_buffer.clone(),
             sender: sender.clone(),
             receiver,
-            buffer_receiver: wr_to_webgl_buffer_receiver,
-            buffer_sender: webgl_to_wr_buffer_sender,
+            front_buffer: front_buffer.clone(),
         };
 
         let output_handler = if pref!(dom.webgl.dom_to_texture.enabled) {
@@ -80,9 +78,7 @@ impl WebGLComm {
             None
         };
 
-        let external = WebGLExternalImages::new(webrender_gl,
-                                                webgl_to_wr_buffer_receiver,
-                                                wr_to_webgl_buffer_sender);
+        let external = WebGLExternalImages::new(webrender_gl, front_buffer, sender.clone());
 
         let webgl_thread = match mode {
             ThreadMode::MainThread(event_loop_waker) => {
@@ -146,17 +142,7 @@ impl webxr_api::WebGLExternalImageApi for SendableWebGLExternalImages {
     }
 
     fn unlock(&self, id: usize) {
-        if let Some(main_thread) = WebGLMainThread::on_current_thread() {
-            // If we're on the same thread as WebGL, we can unlock directly
-            main_thread
-                .thread_data
-                .borrow_mut()
-                .handle_unlock(WebGLContextId(id as usize))
-        } else {
-            self.webgl_channel
-                .send(WebGLMsg::Unlock(WebGLContextId(id as usize)))
-                .unwrap()
-        }
+        // TODO(pcwalton)
     }
 
     fn clone_box(&self) -> Box<dyn webxr_api::WebGLExternalImageApi> {
@@ -167,22 +153,20 @@ impl webxr_api::WebGLExternalImageApi for SendableWebGLExternalImages {
 /// Bridge between the webrender::ExternalImage callbacks and the WebGLThreads.
 struct WebGLExternalImages {
     webrender_gl: Rc<dyn gl::Gl>,
-    front_buffer: Option<NativeSurfaceTexture>,
-    buffer_receiver: Receiver<NativeSurface>,
-    buffer_sender: Sender<NativeSurface>,
+    front_buffer: Arc<FrontBuffer>,
+    locked_front_buffer: Option<NativeSurfaceTexture>,
     sendable: SendableWebGLExternalImages,
 }
 
 impl WebGLExternalImages {
-    fn new(webrender_gl: Rc<dyn gl::Gl>,
-           buffer_receiver: Receiver<NativeSurface>,
-           buffer_sender: Sender<NativeSurface>)
+    fn new(webrender_gl: Rc<dyn gl::Gl>,    
+           front_buffer: Arc<FrontBuffer>,
+           channel: WebGLSender<WebGLMsg>)
            -> Self {
         Self {
             webrender_gl,
-            front_buffer: None,
-            buffer_receiver,
-            buffer_sender,
+            front_buffer,
+            locked_front_buffer: None,
             sendable: SendableWebGLExternalImages::new(channel),
         }
     }
@@ -209,16 +193,59 @@ impl WebrenderExternalImageApi for WebGLExternalImages {
         self.surface_texture = Some(NativeSurfaceTexture::new(&*self.webrender_gl, surface));
         */
 
-        let front_buffer = self.buffer_receiver.recv().unwrap();
-        let (gl_texture, size) = (front_buffer.gl_texture(), front_buffer.surface().size());
-        self.front_buffer = Some(front_buffer);
-        println!("returning gl texture: {:?}", gl_texture);
+        let (gl_texture, size);
+        match self.front_buffer.take() {
+            None => {
+                gl_texture = 0;
+                size = Size2D::new(0, 0);
+                self.locked_front_buffer = None;
+            }
+            Some(front_buffer) => {
+                let locked_front_buffer = NativeSurfaceTexture::new(&*self.webrender_gl,
+                                                                    front_buffer);
+                gl_texture = locked_front_buffer.gl_texture();
+                size = locked_front_buffer.surface().size();
+                println!("(lock) presenting surface {}", locked_front_buffer.surface().id());
+                self.locked_front_buffer = Some(locked_front_buffer);
+            }
+        }
+
+        println!("(lock) returning gl texture: {:?}", gl_texture);
         (gl_texture, size)
     }
 
     fn unlock(&mut self, id: u64) {
         self.sendable.unlock(id as usize);
-        self.buffer_sender.send(self.front_buffer.take().unwrap());
+        if let Some(locked_front_buffer) = self.locked_front_buffer.take() {
+            println!("(unlock) putting back surface {}", locked_front_buffer.surface().id());
+            self.front_buffer.put_back(locked_front_buffer.into_surface(&*self.webrender_gl));
+        }
+    }
+}
+
+pub struct FrontBuffer(Mutex<Option<NativeSurface>>);
+
+impl FrontBuffer {
+    fn new() -> FrontBuffer {
+        FrontBuffer(Mutex::new(None))
+    }
+
+    fn take(&self) -> Option<NativeSurface> {
+        self.0.lock().unwrap().take()
+    }
+
+    fn put_back(&self, old_front_buffer: NativeSurface) {
+        let mut slot = self.0.lock().unwrap();
+        if slot.is_none() {
+            *slot = Some(old_front_buffer);
+        } else {
+            println!("*** (unlock) front buffer already has surface {}, dropping",
+                     slot.as_ref().unwrap().id());
+        }
+    }
+
+    pub(crate) fn lock(&self) -> MutexGuard<Option<NativeSurface>> {
+        self.0.lock().unwrap()
     }
 }
 

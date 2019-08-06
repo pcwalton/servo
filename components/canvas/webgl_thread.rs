@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+use crate::webgl_mode::FrontBuffer;
 use super::gl_context::{map_attrs_to_script_attrs, GLContextFactory, GLContextWrapper};
 use byteorder::{ByteOrder, NativeEndian, WriteBytesExt};
 use canvas_traits::webgl::*;
@@ -82,8 +83,8 @@ pub(crate) struct WebGLThread {
     receiver: WebGLReceiver<WebGLMsg>,
     /// The receiver that should be used to send WebGL messages for processing.
     sender: WebGLSender<WebGLMsg>,
-    buffer_receiver: Receiver<Option<NativeSurface>>,
-    buffer_sender: Sender<NativeSurface>,
+    /// FIXME(pcwalton): Should be one front buffer per context ID!!
+    front_buffer: Arc<FrontBuffer>,
 }
 
 #[derive(PartialEq)]
@@ -100,6 +101,7 @@ pub(crate) struct WebGLThreadInit {
     pub external_images: Arc<Mutex<WebrenderExternalImageRegistry>>,
     pub sender: WebGLSender<WebGLMsg>,
     pub receiver: WebGLReceiver<WebGLMsg>,
+    pub front_buffer: Arc<FrontBuffer>,
 }
 
 /// The extra data required to run an instance of WebGLThread when it is
@@ -149,8 +151,7 @@ impl WebGLThread {
             external_images,
             sender,
             receiver,
-            buffer_sender,
-            buffer_receiver,
+            front_buffer,
         }: WebGLThreadInit,
     ) -> Self {
         WebGLThread {
@@ -164,8 +165,7 @@ impl WebGLThread {
             external_images,
             sender,
             receiver,
-            buffer_sender,
-            buffer_receiver,
+            front_buffer,
         }
     }
 
@@ -303,11 +303,14 @@ impl WebGLThread {
             WebGLMsg::UpdateWebRenderImage(ctx_id, sender) => {
                 self.handle_update_wr_image(ctx_id, sender);
             },
+            WebGLMsg::SwapBuffers(ctx_id) => {
+                self.handle_swap_buffers(ctx_id);
+            },
             WebGLMsg::DOMToTextureCommand(command) => {
                 self.handle_dom_to_texture(command);
             },
-            WebGLMsg::Swap(sender) => {
-                self.swap_draw_buffers(sender);
+            WebGLMsg::Swap(ctx_id) => {
+                // TODO(pcwalton)
             },
             WebGLMsg::Exit => {
                 return true;
@@ -315,12 +318,6 @@ impl WebGLThread {
         }
 
         false
-    }
-
-    /// Swap the underlying native surfaces.
-    fn swap_draw_buffers(&mut self, sender: WebGLSender<()>) {
-        println!("WebGLThread::swap_draw_buffers(): TODO");
-        // TODO(pcwalton)
     }
 
     /// Handles a WebGLCommand for a specific WebGLContext
@@ -360,8 +357,7 @@ impl WebGLThread {
             _ => None,
         };
 
-        let texture_and_size = context_info.map(|info| {
-            let surface_texture = &info.native_surface_texture;
+        let texture_and_size = context.ctx.back_buffer().0.map(|surface_texture| {
             (surface_texture.gl_texture(), surface_texture.surface().size())
         });
 
@@ -454,9 +450,6 @@ impl WebGLThread {
                 .0 as usize,
         );
 
-        let native_surface = NativeSurface::new(ctx.gl(), &size.to_i32(), &ctx.formats());
-        let native_surface_texture = NativeSurfaceTexture::new(ctx.gl(), native_surface);
-
         let limits = ctx.limits();
 
         let gl_sync = ctx.gl().fence_sync(gl::SYNC_GPU_COMMANDS_COMPLETE, 0);
@@ -466,7 +459,6 @@ impl WebGLThread {
         self.cached_context_info.insert(
             id,
             WebGLContextInfo {
-                native_surface_texture,
                 image_key: None,
                 share_mode,
                 gl_sync,
@@ -516,22 +508,23 @@ impl WebGLThread {
                     }
                 }
 
-                // Update webgl texture size. Texture id may change too.
-                info.native_surface_texture =
-                    old_surface_texture.expect("Where's the surface texture?");
-
                 // Update WR image if needed. Resize image updates are only required for SharedTexture mode.
                 // Readback mode already updates the image every frame to send the raw pixels.
                 // See `handle_update_wr_image`.
                 match (info.image_key, info.share_mode) {
                     (Some(image_key), WebGLContextShareMode::SharedTexture) => {
+                        let back_buffer = data.ctx
+                                              .back_buffer()
+                                              .0
+                                              .expect("Where's the back buffer?");
+                        let texture_target = back_buffer.gl_texture_target();
                         Self::update_wr_external_image(
                             &self.webrender_api,
-                            info.size(),
-                            info.formats().has_alpha(),
+                            back_buffer.surface().size(),
+                            back_buffer.surface().formats().has_alpha(),
                             context_id,
                             image_key,
-                            info.texture_target(),
+                            gl_texture_target_to_wr_texture_target(texture_target),
                         );
                     },
                     _ => {},
@@ -579,37 +572,50 @@ impl WebGLThread {
         context_id: WebGLContextId,
         sender: WebGLSender<webrender_api::ImageKey>,
     ) {
-        let info = self.cached_context_info.get_mut(&context_id).unwrap();
-        let texture_target = info.texture_target();
+        self.handle_swap_buffers(context_id);
+
+        let data = Self::make_current_if_needed_mut(
+            context_id,
+            &mut self.contexts,
+            &mut self.bound_context_id,
+        ).expect("Where's the GL data?");
+
+        let (size, formats, texture_target);
+        {
+            let back_buffer = data.ctx.back_buffer().0.expect("Where's the back buffer?");
+            size = back_buffer.surface().size();
+            formats = *back_buffer.surface().formats();
+            let gl_texture_target = back_buffer.gl_texture_target();
+            texture_target = gl_texture_target_to_wr_texture_target(gl_texture_target);
+        }
+
         let webrender_api = &self.webrender_api;
 
+        let info = self.cached_context_info.get_mut(&context_id).unwrap();
         let image_key = match info.share_mode {
             WebGLContextShareMode::SharedTexture => {
-                let size = info.size();
-                let alpha = info.formats().has_alpha();
-
                 // Reuse existing ImageKey or generate a new one.
                 // When using a shared texture ImageKeys are only generated after a WebGLContext creation.
                 *info.image_key.get_or_insert_with(|| {
                     Self::create_wr_external_image(
                         webrender_api,
                         size,
-                        alpha,
+                        formats.has_alpha(),
                         context_id,
                         texture_target,
                     )
                 })
             },
             WebGLContextShareMode::Readback => {
-                let pixels = Self::raw_pixels(&self.contexts[&context_id].ctx, info.size());
+                let pixels = Self::raw_pixels(&self.contexts[&context_id].ctx, size);
                 match info.image_key.clone() {
                     Some(image_key) => {
                         // ImageKey was already created, but WR Images must
                         // be updated every frame in readback mode to send the new raw pixels.
                         Self::update_wr_readback_image(
                             webrender_api,
-                            info.size(),
-                            info.formats().has_alpha(),
+                            size,
+                            formats.has_alpha(),
                             image_key,
                             pixels,
                         );
@@ -620,8 +626,8 @@ impl WebGLThread {
                         // Generate a new ImageKey for Readback mode.
                         let image_key = Self::create_wr_readback_image(
                             webrender_api,
-                            info.size(),
-                            info.formats().has_alpha(),
+                            size,
+                            formats.has_alpha(),
                             pixels,
                         );
                         info.image_key = Some(image_key);
@@ -633,6 +639,47 @@ impl WebGLThread {
 
         // Send the ImageKey to the Layout thread.
         sender.send(image_key).unwrap();
+    }
+
+    fn handle_swap_buffers(&mut self, context_id: WebGLContextId) {
+        let data = Self::make_current_if_needed_mut(
+            context_id,
+            &mut self.contexts,
+            &mut self.bound_context_id,
+        ).expect("Where's the GL data?");
+
+        let (size, formats, texture_target);
+        {
+            let back_buffer = data.ctx.back_buffer().0.expect("Where's the back buffer?");
+            size = back_buffer.surface().size();
+            formats = *back_buffer.surface().formats();
+            let gl_texture_target = back_buffer.gl_texture_target();
+            texture_target = gl_texture_target_to_wr_texture_target(gl_texture_target);
+        }
+
+        let webrender_api = &self.webrender_api;
+
+        // Fetch a new back buffer.
+        let mut front_buffer_slot = self.front_buffer.lock();
+        let new_back_buffer = match front_buffer_slot.take() {
+            Some(new_back_buffer) => {
+                println!("(swap) reusing old front buffer: {}", new_back_buffer.id());
+                new_back_buffer
+            }
+            None => {
+                let new_surface = NativeSurface::new(data.ctx.gl(), &size, &formats);
+                println!("(swap) creating new surface: {}", new_surface.id());
+                new_surface
+            }
+        };
+
+        // Swap the buffers.
+        *front_buffer_slot = Some(data.ctx
+                                      .swap_native_surface(Some(new_back_buffer))
+                                      .expect("Where's the new front buffer?")
+                                      .into_surface(data.ctx.gl()));
+        println!("(swap) new front buffer is {}",
+                 front_buffer_slot.as_ref().unwrap().id());
     }
 
     fn handle_dom_to_texture(&mut self, command: DOMToTextureCommand) {
@@ -923,22 +970,24 @@ struct WebGLContextInfo {
     gl_sync: gl::GLsync,
     /// The status of this context with respect to external consumers.
     render_state: ContextRenderState,
-    /// The native surface we're rendering to.
-    native_surface_texture: NativeSurfaceTexture,
     /// True if the context has requestAnimationFrame call
     has_request_animation: bool,
     /// True if the context received a WebGLCommand between two requestAnimationFrame
     received_webgl_command: bool,
 }
 
+/*
 impl WebGLContextInfo {
-    fn texture_target(&self) -> webrender_api::TextureTarget {
-        match self.native_surface_texture.gl_texture_type() {
-            gl::TEXTURE_RECTANGLE_ARB => webrender_api::TextureTarget::Rect,
-            _ => webrender_api::TextureTarget::Default,
-        }
+*/
+fn gl_texture_target_to_wr_texture_target(gl_texture_target: gl::GLuint)
+                                          -> webrender_api::TextureTarget {
+    match gl_texture_target {
+        gl::TEXTURE_RECTANGLE_ARB => webrender_api::TextureTarget::Rect,
+        _ => webrender_api::TextureTarget::Default,
     }
+}
 
+/*
     #[inline]
     fn size(&self) -> Size2D<i32> {
         self.native_surface_texture.surface().size()
@@ -949,6 +998,7 @@ impl WebGLContextInfo {
         self.native_surface_texture.surface().formats()
     }
 }
+*/
 
 /// Data about the linked DOM<->WebGLTexture elements.
 struct DOMToTextureData {

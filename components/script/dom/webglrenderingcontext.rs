@@ -808,17 +808,23 @@ impl WebGLRenderingContext {
     }
 
     pub fn layout_handle(&self) -> webrender_api::ImageKey {
+        println!("WebGLRenderingContext::layout_handle()");
         match self.share_mode {
             WebGLContextShareMode::SharedTexture => {
                 // WR using ExternalTexture requires a single update message.
-                self.webrender_image.get().unwrap_or_else(|| {
-                    let (sender, receiver) = webgl_channel().unwrap();
-                    self.webgl_sender.send_update_wr_image(sender).unwrap();
-                    let image_key = receiver.recv().unwrap();
-                    self.webrender_image.set(Some(image_key));
-
-                    image_key
-                })
+                match self.webrender_image.get() {
+                    None => {
+                        let (sender, receiver) = webgl_channel().unwrap();
+                        self.webgl_sender.send_update_wr_image(sender).unwrap();
+                        let image_key = receiver.recv().unwrap();
+                        self.webrender_image.set(Some(image_key));
+                        image_key
+                    }
+                    Some(image_key) => {
+                        self.webgl_sender.send_swap_buffers().unwrap();
+                        image_key
+                    }
+                }
             },
             WebGLContextShareMode::Readback => {
                 // WR using Readback requires to update WR image every frame
@@ -4382,6 +4388,10 @@ impl WebGLMessageSender {
 
     pub fn send_update_wr_image(&self, sender: WebGLSender<ImageKey>) -> WebGLSendResult {
         self.wake_after_send(|| self.sender.send_update_wr_image(sender))
+    }
+
+    pub fn send_swap_buffers(&self) -> WebGLSendResult {
+        self.wake_after_send(|| self.sender.send_swap_buffers())
     }
 
     pub fn send_dom_to_texture(&self, command: DOMToTextureCommand) -> WebGLSendResult {

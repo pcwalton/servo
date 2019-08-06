@@ -97,6 +97,7 @@ pub enum WebGLMsg {
     UpdateWebRenderImage(WebGLContextId, WebGLSender<ImageKey>),
     /// Commands used for the DOMToTexture feature.
     DOMToTextureCommand(DOMToTextureCommand),
+    SwapBuffers(WebGLContextId),
     /// Tells the WebGL contexts to swap their underlying texture targets
     Swap(WebGLSender<()>),
     /// Frees all resources and closes the thread.
@@ -207,6 +208,11 @@ impl WebGLMsgSender {
     pub fn send_update_wr_image(&self, sender: WebGLSender<ImageKey>) -> WebGLSendResult {
         self.sender
             .send(WebGLMsg::UpdateWebRenderImage(self.ctx_id, sender))
+    }
+
+    #[inline]
+    pub fn send_swap_buffers(&self) -> WebGLSendResult {
+        self.sender.send(WebGLMsg::SwapBuffers(self.ctx_id))
     }
 
     pub fn send_dom_to_texture(&self, command: DOMToTextureCommand) -> WebGLSendResult {
