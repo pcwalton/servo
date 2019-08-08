@@ -4391,10 +4391,6 @@ impl WebGLMessageSender {
         self.wake_after_send(|| self.sender.send_update_wr_image(sender))
     }
 
-    pub fn send_swap_buffers(&self) -> WebGLSendResult {
-        self.wake_after_send(|| self.sender.send_swap_buffers())
-    }
-
     pub fn send_dom_to_texture(&self, command: DOMToTextureCommand) -> WebGLSendResult {
         self.wake_after_send(|| self.sender.send_dom_to_texture(command))
     }

@@ -6,29 +6,19 @@ use crate::webgl_mode::FrontBuffer;
 use super::gl_context::{map_attrs_to_script_attrs, GLContextFactory, GLContextWrapper};
 use byteorder::{ByteOrder, NativeEndian, WriteBytesExt};
 use canvas_traits::webgl::*;
-use embedder_traits::EventLoopWaker;
 use euclid::default::Size2D;
 use fnv::FnvHashMap;
 use gleam::gl;
 use half::f16;
-use ipc_channel::ipc::{self, OpaqueIpcMessage};
-use ipc_channel::router::ROUTER;
-use offscreen_gl_context::{DrawBuffer, GLContext, GLFormats, NativeGLContextMethods};
-use offscreen_gl_context::{NativeSurface, NativeSurfaceTexture};
+use offscreen_gl_context::{GLContext, NativeGLContextMethods, NativeSurface};
 use pixels::{self, PixelFormat};
 use std::borrow::Cow;
 use std::cell::Cell;
 use std::cell::RefCell;
-use std::mem;
 use std::rc::Rc;
-use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use webrender_traits::{WebrenderExternalImageRegistry, WebrenderImageHandlerType};
-
-/// WebGL Threading API entry point that lives in the constellation.
-/// It allows to get a WebGLThread handle for each script pipeline.
-pub use crate::webgl_mode::ThreadMode;
 
 struct GLContextData {
     ctx: GLContextWrapper,
@@ -129,12 +119,6 @@ impl WebGLMainThread {
             WEBGL_MAIN_THREAD.with(|thread_data| thread_data.borrow_mut().take());
         }
     }
-
-    /// Returns the main GL thread if called from the main thread,
-    /// and `None` otherwise.
-    pub(crate) fn on_current_thread() -> Option<Rc<WebGLMainThread>> {
-        WEBGL_MAIN_THREAD.with(|main_thread| main_thread.borrow().clone())
-    }
 }
 
 thread_local! {
@@ -167,43 +151,6 @@ impl WebGLThread {
             receiver,
             front_buffer,
         }
-    }
-
-    /// Perform all initialization required to run an instance of WebGLThread
-    /// concurrently on the current thread. Returns a `WebGLMainThread` instance
-    /// that can be used to process any outstanding WebGL messages at any given
-    /// point in time.
-    pub(crate) fn run_on_current_thread(
-        mut init: WebGLThreadInit,
-        event_loop_waker: Box<dyn EventLoopWaker>,
-    ) -> Rc<WebGLMainThread> {
-        if let WebGLReceiver::Ipc(ref mut receiver) = init.receiver {
-            // Interpose a new channel in between the existing WebGL channel endpoints.
-            // This will bounce all WebGL messages through the router thread adding a small
-            // delay, but this will also ensure that the main thread will wake up and
-            // process the WebGL message when it arrives.
-            let (from_router_sender, from_router_receiver) = ipc::channel::<WebGLMsg>().unwrap();
-            let old_receiver = mem::replace(receiver, from_router_receiver);
-            ROUTER.add_route(
-                old_receiver.to_opaque(),
-                Box::new(move |msg: OpaqueIpcMessage| {
-                    let _ = from_router_sender.send(msg.to().unwrap());
-                    event_loop_waker.wake();
-                }),
-            );
-        }
-
-        let result = Rc::new(WebGLMainThread {
-            thread_data: RefCell::new(WebGLThread::new(init)),
-            shut_down: Cell::new(false),
-        });
-
-        WEBGL_MAIN_THREAD.with(|main_thread| {
-            debug_assert!(main_thread.borrow().is_none());
-            *main_thread.borrow_mut() = Some(result.clone());
-        });
-
-        result
     }
 
     /// Perform all initialization required to run an instance of WebGLThread
@@ -342,11 +289,6 @@ impl WebGLThread {
             None => return,
         };
 
-        let context_info = match command {
-            WebVRCommand::SubmitFrame(..) => self.cached_context_info.get(&context_id),
-            _ => None,
-        };
-
         let texture_and_size = context.ctx.back_buffer().0.map(|surface_texture| {
             (surface_texture.gl_texture(), surface_texture.surface().size())
         });
@@ -388,20 +330,13 @@ impl WebGLThread {
 
         let limits = ctx.limits();
 
-        let gl_sync = ctx.gl().fence_sync(gl::SYNC_GPU_COMMANDS_COMPLETE, 0);
+        //let gl_sync = ctx.gl().fence_sync(gl::SYNC_GPU_COMMANDS_COMPLETE, 0);
 
         self.contexts.insert(id, GLContextData { ctx, state: Default::default() });
 
         self.cached_context_info.insert(
             id,
-            WebGLContextInfo {
-                image_key: None,
-                share_mode,
-                gl_sync,
-                render_state: ContextRenderState::Unlocked,
-                has_request_animation: false,
-                received_webgl_command: false,
-            },
+            WebGLContextInfo { image_key: None, share_mode, received_webgl_command: false },
         );
 
         Ok((id, limits, share_mode))
@@ -421,32 +356,21 @@ impl WebGLThread {
         )
         .expect("Missing WebGL context!");
         match data.ctx.resize(size) {
-            Ok(old_draw_buffer) => {
+            Ok(_old_draw_buffer) => {
                 // Throw out all buffers.
                 let new_surface = NativeSurface::new(data.ctx.gl(), 
                                                      &size.to_i32(),
                                                      &data.ctx.formats());
-                data.ctx.swap_native_surface(Some(new_surface));
+                drop(data.ctx.swap_native_surface(Some(new_surface)));
                 let new_surface = NativeSurface::new(data.ctx.gl(), 
                                                      &size.to_i32(),
                                                      &data.ctx.formats());
-                let old_surface_texture = data.ctx.swap_native_surface(Some(new_surface));
-
-                let info = self.cached_context_info.get_mut(&context_id).unwrap();
-                if let ContextRenderState::Locked(ref mut in_use) = info.render_state {
-                    // If there's already an outdated draw buffer present, we can ignore
-                    // the newly resized one since it's not in use by the renderer.
-                    if in_use.is_none() {
-                        // We're resizing the context while WR is actively rendering
-                        // it, so we need to retain the GL resources until WR is
-                        // finished with them.
-                        *in_use = Some(old_draw_buffer);
-                    }
-                }
+                drop(data.ctx.swap_native_surface(Some(new_surface)));
 
                 // Update WR image if needed. Resize image updates are only required for SharedTexture mode.
                 // Readback mode already updates the image every frame to send the raw pixels.
                 // See `handle_update_wr_image`.
+                let info = self.cached_context_info.get_mut(&context_id).unwrap();
                 match (info.image_key, info.share_mode) {
                     (Some(image_key), WebGLContextShareMode::SharedTexture) => {
                         let back_buffer = data.ctx
@@ -584,14 +508,10 @@ impl WebGLThread {
             &mut self.bound_context_id,
         ).expect("Where's the GL data?");
 
-        let (size, formats, texture_target);
-        {
+        let (size, formats) = {
             let back_buffer = data.ctx.back_buffer().0.expect("Where's the back buffer?");
-            size = back_buffer.surface().size();
-            formats = *back_buffer.surface().formats();
-            let gl_texture_target = back_buffer.gl_texture_target();
-            texture_target = gl_texture_target_to_wr_texture_target(gl_texture_target);
-        }
+            (back_buffer.surface().size(), *back_buffer.surface().formats())
+        };
 
         // Fetch a new back buffer.
         let mut front_buffer_slot = self.front_buffer.lock();
@@ -869,41 +789,16 @@ impl Drop for WebGLThread {
     }
 }
 
-enum ContextRenderState {
-    /// The context is not being actively rendered.
-    Unlocked,
-    /// The context is actively being rendered. If a DrawBuffer value is present,
-    /// it is outdated but in use as long as the context is locked.
-    Locked(Option<DrawBuffer>),
-}
-
 /// Helper struct to store cached WebGLContext information.
 struct WebGLContextInfo {
-    /*
-    /// Render to texture identifier used by the WebGLContext.
-    texture_id: u32,
-    /// Size of the WebGLContext.
-    size: Size2D<i32>,
-    /// True if the WebGLContext uses an alpha channel.
-    alpha: bool,
-    */
     /// Currently used WebRender image key.
     image_key: Option<webrender_api::ImageKey>,
     /// The sharing mode used to send the image to WebRender.
     share_mode: WebGLContextShareMode,
-    /// GLSync Object used for a correct synchronization with Webrender external image callbacks.
-    gl_sync: gl::GLsync,
-    /// The status of this context with respect to external consumers.
-    render_state: ContextRenderState,
-    /// True if the context has requestAnimationFrame call
-    has_request_animation: bool,
     /// True if the context received a WebGLCommand between two requestAnimationFrame
     received_webgl_command: bool,
 }
 
-/*
-impl WebGLContextInfo {
-*/
 fn gl_texture_target_to_wr_texture_target(gl_texture_target: gl::GLuint)
                                           -> webrender_api::TextureTarget {
     match gl_texture_target {
@@ -911,19 +806,6 @@ fn gl_texture_target_to_wr_texture_target(gl_texture_target: gl::GLuint)
         _ => webrender_api::TextureTarget::Default,
     }
 }
-
-/*
-    #[inline]
-    fn size(&self) -> Size2D<i32> {
-        self.native_surface_texture.surface().size()
-    }
-
-    #[inline]
-    fn formats(&self) -> &GLFormats {
-        self.native_surface_texture.surface().formats()
-    }
-}
-*/
 
 /// Data about the linked DOM<->WebGLTexture elements.
 struct DOMToTextureData {

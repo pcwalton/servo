@@ -16,7 +16,6 @@ use offscreen_gl_context::{GLFormats, GLLimits as RawGLLimits, GLVersion};
 use offscreen_gl_context::{NativeGLContext, NativeGLContextHandle, NativeGLContextMethods};
 use offscreen_gl_context::{NativeSurface, NativeSurfaceTexture};
 use offscreen_gl_context::{OSMesaContext, OSMesaContextHandle};
-use servo_config::opts;
 
 pub trait CloneableDispatcher: GLContextDispatcher {
     fn clone(&self) -> Box<dyn GLContextDispatcher>;

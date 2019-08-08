@@ -2130,7 +2130,9 @@ where
     fn handle_swap_webgl_buffers_msg(&mut self, context_ids: Vec<WebGLContextId>) {
         if let Some(ref webgl_threads) = self.webgl_threads {
             for context_id in context_ids {
-                webgl_threads.0.send(WebGLMsg::SwapBuffers(context_id));
+                if webgl_threads.0.send(WebGLMsg::SwapBuffers(context_id)).is_err() {
+                    warn!("Failed to send WebGL buffer swap message!")
+                }
             }
         }
     }

@@ -110,7 +110,6 @@ use crate::stylesheet_set::StylesheetSetRef;
 use crate::task::TaskBox;
 use crate::task_source::{TaskSource, TaskSourceName};
 use crate::timers::OneshotTimerCallback;
-use canvas_traits::webgl::{webgl_channel, WebGLMsg};
 use cookie::Cookie;
 use devtools_traits::ScriptToDevtoolsControlMsg;
 use dom_struct::dom_struct;
@@ -4674,7 +4673,7 @@ impl AnimationFrameCallback {
             },
             AnimationFrameCallback::FrameRequestCallback {
                 ref callback,
-                ref webgl_chan,
+                webgl_chan: _,
             } => {
                 // TODO(jdm): The spec says that any exceptions should be suppressed:
                 // https://github.com/servo/servo/issues/6928

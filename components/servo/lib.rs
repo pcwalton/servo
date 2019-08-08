@@ -66,7 +66,6 @@ use bluetooth::BluetoothThreadFactory;
 use bluetooth_traits::BluetoothRequest;
 use canvas::WebGLComm;
 use canvas::gl_context::{CloneableDispatcher, GLContextFactory};
-use canvas::webgl_thread::{ThreadMode, WebGLMainThread};
 use canvas_traits::webgl::WebGLThreads;
 use compositing::compositor_thread::{
     CompositorProxy, CompositorReceiver, InitialCompositorState, Msg,
@@ -238,7 +237,6 @@ pub struct Servo<Window: WindowMethods + 'static + ?Sized> {
     embedder_receiver: EmbedderReceiver,
     embedder_events: Vec<(Option<BrowserId>, EmbedderMsg)>,
     profiler_enabled: bool,
-    webgl_thread_data: Option<Rc<WebGLMainThread>>,
 }
 
 #[derive(Clone)]
@@ -424,14 +422,10 @@ where
         let (external_image_handlers, external_images) = WebrenderExternalImageHandlers::new();
         let mut external_image_handlers = Box::new(external_image_handlers);
 
-        let run_webgl_on_main_thread =
-            cfg!(windows) || std::env::var("SERVO_WEBGL_MAIN_THREAD").is_ok();
-
         // Initialize WebGL Thread entry point.
-        let webgl_result = gl_factory.map(|factory| {
+        let webgl_threads = gl_factory.map(|factory| {
             let WebGLComm {
                 webgl_threads,
-                main_thread_data,
                 webxr_handler,
                 image_handler,
                 output_handler,
@@ -441,11 +435,6 @@ where
                     webrender_api_sender.clone(),
                     webvr_compositor.map(|c| c as Box<_>),
                     external_images.clone(),
-                    if run_webgl_on_main_thread {
-                        ThreadMode::MainThread(embedder.create_event_loop_waker())
-                    } else {
-                        ThreadMode::OffThread
-                    },
                 );
 
             // Set webrender external image handler for WebGL textures
@@ -459,12 +448,8 @@ where
                 webrender.set_output_image_handler(output_handler);
             }
 
-            (webgl_threads, main_thread_data)
+            webgl_threads
         });
-        let (webgl_threads, webgl_thread_data) = match webgl_result {
-            Some((a, b)) => (Some(a), b),
-            None => (None, None),
-        };
 
         let glplayer_threads = match window.get_gl_context() {
             GlContext::Unknown => None,
@@ -485,16 +470,7 @@ where
 
         webrender.set_external_image_handler(external_image_handlers);
 
-        // When webgl execution occurs on the main thread, and the script thread
-        // lives in the same process, then the script thread needs the ability to
-        // wake up the main thread's event loop when webgl commands need processing.
-        // When there are multiple processes, this is handled automatically by
-        // the IPC receiving handler instead.
-        let event_loop_waker = if run_webgl_on_main_thread && !opts.multiprocess {
-            Some(embedder.create_event_loop_waker())
-        } else {
-            None
-        };
+        let event_loop_waker = None;
 
         // Create the constellation, which maintains the engine
         // pipelines, including the script and layout threads, as well
@@ -557,7 +533,6 @@ where
             embedder_receiver: embedder_receiver,
             embedder_events: Vec::new(),
             profiler_enabled: false,
-            webgl_thread_data,
         }
     }
 
@@ -749,10 +724,6 @@ where
     }
 
     pub fn handle_events(&mut self, events: Vec<WindowEvent>) {
-        if let Some(ref mut webgl_thread) = self.webgl_thread_data {
-            webgl_thread.process();
-        }
-
         if self.compositor.receive_messages() {
             self.receive_messages();
         }

@@ -3,39 +3,24 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 use crate::gl_context::GLContextFactory;
-use crate::webgl_thread::{WebGLMainThread, WebGLThread, WebGLThreadInit};
-use canvas_traits::webgl::{DOMToTextureCommand, WebGLChan, WebGLContextId, WebGLLockMessage};
-use canvas_traits::webgl::{WebGLMsg, WebGLPipeline, WebGLReceiver, WebGLSender, WebGLThreads};
-use canvas_traits::webgl::{WebVRRenderHandler, webgl_channel};
-use embedder_traits::EventLoopWaker;
+use crate::webgl_thread::{WebGLThread, WebGLThreadInit};
+use canvas_traits::webgl::{WebGLMsg, WebGLSender, WebGLThreads, WebVRRenderHandler, webgl_channel};
 use euclid::default::Size2D;
 use fnv::FnvHashMap;
 use gleam::gl;
-#[cfg(target_os = "macos")]
-use io_surface;
 use offscreen_gl_context::{NativeSurface, NativeSurfaceTexture};
 use servo_config::pref;
 use std::default::Default;
-use std::mem;
 use std::rc::Rc;
-use std::sync::mpsc;
-use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 use webrender_traits::{WebrenderExternalImageApi, WebrenderExternalImageRegistry};
 use webxr_api::WebGLExternalImageApi;
 
 pub struct WebGLComm {
     pub webgl_threads: WebGLThreads,
-    pub main_thread_data: Option<Rc<WebGLMainThread>>,
     pub webxr_handler: Box<dyn webxr_api::WebGLExternalImageApi>,
     pub image_handler: Box<dyn WebrenderExternalImageApi>,
     pub output_handler: Option<Box<dyn webrender::OutputImageHandler>>,
-}
-
-type IOSurfaceId = u32;
-
-pub enum ThreadMode {
-    MainThread(Box<dyn EventLoopWaker>),
-    OffThread,
 }
 
 impl WebGLComm {
@@ -46,7 +31,6 @@ impl WebGLComm {
         webrender_api_sender: webrender_api::RenderApiSender,
         webvr_compositor: Option<Box<dyn WebVRRenderHandler>>,
         external_images: Arc<Mutex<WebrenderExternalImageRegistry>>,
-        mode: ThreadMode,
     ) -> WebGLComm {
         println!("WebGLThreads::new()");
         let (sender, receiver) = webgl_channel::<WebGLMsg>().unwrap();
@@ -76,20 +60,10 @@ impl WebGLComm {
 
         let external = WebGLExternalImages::new(webrender_gl, front_buffer, sender.clone());
 
-        let webgl_thread = match mode {
-            ThreadMode::MainThread(event_loop_waker) => {
-                let thread = WebGLThread::run_on_current_thread(init, event_loop_waker);
-                Some(thread)
-            },
-            ThreadMode::OffThread => {
-                WebGLThread::run_on_own_thread(init);
-                None
-            },
-        };
+        WebGLThread::run_on_own_thread(init);
 
         WebGLComm {
             webgl_threads: WebGLThreads(sender),
-            main_thread_data: webgl_thread,
             webxr_handler: external.sendable.clone_box(),
             image_handler: Box::new(external),
             output_handler: output_handler.map(|b| b as Box<_>),
@@ -111,12 +85,12 @@ impl SendableWebGLExternalImages {
 }
 
 impl webxr_api::WebGLExternalImageApi for SendableWebGLExternalImages {
-    fn lock(&self, id: usize) -> Option<gl::GLsync> {
+    fn lock(&self, _id: usize) -> Option<gl::GLsync> {
         // TODO(pcwalton)
         None
     }
 
-    fn unlock(&self, id: usize) {
+    fn unlock(&self, _id: usize) {
         // TODO(pcwalton)
     }
 
@@ -202,7 +176,7 @@ impl FrontBuffer {
 }
 
 /// struct used to implement DOMToTexture feature and webrender::OutputImageHandler trait.
-type OutputHandlerData = Option<(u32, Size2D<i32>)>;
+//type OutputHandlerData = Option<(u32, Size2D<i32>)>;
 struct OutputHandler {
     webrender_gl: Rc<dyn gl::Gl>,
     webgl_channel: WebGLSender<WebGLMsg>,
@@ -231,30 +205,6 @@ impl webrender::OutputImageHandler for OutputHandler {
             .webrender_gl
             .fence_sync(gl::SYNC_GPU_COMMANDS_COMPLETE, 0);
         self.sync_objects.insert(id, gl_sync);
-
-        // TODO(pcwalton)
-        /*
-        let result = if let Some(main_thread) = WebGLMainThread::on_current_thread() {
-            main_thread
-                .thread_data
-                .borrow_mut()
-                .handle_dom_to_texture_lock(id, gl_sync as usize)
-        } else {
-            // The lock command adds a WaitSync call on the WebGL command flow.
-            let command =
-                DOMToTextureCommand::Lock(id, gl_sync as usize));
-            self.webgl_channel
-                .send(WebGLMsg::DOMToTextureCommand(command))
-                .unwrap();
-            self.lock_channel.1.recv().unwrap()
-        };
-
-        result.map(|(tex_id, size)| {
-            (
-                tex_id,
-                webrender_api::units::FramebufferIntSize::new(size.width, size.height),
-            )
-        })*/
         None
     }
 
