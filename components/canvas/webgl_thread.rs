@@ -357,58 +357,6 @@ impl WebGLThread {
             .handle(context.ctx.gl(), command, texture_and_size);
     }
 
-    /// Handles a lock external callback received from webrender::ExternalImageHandler
-    fn handle_lock(&mut self,
-                   context_id: WebGLContextId,
-                   old_surface: Option<NativeSurface>,
-                   sender: WebGLSender<WebGLLockMessage>) {
-        let data = Self::make_current_if_needed_mut(
-            context_id,
-            &mut self.contexts,
-            &mut self.bound_context_id).expect(
-                "WebGLContext not found in a WebGLMsg::Lock message");
-        let info = self.cached_context_info.get_mut(&context_id).unwrap();
-        info.render_state = ContextRenderState::Locked(None);
-
-        // Insert a OpenGL Fence sync object that sends a signal when all the WebGL commands are
-        // finished. The related gl().wait_sync call is performed in the WR thread. See
-        // WebGLExternalImageApi for mor details.
-        let gl_sync = data.ctx.gl().fence_sync(gl::SYNC_GPU_COMMANDS_COMPLETE, 0);
-        info.gl_sync = gl_sync;
-        debug_assert!(data.ctx.gl().get_error() == gl::NO_ERROR);
-
-        // It is important that the fence sync is properly flushed into the GPU's command queue.
-        // Without proper flushing, the sync object may never be signaled.
-        data.ctx.gl().flush();
-        debug_assert!(data.ctx.gl().get_error() == gl::NO_ERROR);
-
-        drop(sender.send(WebGLLockMessage {
-            surface: data.ctx
-                         .swap_native_surface(old_surface)
-                         .expect("Where's the surface?")
-                         .into_surface(data.ctx.gl()),
-            sync: WebGLSync(info.gl_sync),
-        }));
-    }
-
-    /// Handles an unlock external callback received from webrender::ExternalImageHandler
-    pub(crate) fn handle_unlock(&mut self, context_id: WebGLContextId) {
-        let info = self.cached_context_info.get_mut(&context_id).unwrap();
-        info.render_state = ContextRenderState::Unlocked;
-
-        let gl_sync = info.gl_sync;
-        let data = Self::make_current_if_needed(
-            context_id,
-            &self.contexts,
-            &mut self.bound_context_id,
-        )
-        .expect("WebGLContext not found in a WebGLMsg::Unlock message");
-
-        // Release the GLSync object.
-        data.ctx.gl().delete_sync(gl_sync);
-        debug_assert!(data.ctx.gl().get_error() == gl::NO_ERROR);
-    }
-
     /// Creates a new WebGLContext
     fn create_webgl_context(
         &mut self,

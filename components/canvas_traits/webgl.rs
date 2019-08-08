@@ -37,7 +37,7 @@ pub struct WebGLCommandBacktrace {
     pub js_backtrace: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug)]
 pub struct WebGLLockMessage {
     pub surface: NativeSurface,
     pub sync: WebGLSync,
@@ -98,19 +98,6 @@ pub enum WebGLMsg {
     WebGLCommand(WebGLContextId, WebGLCommand, WebGLCommandBacktrace),
     /// Runs a WebVRCommand in a specific WebGLContext.
     WebVRCommand(WebGLContextId, WebVRCommand),
-    /*
-    /// Locks a specific WebGLContext. Lock messages are used for a correct synchronization
-    /// with WebRender external image API.
-    /// WR locks a external texture when it wants to use the shared texture contents.
-    /// The WR client should not change the shared texture content until the Unlock call.
-    /// Currently OpenGL Sync Objects are used to implement the synchronization mechanism.
-    Lock(WebGLContextId, Option<NativeSurface>, WebGLSender<WebGLLockMessage>),
-    /// Unlocks a specific WebGLContext. Unlock messages are used for a correct synchronization
-    /// with WebRender external image API.
-    /// The WR unlocks a context when it finished reading the shared texture contents.
-    /// Unlock messages are always sent after a Lock message.
-    Unlock(WebGLContextId),
-    */
     /// Creates or updates the image keys required for WebRender.
     UpdateWebRenderImage(WebGLContextId, WebGLSender<ImageKey>),
     /// Commands used for the DOMToTexture feature.

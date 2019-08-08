@@ -100,18 +100,12 @@ impl WebGLComm {
 /// Bridge between the webxr_api::ExternalImage callbacks and the WebGLThreads.
 struct SendableWebGLExternalImages {
     webgl_channel: WebGLSender<WebGLMsg>,
-    // Used to avoid creating a new channel on each received WebRender request.
-    lock_channel: (
-        WebGLSender<WebGLLockMessage>,
-        WebGLReceiver<WebGLLockMessage>,
-    ),
 }
 
 impl SendableWebGLExternalImages {
     fn new(channel: WebGLSender<WebGLMsg>) -> Self {
         Self {
             webgl_channel: channel,
-            lock_channel: webgl_channel().unwrap(),
         }
     }
 }
@@ -213,10 +207,6 @@ struct OutputHandler {
     webrender_gl: Rc<dyn gl::Gl>,
     webgl_channel: WebGLSender<WebGLMsg>,
     // Used to avoid creating a new channel on each received WebRender request.
-    lock_channel: (
-        WebGLSender<OutputHandlerData>,
-        WebGLReceiver<OutputHandlerData>,
-    ),
     sync_objects: FnvHashMap<webrender_api::PipelineId, gl::GLsync>,
 }
 
@@ -225,7 +215,6 @@ impl OutputHandler {
         OutputHandler {
             webrender_gl,
             webgl_channel: channel,
-            lock_channel: webgl_channel().unwrap(),
             sync_objects: Default::default(),
         }
     }
@@ -243,6 +232,8 @@ impl webrender::OutputImageHandler for OutputHandler {
             .fence_sync(gl::SYNC_GPU_COMMANDS_COMPLETE, 0);
         self.sync_objects.insert(id, gl_sync);
 
+        // TODO(pcwalton)
+        /*
         let result = if let Some(main_thread) = WebGLMainThread::on_current_thread() {
             main_thread
                 .thread_data
@@ -251,7 +242,7 @@ impl webrender::OutputImageHandler for OutputHandler {
         } else {
             // The lock command adds a WaitSync call on the WebGL command flow.
             let command =
-                DOMToTextureCommand::Lock(id, gl_sync as usize, self.lock_channel.0.clone());
+                DOMToTextureCommand::Lock(id, gl_sync as usize));
             self.webgl_channel
                 .send(WebGLMsg::DOMToTextureCommand(command))
                 .unwrap();
@@ -263,7 +254,8 @@ impl webrender::OutputImageHandler for OutputHandler {
                 tex_id,
                 webrender_api::units::FramebufferIntSize::new(size.width, size.height),
             )
-        })
+        })*/
+        None
     }
 
     fn unlock(&mut self, id: webrender_api::PipelineId) {
