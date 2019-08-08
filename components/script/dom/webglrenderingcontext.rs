@@ -808,7 +808,6 @@ impl WebGLRenderingContext {
     }
 
     pub(crate) fn layout_handle(&self) -> HTMLCanvasDataSource {
-        println!("WebGLRenderingContext::layout_handle()");
         let image_key = match self.share_mode {
             WebGLContextShareMode::SharedTexture => {
                 // WR using ExternalTexture requires a single update message.

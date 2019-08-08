@@ -235,7 +235,6 @@ impl WebGLThread {
     /// Handles a generic WebGLMsg message
     fn handle_msg(&mut self, msg: WebGLMsg, webgl_chan: &WebGLChan) -> bool {
         trace!("processing {:?}", msg);
-        println!("received msg: {:?}", msg);
         match msg {
             WebGLMsg::CreateContext(version, size, attributes, result_sender) => {
                 let result = self.create_webgl_context(version, size, attributes);
@@ -294,12 +293,6 @@ impl WebGLThread {
             WebGLMsg::WebVRCommand(ctx_id, command) => {
                 self.handle_webvr_command(ctx_id, command);
             },
-            /*WebGLMsg::Lock(ctx_id, old_surface, sender) => {
-                self.handle_lock(ctx_id, old_surface, sender);
-            },
-            WebGLMsg::Unlock(ctx_id) => {
-                self.handle_unlock(ctx_id);
-            },*/
             WebGLMsg::UpdateWebRenderImage(ctx_id, sender) => {
                 self.handle_update_wr_image(ctx_id, sender);
             },
@@ -308,9 +301,6 @@ impl WebGLThread {
             },
             WebGLMsg::DOMToTextureCommand(command) => {
                 self.handle_dom_to_texture(command);
-            },
-            WebGLMsg::Swap(ctx_id) => {
-                // TODO(pcwalton)
             },
             WebGLMsg::Exit => {
                 return true;
@@ -372,10 +362,8 @@ impl WebGLThread {
                    context_id: WebGLContextId,
                    old_surface: Option<NativeSurface>,
                    sender: WebGLSender<WebGLLockMessage>) {
-        println!("WebGLThread::handle_lock()");
-
         let data = Self::make_current_if_needed_mut(
-            context_id, 
+            context_id,
             &mut self.contexts,
             &mut self.bound_context_id).expect(
                 "WebGLContext not found in a WebGLMsg::Lock message");
@@ -657,20 +645,11 @@ impl WebGLThread {
             texture_target = gl_texture_target_to_wr_texture_target(gl_texture_target);
         }
 
-        let webrender_api = &self.webrender_api;
-
         // Fetch a new back buffer.
         let mut front_buffer_slot = self.front_buffer.lock();
         let new_back_buffer = match front_buffer_slot.take() {
-            Some(new_back_buffer) => {
-                println!("(swap) reusing old front buffer: {}", new_back_buffer.id());
-                new_back_buffer
-            }
-            None => {
-                let new_surface = NativeSurface::new(data.ctx.gl(), &size, &formats);
-                println!("(swap) creating new surface: {}", new_surface.id());
-                new_surface
-            }
+            Some(new_back_buffer) => new_back_buffer,
+            None => NativeSurface::new(data.ctx.gl(), &size, &formats),
         };
 
         // Swap the buffers.
@@ -678,8 +657,6 @@ impl WebGLThread {
                                       .swap_native_surface(Some(new_back_buffer))
                                       .expect("Where's the new front buffer?")
                                       .into_surface(data.ctx.gl()));
-        println!("(swap) new front buffer is {}",
-                 front_buffer_slot.as_ref().unwrap().id());
     }
 
     fn handle_dom_to_texture(&mut self, command: DOMToTextureCommand) {

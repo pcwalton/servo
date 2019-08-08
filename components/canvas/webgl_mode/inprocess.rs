@@ -155,25 +155,6 @@ impl WebGLExternalImages {
 
 impl WebrenderExternalImageApi for WebGLExternalImages {
     fn lock(&mut self, id: u64) -> (u32, Size2D<i32>) {
-        /*
-        // WebGL Thread has it's own GL command queue that we need to synchronize with the WR GL
-        // command queue. The WebGLMsg::Lock message inserts a fence in the WebGL command queue.
-        self.sendable
-            .webgl_channel
-            .send(WebGLMsg::Lock(
-                WebGLContextId(id as usize),
-                self.surface_texture.take().map(|surface_texture| {
-                    surface_texture.into_surface(&*self.webrender_gl)
-                }),
-                self.sendable.lock_channel.0.clone(),
-            ))
-            .unwrap();
-
-        // Take the surface from WebGL and wrap it in a native surface texture.
-        let WebGLLockMessage { mut surface, sync } = self.sendable.lock_channel.1.recv().unwrap();
-        self.surface_texture = Some(NativeSurfaceTexture::new(&*self.webrender_gl, surface));
-        */
-
         let (gl_texture, size);
         match self.front_buffer.take() {
             None => {
@@ -186,19 +167,15 @@ impl WebrenderExternalImageApi for WebGLExternalImages {
                                                                     front_buffer);
                 gl_texture = locked_front_buffer.gl_texture();
                 size = locked_front_buffer.surface().size();
-                println!("(lock) presenting surface {}", locked_front_buffer.surface().id());
                 self.locked_front_buffer = Some(locked_front_buffer);
             }
         }
-
-        println!("(lock) returning gl texture: {:?}", gl_texture);
         (gl_texture, size)
     }
 
     fn unlock(&mut self, id: u64) {
         self.sendable.unlock(id as usize);
         if let Some(locked_front_buffer) = self.locked_front_buffer.take() {
-            println!("(unlock) putting back surface {}", locked_front_buffer.surface().id());
             self.front_buffer.put_back(locked_front_buffer.into_surface(&*self.webrender_gl));
         }
     }

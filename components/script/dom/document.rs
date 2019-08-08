@@ -4676,11 +4676,6 @@ impl AnimationFrameCallback {
                 ref callback,
                 ref webgl_chan,
             } => {
-                if let Some(webgl_chan) = webgl_chan {
-                    let (sender, receiver) = webgl_channel().unwrap();
-                    webgl_chan.send(WebGLMsg::Swap(sender)).unwrap();
-                    let _ = receiver.recv().unwrap();
-                }
                 // TODO(jdm): The spec says that any exceptions should be suppressed:
                 // https://github.com/servo/servo/issues/6928
                 let _ = callback.Call__(Finite::wrap(now), ExceptionHandling::Report);
