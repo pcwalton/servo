@@ -28,7 +28,7 @@ use webrender_traits::{WebrenderExternalImageRegistry, WebrenderImageHandlerType
 
 /// WebGL Threading API entry point that lives in the constellation.
 /// It allows to get a WebGLThread handle for each script pipeline.
-pub use crate::webgl_mode::{ThreadMode, WebGLThreads};
+pub use crate::webgl_mode::ThreadMode;
 
 struct GLContextData {
     ctx: GLContextWrapper,

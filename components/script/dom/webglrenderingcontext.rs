@@ -807,9 +807,9 @@ impl WebGLRenderingContext {
         receiver.recv().unwrap()
     }
 
-    pub fn layout_handle(&self) -> webrender_api::ImageKey {
+    pub(crate) fn layout_handle(&self) -> HTMLCanvasDataSource {
         println!("WebGLRenderingContext::layout_handle()");
-        match self.share_mode {
+        let image_key = match self.share_mode {
             WebGLContextShareMode::SharedTexture => {
                 // WR using ExternalTexture requires a single update message.
                 match self.webrender_image.get() {
@@ -821,7 +821,7 @@ impl WebGLRenderingContext {
                         image_key
                     }
                     Some(image_key) => {
-                        self.webgl_sender.send_swap_buffers().unwrap();
+                        //self.webgl_sender.send_swap_buffers().unwrap();
                         image_key
                     }
                 }
@@ -833,7 +833,9 @@ impl WebGLRenderingContext {
                 self.webgl_sender.send_update_wr_image(sender).unwrap();
                 receiver.recv().unwrap()
             },
-        }
+        };
+        let context_id = self.context_id();
+        HTMLCanvasDataSource::WebGL { image_key, context_id }
     }
 
     // https://www.khronos.org/registry/webgl/extensions/ANGLE_instanced_arrays/
@@ -4117,7 +4119,7 @@ pub trait LayoutCanvasWebGLRenderingContextHelpers {
 impl LayoutCanvasWebGLRenderingContextHelpers for LayoutDom<WebGLRenderingContext> {
     #[allow(unsafe_code)]
     unsafe fn canvas_data_source(&self) -> HTMLCanvasDataSource {
-        HTMLCanvasDataSource::WebGL((*self.unsafe_get()).layout_handle())
+        (*self.unsafe_get()).layout_handle()
     }
 }
 

@@ -62,6 +62,24 @@ impl<'de> Deserialize<'de> for WebGLSync {
     }
 }
 
+/// WebGL Threading API entry point that lives in the constellation.
+pub struct WebGLThreads(pub WebGLSender<WebGLMsg>);
+
+impl WebGLThreads {
+    /// Gets the WebGLThread handle for each script pipeline.
+    pub fn pipeline(&self) -> WebGLPipeline {
+        // This mode creates a single thread, so the existing WebGLChan is just cloned.
+        WebGLPipeline(WebGLChan(self.0.clone()))
+    }
+
+    /// Sends a exit message to close the WebGLThreads and release all WebGLContexts.
+    pub fn exit(&self) -> Result<(), &'static str> {
+        self.0
+            .send(WebGLMsg::Exit)
+            .map_err(|_| "Failed to send Exit message")
+    }
+}
+
 /// WebGL Message API
 #[derive(Debug, Deserialize, Serialize)]
 pub enum WebGLMsg {

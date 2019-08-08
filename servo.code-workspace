@@ -17,6 +17,10 @@
 			"path": "components/config"
 		},
 		{
+			"name": "constellation",
+			"path": "components/constellation"
+		},
+		{
 			"name": "embedder_traits",
 			"path": "components/embedder_traits"
 		},
@@ -43,6 +47,10 @@
 		{
 			"name": "script",
 			"path": "components/script"
+		},
+		{
+			"name": "script_layout_interface",
+			"path": "components/script_layout_interface"
 		},
 		{
 			"name": "script_traits",

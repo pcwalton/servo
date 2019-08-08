@@ -66,7 +66,8 @@ use bluetooth::BluetoothThreadFactory;
 use bluetooth_traits::BluetoothRequest;
 use canvas::WebGLComm;
 use canvas::gl_context::{CloneableDispatcher, GLContextFactory};
-use canvas::webgl_thread::{ThreadMode, WebGLMainThread, WebGLThreads};
+use canvas::webgl_thread::{ThreadMode, WebGLMainThread};
+use canvas_traits::webgl::WebGLThreads;
 use compositing::compositor_thread::{
     CompositorProxy, CompositorReceiver, InitialCompositorState, Msg,
 };
