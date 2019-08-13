@@ -25,11 +25,7 @@ pub trait CloneableDispatcher: GLContextDispatcher {
 /// Currently, shared textures are used to render WebGL textures into the WR compositor.
 /// In order to create a shared context, the GLContextFactory stores the handle of the main GL context.
 pub enum GLContextFactory {
-    Native(
-        NativeGLContextHandle,
-        Option<Box<dyn CloneableDispatcher + Send>>,
-        gl::GlType,
-    ),
+    Native(Option<Box<dyn CloneableDispatcher + Send>>, gl::GlType),
     OSMesa(OSMesaContextHandle),
 }
 
@@ -49,51 +45,12 @@ impl GLContextFactory {
         // FIXME(emilio): This assumes a single GL backend per platform which is
         // not true on Linux, we probably need a third `Egl` variant or abstract
         // it a bit more...
-        NativeGLContext::current_handle()
-            .map(|handle| GLContextFactory::Native(handle, dispatcher, api_type))
+        Some(GLContextFactory::Native(dispatcher, api_type))
     }
 
     /// Creates a new GLContextFactory that uses the currently bound OSMesa context to create shared contexts.
     pub fn current_osmesa_handle() -> Option<GLContextFactory> {
         OSMesaContext::current_handle().map(GLContextFactory::OSMesa)
-    }
-
-    /// Creates a new shared GLContext with the main GLContext
-    pub fn new_shared_context(
-        &self,
-        webgl_version: WebGLVersion,
-        size: Size2D<u32>,
-        attributes: GLContextAttributes,
-    ) -> Result<GLContextWrapper, &'static str> {
-        let attributes = map_attrs(attributes);
-        Ok(match *self {
-            GLContextFactory::Native(ref _handle, ref _dispatcher, ref api_type) => {
-                GLContextWrapper::Native(GLContext::new_shared_with_dispatcher(
-                    // FIXME(nox): Why are those i32 values?
-                    size.to_i32(),
-                    attributes,
-                    ColorAttachmentType::NativeSurface,
-                    *api_type,
-                    Self::gl_version(webgl_version),
-                    Some(_handle),
-                    _dispatcher.as_ref().map(|d| (**d).clone()),
-                )?)
-            },
-            GLContextFactory::OSMesa(ref _handle) => {
-                {
-                    GLContextWrapper::OSMesa(GLContext::new_shared_with_dispatcher(
-                        // FIXME(nox): Why are those i32 values?
-                        size.to_i32(),
-                        attributes,
-                        ColorAttachmentType::NativeSurface,
-                        gl::GlType::default(),
-                        Self::gl_version(webgl_version),
-                        Some(_handle),
-                        None,
-                    )?)
-                }
-            },
-        })
     }
 
     /// Creates a new non-shared GLContext
@@ -105,7 +62,7 @@ impl GLContextFactory {
     ) -> Result<GLContextWrapper, &'static str> {
         let attributes = map_attrs(attributes);
         Ok(match *self {
-            GLContextFactory::Native(_, _, ref api_type) => {
+            GLContextFactory::Native(_, ref api_type) => {
                 GLContextWrapper::Native(GLContext::new_shared_with_dispatcher(
                     // FIXME(nox): Why are those i32 values?
                     size.to_i32(),
