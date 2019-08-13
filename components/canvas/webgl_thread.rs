@@ -10,7 +10,7 @@ use euclid::default::Size2D;
 use fnv::FnvHashMap;
 use gleam::gl;
 use half::f16;
-use offscreen_gl_context::{GLContext, NativeGLContextMethods, NativeSurface};
+use offscreen_gl_context::{Format, GLContext, NativeGLContextMethods, NativeSurface};
 use pixels::{self, PixelFormat};
 use std::borrow::Cow;
 use std::cell::Cell;
@@ -358,13 +358,18 @@ impl WebGLThread {
         match data.ctx.resize(size) {
             Ok(_old_draw_buffer) => {
                 // Throw out all buffers.
-                let new_surface = NativeSurface::new(data.ctx.gl(), 
+                let format = data.ctx.formats().to_format().unwrap_or(Format::RGBA);
+                let new_surface = NativeSurface::new(data.ctx.gl(),
+                                                     data.ctx.api_type(),
+                                                     data.ctx.api_version(),
                                                      &size.to_i32(),
-                                                     &data.ctx.formats());
+                                                     format);
                 drop(data.ctx.swap_native_surface(Some(new_surface)));
-                let new_surface = NativeSurface::new(data.ctx.gl(), 
+                let new_surface = NativeSurface::new(data.ctx.gl(),
+                                                     data.ctx.api_type(),
+                                                     data.ctx.api_version(),
                                                      &size.to_i32(),
-                                                     &data.ctx.formats());
+                                                     format);
                 drop(data.ctx.swap_native_surface(Some(new_surface)));
 
                 // Update WR image if needed. Resize image updates are only required for SharedTexture mode.
@@ -381,7 +386,7 @@ impl WebGLThread {
                         Self::update_wr_external_image(
                             &self.webrender_api,
                             back_buffer.surface().size(),
-                            back_buffer.surface().formats().has_alpha(),
+                            back_buffer.surface().format().has_alpha(),
                             context_id,
                             image_key,
                             gl_texture_target_to_wr_texture_target(texture_target),
@@ -440,11 +445,11 @@ impl WebGLThread {
             &mut self.bound_context_id,
         ).expect("Where's the GL data?");
 
-        let (size, formats, texture_target);
+        let (size, format, texture_target);
         {
             let back_buffer = data.ctx.back_buffer().0.expect("Where's the back buffer?");
             size = back_buffer.surface().size();
-            formats = *back_buffer.surface().formats();
+            format = back_buffer.surface().format();
             let gl_texture_target = back_buffer.gl_texture_target();
             texture_target = gl_texture_target_to_wr_texture_target(gl_texture_target);
         }
@@ -460,7 +465,7 @@ impl WebGLThread {
                     Self::create_wr_external_image(
                         webrender_api,
                         size,
-                        formats.has_alpha(),
+                        format.has_alpha(),
                         context_id,
                         texture_target,
                     )
@@ -475,7 +480,7 @@ impl WebGLThread {
                         Self::update_wr_readback_image(
                             webrender_api,
                             size,
-                            formats.has_alpha(),
+                            format.has_alpha(),
                             image_key,
                             pixels,
                         );
@@ -487,7 +492,7 @@ impl WebGLThread {
                         let image_key = Self::create_wr_readback_image(
                             webrender_api,
                             size,
-                            formats.has_alpha(),
+                            format.has_alpha(),
                             pixels,
                         );
                         info.image_key = Some(image_key);
@@ -508,16 +513,22 @@ impl WebGLThread {
             &mut self.bound_context_id,
         ).expect("Where's the GL data?");
 
-        let (size, formats) = {
+        let (size, format) = {
             let back_buffer = data.ctx.back_buffer().0.expect("Where's the back buffer?");
-            (back_buffer.surface().size(), *back_buffer.surface().formats())
+            (back_buffer.surface().size(), back_buffer.surface().format())
         };
 
         // Fetch a new back buffer.
         let mut front_buffer_slot = self.front_buffer.lock();
         let new_back_buffer = match front_buffer_slot.take() {
             Some(new_back_buffer) => new_back_buffer,
-            None => NativeSurface::new(data.ctx.gl(), &size, &formats),
+            None => {
+                NativeSurface::new(data.ctx.gl(),
+                                   data.ctx.api_type(),
+                                   data.ctx.api_version(),
+                                   &size,
+                                   format)
+            }
         };
 
         // Swap the buffers.

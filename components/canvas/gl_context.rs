@@ -232,6 +232,20 @@ impl GLContextWrapper {
             GLContextWrapper::OSMesa(ref ctx) => *ctx.borrow_formats(),
         }
     }
+
+    pub fn api_type(&self) -> gl::GlType {
+        match *self {
+            GLContextWrapper::Native(ref ctx) => ctx.api_type(),
+            GLContextWrapper::OSMesa(ref ctx) => ctx.api_type(),
+        }
+    }
+
+    pub fn api_version(&self) -> GLVersion {
+        match *self {
+            GLContextWrapper::Native(ref ctx) => ctx.api_version(),
+            GLContextWrapper::OSMesa(ref ctx) => ctx.api_version(),
+        }
+    }
 }
 
 fn map_limits(limits: RawGLLimits) -> GLLimits {
