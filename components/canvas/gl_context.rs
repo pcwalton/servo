@@ -8,14 +8,11 @@ use canvas_traits::webgl::{
 };
 use euclid::default::Size2D;
 use gleam::gl;
-use offscreen_gl_context::{
-    ColorAttachmentType, DrawBuffer, GLContext, GLContextAttributes as RawGLContextAttributes,
-    GLContextDispatcher,
-};
-use offscreen_gl_context::{GLFormats, GLLimits as RawGLLimits, GLVersion};
+use offscreen_gl_context::{GLContext, GLContextAttributes as RawGLContextAttributes};
+use offscreen_gl_context::{GLContextDispatcher, GLFormats, GLLimits as RawGLLimits, GLVersion};
 use offscreen_gl_context::{NativeGLContext, NativeGLContextHandle, NativeGLContextMethods};
 use offscreen_gl_context::{NativeSurface, NativeSurfaceTexture};
-use offscreen_gl_context::{OSMesaContext, OSMesaContextHandle};
+use offscreen_gl_context::{OSMesaContext, OSMesaContextHandle, RenderTarget};
 
 pub trait CloneableDispatcher: GLContextDispatcher {
     fn clone(&self) -> Box<dyn GLContextDispatcher>;
@@ -67,7 +64,6 @@ impl GLContextFactory {
                     // FIXME(nox): Why are those i32 values?
                     size.to_i32(),
                     attributes,
-                    ColorAttachmentType::NativeSurface,
                     *api_type,
                     Self::gl_version(webgl_version),
                     None,
@@ -79,7 +75,6 @@ impl GLContextFactory {
                     // FIXME(nox): Why are those i32 values?
                     size.to_i32(),
                     attributes,
-                    ColorAttachmentType::NativeSurface,
                     gl::GlType::default(),
                     Self::gl_version(webgl_version),
                     None,
@@ -138,14 +133,14 @@ impl GLContextWrapper {
         }
     }
 
-    pub fn swap_native_surface(&mut self, new_surface: Option<NativeSurface>)
-                               -> Option<NativeSurfaceTexture> {
+    pub fn swap_color_surface(&mut self, new_surface: NativeSurface) -> Option<NativeSurface> {
         match *self {
-            GLContextWrapper::Native(ref mut ctx) => ctx.swap_native_surface(new_surface),
-            GLContextWrapper::OSMesa(ref mut ctx) => ctx.swap_native_surface(new_surface),
+            GLContextWrapper::Native(ref mut ctx) => ctx.swap_color_surface(new_surface).ok(),
+            GLContextWrapper::OSMesa(ref mut ctx) => ctx.swap_color_surface(new_surface).ok(),
         }
     }
 
+    /*
     pub fn back_buffer(&self) -> (Option<&NativeSurfaceTexture>, GLLimits) {
         match *self {
             GLContextWrapper::Native(ref ctx) => {
@@ -162,8 +157,9 @@ impl GLContextWrapper {
             },
         }
     }
+    */
 
-    pub fn resize(&mut self, size: Size2D<u32>) -> Result<DrawBuffer, &'static str> {
+    pub fn resize(&mut self, size: Size2D<u32>) -> Result<RenderTarget, &'static str> {
         match *self {
             GLContextWrapper::Native(ref mut ctx) => {
                 // FIXME(nox): Why are those i32 values?
@@ -187,6 +183,13 @@ impl GLContextWrapper {
         match *self {
             GLContextWrapper::Native(ref ctx) => *ctx.borrow_formats(),
             GLContextWrapper::OSMesa(ref ctx) => *ctx.borrow_formats(),
+        }
+    }
+
+    pub fn size(&self) -> Option<Size2D<i32>> {
+        match *self {
+            GLContextWrapper::Native(ref ctx) => ctx.size(),
+            GLContextWrapper::OSMesa(ref ctx) => ctx.size(),
         }
     }
 
