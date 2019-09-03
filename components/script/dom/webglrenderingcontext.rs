@@ -55,7 +55,7 @@ use canvas_traits::webgl::WebGLError::*;
 use canvas_traits::webgl::{
     webgl_channel, AlphaTreatment, DOMToTextureCommand, GLContextAttributes, GLLimits, GlType,
     Parameter, TexDataType, TexFormat, TexParameter, WebGLChan, WebGLCommand,
-    WebGLCommandBacktrace, WebGLContextId, WebGLContextShareMode, WebGLError,
+    WebGLCommandBacktrace, WebGLContextId, WebGLError,
     WebGLFramebufferBindingRequest, WebGLMsg, WebGLMsgSender, WebGLProgramId, WebGLResult,
     WebGLSLVersion, WebGLSendResult, WebGLSender, WebGLVersion, WebVRCommand, YAxisTreatment,
 };
@@ -140,7 +140,6 @@ pub struct WebGLRenderingContext {
     webgl_sender: WebGLMessageSender,
     #[ignore_malloc_size_of = "Defined in webrender"]
     webrender_image: Cell<Option<webrender_api::ImageKey>>,
-    share_mode: WebGLContextShareMode,
     webgl_version: WebGLVersion,
     glsl_version: WebGLSLVersion,
     #[ignore_malloc_size_of = "Defined in offscreen_gl_context"]
@@ -204,7 +203,6 @@ impl WebGLRenderingContext {
                     window.get_event_loop_waker(),
                 ),
                 webrender_image: Cell::new(None),
-                share_mode: ctx_data.share_mode,
                 webgl_version,
                 glsl_version: ctx_data.glsl_version,
                 limits: ctx_data.limits,
@@ -808,30 +806,19 @@ impl WebGLRenderingContext {
     }
 
     pub(crate) fn layout_handle(&self) -> HTMLCanvasDataSource {
-        let image_key = match self.share_mode {
-            WebGLContextShareMode::SharedTexture => {
-                // WR using ExternalTexture requires a single update message.
-                match self.webrender_image.get() {
-                    None => {
-                        let (sender, receiver) = webgl_channel().unwrap();
-                        self.webgl_sender.send_update_wr_image(sender).unwrap();
-                        let image_key = receiver.recv().unwrap();
-                        self.webrender_image.set(Some(image_key));
-                        image_key
-                    }
-                    Some(image_key) => {
-                        //self.webgl_sender.send_swap_buffers().unwrap();
-                        image_key
-                    }
-                }
-            },
-            WebGLContextShareMode::Readback => {
-                // WR using Readback requires to update WR image every frame
-                // in order to send the new raw pixels.
+        // WR using ExternalTexture requires a single update message.
+        let image_key = match self.webrender_image.get() {
+            None => {
                 let (sender, receiver) = webgl_channel().unwrap();
                 self.webgl_sender.send_update_wr_image(sender).unwrap();
-                receiver.recv().unwrap()
-            },
+                let image_key = receiver.recv().unwrap();
+                self.webrender_image.set(Some(image_key));
+                image_key
+            }
+            Some(image_key) => {
+                //self.webgl_sender.send_swap_buffers().unwrap();
+                image_key
+            }
         };
         let context_id = self.context_id();
         HTMLCanvasDataSource::WebGL { image_key, context_id }

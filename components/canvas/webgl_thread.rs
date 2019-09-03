@@ -3,27 +3,36 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 use crate::webgl_mode::FrontBuffer;
-use super::gl_context::{map_attrs_to_script_attrs, GLContextFactory, GLContextWrapper};
 use byteorder::{ByteOrder, NativeEndian, WriteBytesExt};
-use canvas_traits::webgl::*;
+use canvas_traits::webgl::{self, ActiveAttribInfo, ActiveUniformInfo, AlphaTreatment};
+use canvas_traits::webgl::{DOMToTextureCommand, GLContextAttributes, GlType, ProgramLinkInfo};
+use canvas_traits::webgl::{TexDataType, TexFormat, WebGLBufferId, WebGLChan, WebGLCommand};
+use canvas_traits::webgl::{WebGLCommandBacktrace, WebGLContextId, WebGLCreateContextResult};
+use canvas_traits::webgl::{WebGLFramebufferBindingRequest, WebGLFramebufferId, WebGLMsg};
+use canvas_traits::webgl::{WebGLMsgSender, WebGLProgramId, WebGLReceiver, WebGLRenderbufferId};
+use canvas_traits::webgl::{WebGLSLVersion, WebGLSender, WebGLShaderId, WebGLTextureId};
+use canvas_traits::webgl::{WebGLVersion, WebGLVertexArrayId, WebVRCommand};
+use canvas_traits::webgl::{WebVRRenderHandler, YAxisTreatment};
 use euclid::default::Size2D;
 use fnv::FnvHashMap;
-use gleam::gl;
+use gleam::gl::{self, Gl, GlFns};
 use half::f16;
-use offscreen_gl_context::{Format, GLContext, NativeGLContextMethods};
-use offscreen_gl_context::{NativeSurface, NativeSurfaceTexture};
+use offscreen_gl_context::{Context, ContextAttributeFlags, ContextAttributes, Device, GLApi};
+use offscreen_gl_context::{GLFlavor, GLLimits, GLVersion, SurfaceDescriptor, SurfaceTexture};
 use pixels::{self, PixelFormat};
 use std::borrow::Cow;
-use std::cell::Cell;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
+use std::ptr;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use webrender_traits::{WebrenderExternalImageRegistry, WebrenderImageHandlerType};
 
 struct GLContextData {
-    ctx: GLContextWrapper,
+    ctx: Context,
+    gl: Rc<dyn Gl>,
     state: GLState,
+    attributes: GLContextAttributes,
 }
 
 pub struct GLState {
@@ -53,8 +62,8 @@ impl Default for GLState {
 /// A WebGLThread manages the life cycle and message multiplexing of
 /// a set of WebGLContexts living in the same thread.
 pub(crate) struct WebGLThread {
-    /// Factory used to create a new GLContext shared with the WR/Main thread.
-    gl_factory: GLContextFactory,
+    /// The GPU device.
+    device: Device,
     /// Channel used to generate/update or delete `webrender_api::ImageKey`s.
     webrender_api: webrender_api::RenderApi,
     /// Map of live WebGLContexts.
@@ -86,7 +95,6 @@ enum EventLoop {
 
 /// The data required to initialize an instance of the WebGLThread type.
 pub(crate) struct WebGLThreadInit {
-    pub gl_factory: GLContextFactory,
     pub webrender_api_sender: webrender_api::RenderApiSender,
     pub webvr_compositor: Option<Box<dyn WebVRRenderHandler>>,
     pub external_images: Arc<Mutex<WebrenderExternalImageRegistry>>,
@@ -130,7 +138,6 @@ impl WebGLThread {
     /// Create a new instance of WebGLThread.
     pub(crate) fn new(
         WebGLThreadInit {
-            gl_factory,
             webrender_api_sender,
             webvr_compositor,
             external_images,
@@ -140,7 +147,7 @@ impl WebGLThread {
         }: WebGLThreadInit,
     ) -> Self {
         WebGLThread {
-            gl_factory,
+            device: Device::new().expect("Couldn't open WebGL device!"),
             webrender_api: webrender_api_sender.create_api(),
             contexts: Default::default(),
             cached_context_info: Default::default(),
@@ -187,15 +194,14 @@ impl WebGLThread {
             WebGLMsg::CreateContext(version, size, attributes, result_sender) => {
                 let result = self.create_webgl_context(version, size, attributes);
                 result_sender
-                    .send(result.map(|(id, limits, share_mode)| {
+                    .send(result.map(|(id, limits)| {
                         let data = Self::make_current_if_needed(
+                            &self.device,
                             id,
                             &self.contexts,
-                            &mut self.bound_context_id,
-                        )
-                        .expect("WebGLContext not found");
-                        let glsl_version = Self::get_glsl_version(&data.ctx);
-                        let api_type = match data.ctx.gl().get_type() {
+                            &mut self.bound_context_id).expect("WebGLContext not found");
+                        let glsl_version = Self::get_glsl_version(&*data.gl);
+                        let api_type = match data.gl.get_type() {
                             gl::GlType::Gl => GlType::Gl,
                             gl::GlType::Gles => GlType::Gles,
                         };
@@ -206,14 +212,14 @@ impl WebGLThread {
                             // and in GLES. Rather than doing version detection, it does
                             // not hurt to enable them anyways.
 
-                            data.ctx.gl().enable(gl::POINT_SPRITE);
-                            let err = data.ctx.gl().get_error();
+                            data.gl.enable(gl::POINT_SPRITE);
+                            let err = data.gl.get_error();
                             if err != 0 {
                                 warn!("Error enabling GL point sprites: {}", err);
                             }
 
-                            data.ctx.gl().enable(gl::PROGRAM_POINT_SIZE);
-                            let err = data.ctx.gl().get_error();
+                            data.gl.enable(gl::PROGRAM_POINT_SIZE);
+                            let err = data.gl.get_error();
                             if err != 0 {
                                 warn!("Error enabling GL program point size: {}", err);
                             }
@@ -222,7 +228,6 @@ impl WebGLThread {
                         WebGLCreateContextResult {
                             sender: WebGLMsgSender::new(id, webgl_chan.clone()),
                             limits,
-                            share_mode,
                             glsl_version,
                             api_type,
                         }
@@ -271,13 +276,18 @@ impl WebGLThread {
             },
             None => return,
         };
-        let data = Self::make_current_if_needed_mut(
-            context_id,
-            &mut self.contexts,
-            &mut self.bound_context_id,
-        );
+        let data = Self::make_current_if_needed_mut(&self.device,
+                                                    context_id,
+                                                    &mut self.contexts,
+                                                    &mut self.bound_context_id);
         if let Some(data) = data {
-            data.ctx.apply_command(command, backtrace, &mut data.state);
+            WebGLImpl::apply(&self.device,
+                             &data.ctx,
+                             &*data.gl,
+                             &mut data.state,
+                             &data.attributes,
+                             command,
+                             backtrace);
         }
     }
 
@@ -304,25 +314,34 @@ impl WebGLThread {
     }
 
     /// Creates a new WebGLContext
+    #[allow(unsafe_code)]
     fn create_webgl_context(
         &mut self,
         version: WebGLVersion,
         size: Size2D<u32>,
         attributes: GLContextAttributes,
-    ) -> Result<(WebGLContextId, GLLimits, WebGLContextShareMode), String> {
+    ) -> Result<(WebGLContextId, webgl::GLLimits), String> {
         println!("WebGLThread::create_webgl_context()");
 
         // Creating a new GLContext may make the current bound context_id dirty.
         // Clear it to ensure that  make_current() is called in subsequent commands.
         self.bound_context_id = None;
 
-        // First try to create a shared context for the best performance.
-        // Fallback to readback mode if the shared context creation fails.
-        let (ctx, share_mode) = self
-            .gl_factory
-            .new_context(version, size, attributes)
-            .map(|r| (r, WebGLContextShareMode::SharedTexture))
-            .map_err(|msg: &str| msg.to_owned())?;
+        let context_attributes = &ContextAttributes {
+            flavor: version.to_surfman_flavor(),
+            flags: attributes.to_surfman_context_attribute_flags(),
+        };
+        let mut ctx = self.device
+                          .create_context(&context_attributes)
+                          .expect("Failed to create the GL context!");
+
+        let surface_descriptor =
+            SurfaceDescriptor::from_context_attributes_and_size(&context_attributes,
+                                                                &size.to_i32());
+        let back_buffer = self.device
+                              .create_surface_from_descriptor(&mut ctx, &surface_descriptor)
+                              .expect("Failed to create the initial back buffer!");
+        drop(self.device.replace_context_color_surface(&mut ctx, back_buffer));
 
         let id = WebGLContextId(
             self.external_images
@@ -332,18 +351,25 @@ impl WebGLThread {
                 .0 as usize,
         );
 
-        let limits = ctx.limits();
+        let gl = unsafe {
+            GlFns::load_with(|function_name| {
+                self.device.get_proc_address(&ctx, function_name).unwrap_or(ptr::null())
+            })
+        };
+
+        let limits = self.device.context_gl_info(&ctx).limits;
 
         //let gl_sync = ctx.gl().fence_sync(gl::SYNC_GPU_COMMANDS_COMPLETE, 0);
 
-        self.contexts.insert(id, GLContextData { ctx, state: Default::default() });
+        let state = Default::default();
+        self.contexts.insert(id, GLContextData { ctx, gl, state, attributes });
 
         self.cached_context_info.insert(
             id,
-            WebGLContextInfo { image_key: None, share_mode, received_webgl_command: false },
+            WebGLContextInfo { image_key: None, received_webgl_command: false },
         );
 
-        Ok((id, limits, share_mode))
+        Ok((id, limits.to_webgl_limits()))
     }
 
     /// Resizes a WebGLContext
@@ -354,51 +380,40 @@ impl WebGLThread {
         sender: WebGLSender<Result<(), String>>,
     ) {
         let data = Self::make_current_if_needed_mut(
+            &self.device,
             context_id,
             &mut self.contexts,
-            &mut self.bound_context_id,
-        )
-        .expect("Missing WebGL context!");
-        match data.ctx.resize(size) {
-            Ok(_old_draw_buffer) => {
-                // Throw out all buffers.
-                let format = data.ctx.formats().to_format().unwrap_or(Format::RGBA);
-                let new_surface = NativeSurface::new(data.ctx.gl(),
-                                                     data.ctx.api_type(),
-                                                     data.ctx.api_version(),
-                                                     &size.to_i32(),
-                                                     format);
-                drop(data.ctx.swap_color_surface(new_surface));
-                let new_surface = NativeSurface::new(data.ctx.gl(),
-                                                     data.ctx.api_type(),
-                                                     data.ctx.api_version(),
-                                                     &size.to_i32(),
-                                                     format);
-                drop(data.ctx.swap_color_surface(new_surface));
+            &mut self.bound_context_id).expect("Missing WebGL context!");
 
-                // Update WR image if needed. Resize image updates are only required for SharedTexture mode.
-                // Readback mode already updates the image every frame to send the raw pixels.
-                // See `handle_update_wr_image`.
-                let info = self.cached_context_info.get_mut(&context_id).unwrap();
-                match (info.image_key, info.share_mode) {
-                    (Some(image_key), WebGLContextShareMode::SharedTexture) => {
-                        let texture_target = NativeSurfaceTexture::gl_texture_target();
-                        Self::update_wr_external_image(&self.webrender_api,
-                                                       size.to_i32(),
-                                                       format.has_alpha(),
-                                                       context_id,
-                                                       image_key,
-                                                       current_wr_texture_target());
-                    },
-                    _ => {},
-                }
+        // Throw out all buffers.
+        let gl_info = *self.device.context_gl_info(&data.ctx);
+        let surface_descriptor =
+            SurfaceDescriptor::from_context_attributes_and_size(&gl_info.attributes,
+                                                                &size.to_i32());
+        let new_surface = self.device
+                              .create_surface_from_descriptor(&mut data.ctx, &surface_descriptor)
+                              .unwrap();
+        drop(self.device.replace_context_color_surface(&mut data.ctx, new_surface).unwrap());
+        let new_surface = self.device
+                              .create_surface_from_descriptor(&mut data.ctx, &surface_descriptor)
+                              .unwrap();
+        drop(self.device.replace_context_color_surface(&mut data.ctx, new_surface).unwrap());
 
-                sender.send(Ok(())).unwrap();
-            },
-            Err(msg) => {
-                sender.send(Err(msg.into())).unwrap();
-            },
+        // Update WR image if needed. Resize image updates are only required for SharedTexture mode.
+        // Readback mode already updates the image every frame to send the raw pixels.
+        // See `handle_update_wr_image`.
+        let info = self.cached_context_info.get_mut(&context_id).unwrap();
+        if let Some(image_key) = info.image_key {
+            let has_alpha = gl_info.attributes.flags.contains(ContextAttributeFlags::ALPHA);
+            Self::update_wr_external_image(&self.webrender_api,
+                                           size.to_i32(),
+                                           has_alpha,
+                                           context_id,
+                                           image_key,
+                                           current_wr_texture_target());
         }
+
+        sender.send(Ok(())).unwrap();
     }
 
     /// Removes a WebGLContext and releases attached resources.
@@ -415,8 +430,10 @@ impl WebGLThread {
         }
 
         // We need to make the context current so its resources can be disposed of.
-        let _ =
-            Self::make_current_if_needed(context_id, &self.contexts, &mut self.bound_context_id);
+        drop(Self::make_current_if_needed(&self.device,
+                                          context_id,
+                                          &self.contexts,
+                                          &mut self.bound_context_id));
 
         // Release GL context.
         self.contexts.remove(&context_id);
@@ -438,61 +455,32 @@ impl WebGLThread {
         self.handle_swap_buffers(context_id);
 
         let data = Self::make_current_if_needed_mut(
+            &self.device,
             context_id,
             &mut self.contexts,
-            &mut self.bound_context_id,
-        ).expect("Where's the GL data?");
+            &mut self.bound_context_id).expect("Where's the GL data?");
 
-        let size = data.ctx.size().expect("Where's the render target?");
-        let format = data.ctx.formats().to_format().expect("Unexpected format!");
+        let front_surface_descriptor = self.device
+                                           .context_color_surface(&data.ctx)
+                                           .expect("Where's the render target?")
+                                           .descriptor();
+        let size = front_surface_descriptor.size;
+        let format = front_surface_descriptor.format;
         let texture_target = current_wr_texture_target();
         let webrender_api = &self.webrender_api;
 
+        // Reuse existing ImageKey or generate a new one.
+        // When using a shared texture ImageKeys are only generated after a WebGLContext creation.
         let info = self.cached_context_info.get_mut(&context_id).unwrap();
-        let image_key = match info.share_mode {
-            WebGLContextShareMode::SharedTexture => {
-                // Reuse existing ImageKey or generate a new one.
-                // When using a shared texture ImageKeys are only generated after a WebGLContext creation.
-                *info.image_key.get_or_insert_with(|| {
-                    Self::create_wr_external_image(
-                        webrender_api,
-                        size,
-                        format.has_alpha(),
-                        context_id,
-                        texture_target,
-                    )
-                })
-            },
-            WebGLContextShareMode::Readback => {
-                let pixels = Self::raw_pixels(&self.contexts[&context_id].ctx, size);
-                match info.image_key.clone() {
-                    Some(image_key) => {
-                        // ImageKey was already created, but WR Images must
-                        // be updated every frame in readback mode to send the new raw pixels.
-                        Self::update_wr_readback_image(
-                            webrender_api,
-                            size,
-                            format.has_alpha(),
-                            image_key,
-                            pixels,
-                        );
-
-                        image_key
-                    },
-                    None => {
-                        // Generate a new ImageKey for Readback mode.
-                        let image_key = Self::create_wr_readback_image(
-                            webrender_api,
-                            size,
-                            format.has_alpha(),
-                            pixels,
-                        );
-                        info.image_key = Some(image_key);
-                        image_key
-                    },
-                }
-            },
-        };
+        let image_key = *info.image_key.get_or_insert_with(|| {
+            Self::create_wr_external_image(
+                webrender_api,
+                size,
+                format.has_alpha(),
+                context_id,
+                texture_target,
+            )
+        });
 
         // Send the ImageKey to the Layout thread.
         sender.send(image_key).unwrap();
@@ -500,6 +488,7 @@ impl WebGLThread {
 
     fn handle_swap_buffers(&mut self, context_id: WebGLContextId) {
         let data = Self::make_current_if_needed_mut(
+            &self.device,
             context_id,
             &mut self.contexts,
             &mut self.bound_context_id,
@@ -510,32 +499,34 @@ impl WebGLThread {
         let new_back_buffer = match front_buffer_slot.take() {
             Some(new_back_buffer) => new_back_buffer,
             None => {
-                NativeSurface::new(data.ctx.gl(),
-                                   data.ctx.api_type(),
-                                   data.ctx.api_version(),
-                                   &data.ctx.size().expect("Where's the render target?"),
-                                   data.ctx.formats().to_format().expect("Unexpected format!"))
+                let descriptor = *self.device
+                                      .context_color_surface(&data.ctx)
+                                      .expect("Where's the front buffer?")
+                                      .descriptor();
+                self.device
+                    .create_surface_from_descriptor(&mut data.ctx, &descriptor)
+                    .expect("Failed to create a new back buffer!")
             }
         };
 
         // Swap the buffers.
-        let new_front_buffer = data.ctx
-                                   .swap_color_surface(new_back_buffer)
+        let new_front_buffer = self.device
+                                   .replace_context_color_surface(&mut data.ctx, new_back_buffer)
                                    .expect("Where's the new front buffer?");
-        *front_buffer_slot = Some(new_front_buffer);
+        *front_buffer_slot = new_front_buffer;
     }
 
     fn handle_dom_to_texture(&mut self, command: DOMToTextureCommand) {
         match command {
             DOMToTextureCommand::Attach(context_id, texture_id, document_id, pipeline_id, size) => {
                 let data = Self::make_current_if_needed(
+                    &self.device,
                     context_id,
                     &self.contexts,
                     &mut self.bound_context_id,
-                )
-                .expect("WebGLContext not found in a WebGL DOMToTextureCommand::Attach command");
+                ).expect("WebGLContext not found in a WebGL DOMToTextureCommand::Attach command");
                 // Initialize the texture that WR will use for frame outputs.
-                data.ctx.gl().tex_image_2d(
+                data.gl.tex_image_2d(
                     gl::TEXTURE_2D,
                     0,
                     gl::RGBA as gl::GLint,
@@ -585,25 +576,27 @@ impl WebGLThread {
         pipeline_id: webrender_api::PipelineId,
         gl_sync: usize,
     ) -> Option<(u32, Size2D<i32>)> {
+        let device = &self.device;
         let contexts = &self.contexts;
         let bound_context_id = &mut self.bound_context_id;
         self.dom_outputs.get(&pipeline_id).and_then(|dom_data| {
-            let data =
-                Self::make_current_if_needed(dom_data.context_id, contexts, bound_context_id);
+            let data = Self::make_current_if_needed(device,
+                                                    dom_data.context_id,
+                                                    contexts,
+                                                    bound_context_id);
             data.and_then(|data| {
                 // The next glWaitSync call is used to synchronize the two flows of
                 // OpenGL commands (WR and WebGL) in order to avoid using semi-ready WR textures.
                 // glWaitSync doesn't block WebGL CPU thread.
-                data.ctx
-                    .gl()
-                    .wait_sync(gl_sync as gl::GLsync, 0, gl::TIMEOUT_IGNORED);
+                data.gl.wait_sync(gl_sync as gl::GLsync, 0, gl::TIMEOUT_IGNORED);
                 Some((dom_data.texture_id.get(), dom_data.size))
             })
         })
     }
 
-    /// Gets a reference to a GLContextWrapper for a given WebGLContextId and makes it current if required.
+    /// Gets a reference to a Context for a given WebGLContextId and makes it current if required.
     fn make_current_if_needed<'a>(
+        device: &Device,
         context_id: WebGLContextId,
         contexts: &'a FnvHashMap<WebGLContextId, GLContextData>,
         bound_id: &mut Option<WebGLContextId>,
@@ -612,7 +605,7 @@ impl WebGLThread {
 
         if let Some(data) = data {
             if Some(context_id) != *bound_id {
-                data.ctx.make_current();
+                device.make_context_current(&data.ctx).unwrap();
                 *bound_id = Some(context_id);
             }
         }
@@ -622,6 +615,7 @@ impl WebGLThread {
 
     /// Gets a mutable reference to a GLContextWrapper for a WebGLContextId and makes it current if required.
     fn make_current_if_needed_mut<'a>(
+        device: &Device,
         context_id: WebGLContextId,
         contexts: &'a mut FnvHashMap<WebGLContextId, GLContextData>,
         bound_id: &mut Option<WebGLContextId>,
@@ -630,7 +624,7 @@ impl WebGLThread {
 
         if let Some(ref data) = data {
             if Some(context_id) != *bound_id {
-                data.ctx.make_current();
+                device.make_context_current(&data.ctx).unwrap();
                 *bound_id = Some(context_id);
             }
         }
@@ -674,40 +668,6 @@ impl WebGLThread {
         webrender_api.update_resources(txn.resource_updates);
     }
 
-    /// Creates a `webrender_api::ImageKey` that uses raw pixels.
-    fn create_wr_readback_image(
-        webrender_api: &webrender_api::RenderApi,
-        size: Size2D<i32>,
-        alpha: bool,
-        data: Vec<u8>,
-    ) -> webrender_api::ImageKey {
-        let descriptor = Self::image_descriptor(size, alpha);
-        let data = webrender_api::ImageData::new(data);
-
-        let image_key = webrender_api.generate_image_key();
-        let mut txn = webrender_api::Transaction::new();
-        txn.add_image(image_key, descriptor, data, None);
-        webrender_api.update_resources(txn.resource_updates);
-
-        image_key
-    }
-
-    /// Updates a `webrender_api::ImageKey` that uses raw pixels.
-    fn update_wr_readback_image(
-        webrender_api: &webrender_api::RenderApi,
-        size: Size2D<i32>,
-        alpha: bool,
-        image_key: webrender_api::ImageKey,
-        data: Vec<u8>,
-    ) {
-        let descriptor = Self::image_descriptor(size, alpha);
-        let data = webrender_api::ImageData::new(data);
-
-        let mut txn = webrender_api::Transaction::new();
-        txn.update_image(image_key, descriptor, data, &webrender_api::DirtyRect::All);
-        webrender_api.update_resources(txn.resource_updates);
-    }
-
     /// Helper function to create a `webrender_api::ImageDescriptor`.
     fn image_descriptor(size: Size2D<i32>, alpha: bool) -> webrender_api::ImageDescriptor {
         webrender_api::ImageDescriptor {
@@ -733,35 +693,9 @@ impl WebGLThread {
         webrender_api::ImageData::External(data)
     }
 
-    /// Helper function to fetch the raw pixels used in readback mode.
-    fn raw_pixels(context: &GLContextWrapper, size: Size2D<i32>) -> Vec<u8> {
-        let width = size.width as usize;
-        let height = size.height as usize;
-
-        let mut pixels = context.gl().read_pixels(
-            0,
-            0,
-            size.width as gl::GLsizei,
-            size.height as gl::GLsizei,
-            gl::RGBA,
-            gl::UNSIGNED_BYTE,
-        );
-        // flip image vertically (texture is upside down)
-        let orig_pixels = pixels.clone();
-        let stride = width * 4;
-        for y in 0..height {
-            let dst_start = y * stride;
-            let src_start = (height - y - 1) * stride;
-            let src_slice = &orig_pixels[src_start..src_start + stride];
-            (&mut pixels[dst_start..dst_start + stride]).clone_from_slice(&src_slice[..stride]);
-        }
-        pixels::rgba8_byte_swap_colors_inplace(&mut pixels);
-        pixels
-    }
-
     /// Gets the GLSL Version supported by a GLContext.
-    fn get_glsl_version(context: &GLContextWrapper) -> WebGLSLVersion {
-        let version = context.gl().get_string(gl::SHADING_LANGUAGE_VERSION);
+    fn get_glsl_version(gl: &dyn Gl) -> WebGLSLVersion {
+        let version = gl.get_string(gl::SHADING_LANGUAGE_VERSION);
         // Fomat used by SHADING_LANGUAGE_VERSION query : major.minor[.release] [vendor info]
         let mut values = version.split(&['.', ' '][..]);
         let major = values
@@ -791,14 +725,12 @@ impl Drop for WebGLThread {
 struct WebGLContextInfo {
     /// Currently used WebRender image key.
     image_key: Option<webrender_api::ImageKey>,
-    /// The sharing mode used to send the image to WebRender.
-    share_mode: WebGLContextShareMode,
     /// True if the context received a WebGLCommand between two requestAnimationFrame
     received_webgl_command: bool,
 }
 
 fn current_wr_texture_target() -> webrender_api::TextureTarget {
-    match NativeSurfaceTexture::gl_texture_target() {
+    match SurfaceTexture::gl_texture_target() {
         gl::TEXTURE_RECTANGLE_ARB => webrender_api::TextureTarget::Rect,
         _ => webrender_api::TextureTarget::Default,
     }
@@ -817,59 +749,60 @@ pub struct WebGLImpl;
 
 impl WebGLImpl {
     #[allow(unsafe_code)]
-    pub fn apply<Native: NativeGLContextMethods>(
-        ctx: &GLContext<Native>,
+    pub fn apply(
+        device: &Device,
+        ctx: &Context,
+        gl: &dyn Gl,
         state: &mut GLState,
+        attributes: &GLContextAttributes,
         command: WebGLCommand,
         _backtrace: WebGLCommandBacktrace,
     ) {
         match command {
-            WebGLCommand::GetContextAttributes(ref sender) => sender
-                .send(map_attrs_to_script_attrs(*ctx.borrow_attributes()))
-                .unwrap(),
-            WebGLCommand::ActiveTexture(target) => ctx.gl().active_texture(target),
+            WebGLCommand::GetContextAttributes(ref sender) => sender.send(*attributes).unwrap(),
+            WebGLCommand::ActiveTexture(target) => gl.active_texture(target),
             WebGLCommand::AttachShader(program_id, shader_id) => {
-                ctx.gl().attach_shader(program_id.get(), shader_id.get())
+                gl.attach_shader(program_id.get(), shader_id.get())
             },
             WebGLCommand::DetachShader(program_id, shader_id) => {
-                ctx.gl().detach_shader(program_id.get(), shader_id.get())
+                gl.detach_shader(program_id.get(), shader_id.get())
             },
-            WebGLCommand::BindAttribLocation(program_id, index, ref name) => ctx
-                .gl()
-                .bind_attrib_location(program_id.get(), index, &to_name_in_compiled_shader(name)),
-            WebGLCommand::BlendColor(r, g, b, a) => ctx.gl().blend_color(r, g, b, a),
-            WebGLCommand::BlendEquation(mode) => ctx.gl().blend_equation(mode),
+            WebGLCommand::BindAttribLocation(program_id, index, ref name) => {
+                gl.bind_attrib_location(program_id.get(), index, &to_name_in_compiled_shader(name))
+            }
+            WebGLCommand::BlendColor(r, g, b, a) => gl.blend_color(r, g, b, a),
+            WebGLCommand::BlendEquation(mode) => gl.blend_equation(mode),
             WebGLCommand::BlendEquationSeparate(mode_rgb, mode_alpha) => {
-                ctx.gl().blend_equation_separate(mode_rgb, mode_alpha)
+                gl.blend_equation_separate(mode_rgb, mode_alpha)
             },
-            WebGLCommand::BlendFunc(src, dest) => ctx.gl().blend_func(src, dest),
-            WebGLCommand::BlendFuncSeparate(src_rgb, dest_rgb, src_alpha, dest_alpha) => ctx
-                .gl()
-                .blend_func_separate(src_rgb, dest_rgb, src_alpha, dest_alpha),
+            WebGLCommand::BlendFunc(src, dest) => gl.blend_func(src, dest),
+            WebGLCommand::BlendFuncSeparate(src_rgb, dest_rgb, src_alpha, dest_alpha) => {
+                gl.blend_func_separate(src_rgb, dest_rgb, src_alpha, dest_alpha)
+            }
             WebGLCommand::BufferData(buffer_type, ref receiver, usage) => {
-                gl::buffer_data(ctx.gl(), buffer_type, &receiver.recv().unwrap(), usage)
+                gl::buffer_data(gl, buffer_type, &receiver.recv().unwrap(), usage)
             },
             WebGLCommand::BufferSubData(buffer_type, offset, ref receiver) => {
-                gl::buffer_sub_data(ctx.gl(), buffer_type, offset, &receiver.recv().unwrap())
+                gl::buffer_sub_data(gl, buffer_type, offset, &receiver.recv().unwrap())
             },
             WebGLCommand::Clear(mask) => {
                 state.clear_mask = mask;
-                ctx.gl().clear(mask);
+                gl.clear(mask);
             },
             WebGLCommand::ClearColor(r, g, b, a) => {
                 state.clear_color = (r, g, b, a);
-                ctx.gl().clear_color(r, g, b, a);
+                gl.clear_color(r, g, b, a);
             },
             WebGLCommand::ClearDepth(depth) => {
                 let value = depth.max(0.).min(1.) as f64;
                 state.depth_clear_value = value;
-                ctx.gl().clear_depth(value)
+                gl.clear_depth(value)
             },
             WebGLCommand::ClearStencil(stencil) => {
                 state.stencil_clear_value = stencil;
-                ctx.gl().clear_stencil(stencil);
+                gl.clear_stencil(stencil);
             },
-            WebGLCommand::ColorMask(r, g, b, a) => ctx.gl().color_mask(r, g, b, a),
+            WebGLCommand::ColorMask(r, g, b, a) => gl.color_mask(r, g, b, a),
             WebGLCommand::CopyTexImage2D(
                 target,
                 level,
@@ -879,7 +812,7 @@ impl WebGLImpl {
                 width,
                 height,
                 border,
-            ) => ctx.gl().copy_tex_image_2d(
+            ) => gl.copy_tex_image_2d(
                 target,
                 level,
                 internal_format,
@@ -898,33 +831,31 @@ impl WebGLImpl {
                 y,
                 width,
                 height,
-            ) => ctx
-                .gl()
-                .copy_tex_sub_image_2d(target, level, xoffset, yoffset, x, y, width, height),
-            WebGLCommand::CullFace(mode) => ctx.gl().cull_face(mode),
-            WebGLCommand::DepthFunc(func) => ctx.gl().depth_func(func),
+            ) => gl.copy_tex_sub_image_2d(target, level, xoffset, yoffset, x, y, width, height),
+            WebGLCommand::CullFace(mode) => gl.cull_face(mode),
+            WebGLCommand::DepthFunc(func) => gl.depth_func(func),
             WebGLCommand::DepthMask(flag) => {
                 state.depth_write_mask = flag;
-                ctx.gl().depth_mask(flag);
+                gl.depth_mask(flag);
             },
-            WebGLCommand::DepthRange(near, far) => ctx
-                .gl()
-                .depth_range(near.max(0.).min(1.) as f64, far.max(0.).min(1.) as f64),
+            WebGLCommand::DepthRange(near, far) => {
+                gl.depth_range(near.max(0.).min(1.) as f64, far.max(0.).min(1.) as f64)
+            }
             WebGLCommand::Disable(cap) => {
                 if cap == gl::SCISSOR_TEST {
                     state.scissor_test_enabled = false;
                 }
-                ctx.gl().disable(cap);
+                gl.disable(cap);
             },
             WebGLCommand::Enable(cap) => {
                 if cap == gl::SCISSOR_TEST {
                     state.scissor_test_enabled = true;
                 }
-                ctx.gl().enable(cap);
+                gl.enable(cap);
             },
             WebGLCommand::FramebufferRenderbuffer(target, attachment, renderbuffertarget, rb) => {
                 let attach = |attachment| {
-                    ctx.gl().framebuffer_renderbuffer(
+                    gl.framebuffer_renderbuffer(
                         target,
                         attachment,
                         renderbuffertarget,
@@ -940,7 +871,7 @@ impl WebGLImpl {
             },
             WebGLCommand::FramebufferTexture2D(target, attachment, textarget, texture, level) => {
                 let attach = |attachment| {
-                    ctx.gl().framebuffer_texture_2d(
+                    gl.framebuffer_texture_2d(
                         target,
                         attachment,
                         textarget,
@@ -955,19 +886,19 @@ impl WebGLImpl {
                     attach(attachment)
                 }
             },
-            WebGLCommand::FrontFace(mode) => ctx.gl().front_face(mode),
+            WebGLCommand::FrontFace(mode) => gl.front_face(mode),
             WebGLCommand::DisableVertexAttribArray(attrib_id) => {
-                ctx.gl().disable_vertex_attrib_array(attrib_id)
+                gl.disable_vertex_attrib_array(attrib_id)
             },
             WebGLCommand::EnableVertexAttribArray(attrib_id) => {
-                ctx.gl().enable_vertex_attrib_array(attrib_id)
+                gl.enable_vertex_attrib_array(attrib_id)
             },
-            WebGLCommand::Hint(name, val) => ctx.gl().hint(name, val),
-            WebGLCommand::LineWidth(width) => ctx.gl().line_width(width),
-            WebGLCommand::PixelStorei(name, val) => ctx.gl().pixel_store_i(name, val),
-            WebGLCommand::PolygonOffset(factor, units) => ctx.gl().polygon_offset(factor, units),
+            WebGLCommand::Hint(name, val) => gl.hint(name, val),
+            WebGLCommand::LineWidth(width) => gl.line_width(width),
+            WebGLCommand::PixelStorei(name, val) => gl.pixel_store_i(name, val),
+            WebGLCommand::PolygonOffset(factor, units) => gl.polygon_offset(factor, units),
             WebGLCommand::ReadPixels(rect, format, pixel_type, ref sender) => {
-                let pixels = ctx.gl().read_pixels(
+                let pixels = gl.read_pixels(
                     rect.origin.x as i32,
                     rect.origin.y as i32,
                     rect.size.width as i32,
@@ -978,22 +909,22 @@ impl WebGLImpl {
                 sender.send(&pixels).unwrap();
             },
             WebGLCommand::RenderbufferStorage(target, format, width, height) => {
-                ctx.gl().renderbuffer_storage(target, format, width, height)
+                gl.renderbuffer_storage(target, format, width, height)
             },
-            WebGLCommand::SampleCoverage(value, invert) => ctx.gl().sample_coverage(value, invert),
+            WebGLCommand::SampleCoverage(value, invert) => gl.sample_coverage(value, invert),
             WebGLCommand::Scissor(x, y, width, height) => {
                 // FIXME(nox): Kinda unfortunate that some u32 values could
                 // end up as negative numbers here, but I don't even think
                 // that can happen in the real world.
-                ctx.gl().scissor(x, y, width as i32, height as i32);
+                gl.scissor(x, y, width as i32, height as i32);
             },
-            WebGLCommand::StencilFunc(func, ref_, mask) => ctx.gl().stencil_func(func, ref_, mask),
+            WebGLCommand::StencilFunc(func, ref_, mask) => gl.stencil_func(func, ref_, mask),
             WebGLCommand::StencilFuncSeparate(face, func, ref_, mask) => {
-                ctx.gl().stencil_func_separate(face, func, ref_, mask)
+                gl.stencil_func_separate(face, func, ref_, mask)
             },
             WebGLCommand::StencilMask(mask) => {
                 state.stencil_write_mask = (mask, mask);
-                ctx.gl().stencil_mask(mask);
+                gl.stencil_mask(mask);
             },
             WebGLCommand::StencilMaskSeparate(face, mask) => {
                 if face == gl::FRONT {
@@ -1001,14 +932,14 @@ impl WebGLImpl {
                 } else {
                     state.stencil_write_mask.1 = mask;
                 }
-                ctx.gl().stencil_mask_separate(face, mask);
+                gl.stencil_mask_separate(face, mask);
             },
-            WebGLCommand::StencilOp(fail, zfail, zpass) => ctx.gl().stencil_op(fail, zfail, zpass),
+            WebGLCommand::StencilOp(fail, zfail, zpass) => gl.stencil_op(fail, zfail, zpass),
             WebGLCommand::StencilOpSeparate(face, fail, zfail, zpass) => {
-                ctx.gl().stencil_op_separate(face, fail, zfail, zpass)
+                gl.stencil_op_separate(face, fail, zfail, zpass)
             },
             WebGLCommand::GetRenderbufferParameter(target, pname, ref chan) => {
-                Self::get_renderbuffer_parameter(ctx.gl(), target, pname, chan)
+                Self::get_renderbuffer_parameter(gl, target, pname, chan)
             },
             WebGLCommand::GetFramebufferAttachmentParameter(
                 target,
@@ -1016,96 +947,90 @@ impl WebGLImpl {
                 pname,
                 ref chan,
             ) => Self::get_framebuffer_attachment_parameter(
-                ctx.gl(),
+                gl,
                 target,
                 attachment,
                 pname,
                 chan,
             ),
             WebGLCommand::GetShaderPrecisionFormat(shader_type, precision_type, ref chan) => {
-                Self::shader_precision_format(ctx.gl(), shader_type, precision_type, chan)
+                Self::shader_precision_format(gl, shader_type, precision_type, chan)
             },
-            WebGLCommand::GetExtensions(ref chan) => Self::get_extensions(ctx.gl(), chan),
+            WebGLCommand::GetExtensions(ref chan) => Self::get_extensions(gl, chan),
             WebGLCommand::GetUniformLocation(program_id, ref name, ref chan) => {
-                Self::uniform_location(ctx.gl(), program_id, &name, chan)
+                Self::uniform_location(gl, program_id, &name, chan)
             },
             WebGLCommand::GetShaderInfoLog(shader_id, ref chan) => {
-                Self::shader_info_log(ctx.gl(), shader_id, chan)
+                Self::shader_info_log(gl, shader_id, chan)
             },
             WebGLCommand::GetProgramInfoLog(program_id, ref chan) => {
-                Self::program_info_log(ctx.gl(), program_id, chan)
+                Self::program_info_log(gl, program_id, chan)
             },
             WebGLCommand::CompileShader(shader_id, ref source) => {
-                Self::compile_shader(ctx.gl(), shader_id, &source)
+                Self::compile_shader(gl, shader_id, &source)
             },
-            WebGLCommand::CreateBuffer(ref chan) => Self::create_buffer(ctx.gl(), chan),
-            WebGLCommand::CreateFramebuffer(ref chan) => Self::create_framebuffer(ctx.gl(), chan),
-            WebGLCommand::CreateRenderbuffer(ref chan) => Self::create_renderbuffer(ctx.gl(), chan),
-            WebGLCommand::CreateTexture(ref chan) => Self::create_texture(ctx.gl(), chan),
-            WebGLCommand::CreateProgram(ref chan) => Self::create_program(ctx.gl(), chan),
+            WebGLCommand::CreateBuffer(ref chan) => Self::create_buffer(gl, chan),
+            WebGLCommand::CreateFramebuffer(ref chan) => Self::create_framebuffer(gl, chan),
+            WebGLCommand::CreateRenderbuffer(ref chan) => Self::create_renderbuffer(gl, chan),
+            WebGLCommand::CreateTexture(ref chan) => Self::create_texture(gl, chan),
+            WebGLCommand::CreateProgram(ref chan) => Self::create_program(gl, chan),
             WebGLCommand::CreateShader(shader_type, ref chan) => {
-                Self::create_shader(ctx.gl(), shader_type, chan)
+                Self::create_shader(gl, shader_type, chan)
             },
-            WebGLCommand::DeleteBuffer(id) => ctx.gl().delete_buffers(&[id.get()]),
-            WebGLCommand::DeleteFramebuffer(id) => ctx.gl().delete_framebuffers(&[id.get()]),
-            WebGLCommand::DeleteRenderbuffer(id) => ctx.gl().delete_renderbuffers(&[id.get()]),
-            WebGLCommand::DeleteTexture(id) => ctx.gl().delete_textures(&[id.get()]),
-            WebGLCommand::DeleteProgram(id) => ctx.gl().delete_program(id.get()),
-            WebGLCommand::DeleteShader(id) => ctx.gl().delete_shader(id.get()),
-            WebGLCommand::BindBuffer(target, id) => ctx
-                .gl()
-                .bind_buffer(target, id.map_or(0, WebGLBufferId::get)),
+            WebGLCommand::DeleteBuffer(id) => gl.delete_buffers(&[id.get()]),
+            WebGLCommand::DeleteFramebuffer(id) => gl.delete_framebuffers(&[id.get()]),
+            WebGLCommand::DeleteRenderbuffer(id) => gl.delete_renderbuffers(&[id.get()]),
+            WebGLCommand::DeleteTexture(id) => gl.delete_textures(&[id.get()]),
+            WebGLCommand::DeleteProgram(id) => gl.delete_program(id.get()),
+            WebGLCommand::DeleteShader(id) => gl.delete_shader(id.get()),
+            WebGLCommand::BindBuffer(target, id) => {
+                gl.bind_buffer(target, id.map_or(0, WebGLBufferId::get))
+            }
             WebGLCommand::BindFramebuffer(target, request) => {
-                Self::bind_framebuffer(ctx.gl(), target, request, ctx)
+                Self::bind_framebuffer(gl, target, request, ctx, device)
             },
-            WebGLCommand::BindRenderbuffer(target, id) => ctx
-                .gl()
-                .bind_renderbuffer(target, id.map_or(0, WebGLRenderbufferId::get)),
-            WebGLCommand::BindTexture(target, id) => ctx
-                .gl()
-                .bind_texture(target, id.map_or(0, WebGLTextureId::get)),
-            WebGLCommand::Uniform1f(uniform_id, v) => ctx.gl().uniform_1f(uniform_id, v),
-            WebGLCommand::Uniform1fv(uniform_id, ref v) => ctx.gl().uniform_1fv(uniform_id, v),
-            WebGLCommand::Uniform1i(uniform_id, v) => ctx.gl().uniform_1i(uniform_id, v),
-            WebGLCommand::Uniform1iv(uniform_id, ref v) => ctx.gl().uniform_1iv(uniform_id, v),
-            WebGLCommand::Uniform2f(uniform_id, x, y) => ctx.gl().uniform_2f(uniform_id, x, y),
-            WebGLCommand::Uniform2fv(uniform_id, ref v) => ctx.gl().uniform_2fv(uniform_id, v),
-            WebGLCommand::Uniform2i(uniform_id, x, y) => ctx.gl().uniform_2i(uniform_id, x, y),
-            WebGLCommand::Uniform2iv(uniform_id, ref v) => ctx.gl().uniform_2iv(uniform_id, v),
-            WebGLCommand::Uniform3f(uniform_id, x, y, z) => {
-                ctx.gl().uniform_3f(uniform_id, x, y, z)
-            },
-            WebGLCommand::Uniform3fv(uniform_id, ref v) => ctx.gl().uniform_3fv(uniform_id, v),
-            WebGLCommand::Uniform3i(uniform_id, x, y, z) => {
-                ctx.gl().uniform_3i(uniform_id, x, y, z)
-            },
-            WebGLCommand::Uniform3iv(uniform_id, ref v) => ctx.gl().uniform_3iv(uniform_id, v),
+            WebGLCommand::BindRenderbuffer(target, id) => {
+                gl.bind_renderbuffer(target, id.map_or(0, WebGLRenderbufferId::get))
+            }
+            WebGLCommand::BindTexture(target, id) => {
+                gl.bind_texture(target, id.map_or(0, WebGLTextureId::get))
+            }
+            WebGLCommand::Uniform1f(uniform_id, v) => gl.uniform_1f(uniform_id, v),
+            WebGLCommand::Uniform1fv(uniform_id, ref v) => gl.uniform_1fv(uniform_id, v),
+            WebGLCommand::Uniform1i(uniform_id, v) => gl.uniform_1i(uniform_id, v),
+            WebGLCommand::Uniform1iv(uniform_id, ref v) => gl.uniform_1iv(uniform_id, v),
+            WebGLCommand::Uniform2f(uniform_id, x, y) => gl.uniform_2f(uniform_id, x, y),
+            WebGLCommand::Uniform2fv(uniform_id, ref v) => gl.uniform_2fv(uniform_id, v),
+            WebGLCommand::Uniform2i(uniform_id, x, y) => gl.uniform_2i(uniform_id, x, y),
+            WebGLCommand::Uniform2iv(uniform_id, ref v) => gl.uniform_2iv(uniform_id, v),
+            WebGLCommand::Uniform3f(uniform_id, x, y, z) => gl.uniform_3f(uniform_id, x, y, z),
+            WebGLCommand::Uniform3fv(uniform_id, ref v) => gl.uniform_3fv(uniform_id, v),
+            WebGLCommand::Uniform3i(uniform_id, x, y, z) => gl.uniform_3i(uniform_id, x, y, z),
+            WebGLCommand::Uniform3iv(uniform_id, ref v) => gl.uniform_3iv(uniform_id, v),
             WebGLCommand::Uniform4f(uniform_id, x, y, z, w) => {
-                ctx.gl().uniform_4f(uniform_id, x, y, z, w)
+                gl.uniform_4f(uniform_id, x, y, z, w)
             },
-            WebGLCommand::Uniform4fv(uniform_id, ref v) => ctx.gl().uniform_4fv(uniform_id, v),
+            WebGLCommand::Uniform4fv(uniform_id, ref v) => gl.uniform_4fv(uniform_id, v),
             WebGLCommand::Uniform4i(uniform_id, x, y, z, w) => {
-                ctx.gl().uniform_4i(uniform_id, x, y, z, w)
-            },
-            WebGLCommand::Uniform4iv(uniform_id, ref v) => ctx.gl().uniform_4iv(uniform_id, v),
+                gl.uniform_4i(uniform_id, x, y, z, w)
+            }
+            WebGLCommand::Uniform4iv(uniform_id, ref v) => gl.uniform_4iv(uniform_id, v),
             WebGLCommand::UniformMatrix2fv(uniform_id, ref v) => {
-                ctx.gl().uniform_matrix_2fv(uniform_id, false, v)
+                gl.uniform_matrix_2fv(uniform_id, false, v)
             },
             WebGLCommand::UniformMatrix3fv(uniform_id, ref v) => {
-                ctx.gl().uniform_matrix_3fv(uniform_id, false, v)
+                gl.uniform_matrix_3fv(uniform_id, false, v)
             },
             WebGLCommand::UniformMatrix4fv(uniform_id, ref v) => {
-                ctx.gl().uniform_matrix_4fv(uniform_id, false, v)
+                gl.uniform_matrix_4fv(uniform_id, false, v)
             },
-            WebGLCommand::ValidateProgram(program_id) => {
-                ctx.gl().validate_program(program_id.get())
-            },
+            WebGLCommand::ValidateProgram(program_id) => gl.validate_program(program_id.get()),
             WebGLCommand::VertexAttrib(attrib_id, x, y, z, w) => {
-                ctx.gl().vertex_attrib_4f(attrib_id, x, y, z, w)
+                gl.vertex_attrib_4f(attrib_id, x, y, z, w)
             },
-            WebGLCommand::VertexAttribPointer2f(attrib_id, size, normalized, stride, offset) => ctx
-                .gl()
-                .vertex_attrib_pointer_f32(attrib_id, size, normalized, stride, offset),
+            WebGLCommand::VertexAttribPointer2f(attrib_id, size, normalized, stride, offset) => {
+                gl.vertex_attrib_pointer_f32(attrib_id, size, normalized, stride, offset)
+            }
             WebGLCommand::VertexAttribPointer(
                 attrib_id,
                 size,
@@ -1113,12 +1038,10 @@ impl WebGLImpl {
                 normalized,
                 stride,
                 offset,
-            ) => ctx
-                .gl()
-                .vertex_attrib_pointer(attrib_id, size, data_type, normalized, stride, offset),
-            WebGLCommand::SetViewport(x, y, width, height) => {
-                ctx.gl().viewport(x, y, width, height);
-            },
+            ) => {
+                gl.vertex_attrib_pointer(attrib_id, size, data_type, normalized, stride, offset)
+            }
+            WebGLCommand::SetViewport(x, y, width, height) => gl.viewport(x, y, width, height),
             WebGLCommand::TexImage2D {
                 target,
                 level,
@@ -1144,9 +1067,8 @@ impl WebGLImpl {
                     Cow::Borrowed(&*data),
                 );
 
-                ctx.gl()
-                    .pixel_store_i(gl::UNPACK_ALIGNMENT, unpacking_alignment as i32);
-                ctx.gl().tex_image_2d(
+                gl.pixel_store_i(gl::UNPACK_ALIGNMENT, unpacking_alignment as i32);
+                gl.tex_image_2d(
                     target,
                     level as i32,
                     effective_internal_format as i32,
@@ -1184,9 +1106,8 @@ impl WebGLImpl {
                     Cow::Borrowed(&*data),
                 );
 
-                ctx.gl()
-                    .pixel_store_i(gl::UNPACK_ALIGNMENT, unpacking_alignment as i32);
-                ctx.gl().tex_sub_image_2d(
+                gl.pixel_store_i(gl::UNPACK_ALIGNMENT, unpacking_alignment as i32);
+                gl.tex_sub_image_2d(
                     target,
                     level as i32,
                     xoffset,
@@ -1205,7 +1126,7 @@ impl WebGLImpl {
                 size,
                 ref data,
             } => {
-                ctx.gl().compressed_tex_image_2d(
+                gl.compressed_tex_image_2d(
                     target,
                     level as i32,
                     internal_format,
@@ -1224,7 +1145,7 @@ impl WebGLImpl {
                 format,
                 ref data,
             } => {
-                ctx.gl().compressed_tex_sub_image_2d(
+                gl.compressed_tex_sub_image_2d(
                     target,
                     level as i32,
                     xoffset as i32,
@@ -1235,31 +1156,39 @@ impl WebGLImpl {
                     &*data,
                 );
             },
-            WebGLCommand::DrawingBufferWidth(ref sender) => sender
-                .send(ctx.render_target().size().expect("Where's the render target?").width)
-                .unwrap(),
-            WebGLCommand::DrawingBufferHeight(ref sender) => sender
-                .send(ctx.render_target().size().expect("Where's the render target?").height)
-                .unwrap(),
-            WebGLCommand::Finish(ref sender) => Self::finish(ctx.gl(), sender),
-            WebGLCommand::Flush => ctx.gl().flush(),
-            WebGLCommand::GenerateMipmap(target) => ctx.gl().generate_mipmap(target),
-            WebGLCommand::CreateVertexArray(ref chan) => Self::create_vertex_array(ctx.gl(), chan),
-            WebGLCommand::DeleteVertexArray(id) => ctx.gl().delete_vertex_arrays(&[id.get()]),
-            WebGLCommand::BindVertexArray(id) => ctx
-                .gl()
-                .bind_vertex_array(id.map_or(0, WebGLVertexArrayId::get)),
+            WebGLCommand::DrawingBufferWidth(ref sender) => {
+                let size = device.context_color_surface(&ctx)
+                                 .expect("Where's the front buffer?")
+                                 .descriptor()
+                                 .size;
+                sender.send(size.width).unwrap()
+            }
+            WebGLCommand::DrawingBufferHeight(ref sender) => {
+                let size = device.context_color_surface(&ctx)
+                                 .expect("Where's the front buffer?")
+                                 .descriptor()
+                                 .size;
+                sender.send(size.height).unwrap()
+            }
+            WebGLCommand::Finish(ref sender) => Self::finish(gl, sender),
+            WebGLCommand::Flush => gl.flush(),
+            WebGLCommand::GenerateMipmap(target) => gl.generate_mipmap(target),
+            WebGLCommand::CreateVertexArray(ref chan) => Self::create_vertex_array(gl, chan),
+            WebGLCommand::DeleteVertexArray(id) => gl.delete_vertex_arrays(&[id.get()]),
+            WebGLCommand::BindVertexArray(id) => {
+                gl.bind_vertex_array(id.map_or(0, WebGLVertexArrayId::get))
+            }
             WebGLCommand::GetParameterBool(param, ref sender) => {
                 let mut value = [0];
                 unsafe {
-                    ctx.gl().get_boolean_v(param as u32, &mut value);
+                    gl.get_boolean_v(param as u32, &mut value);
                 }
                 sender.send(value[0] != 0).unwrap()
             },
             WebGLCommand::GetParameterBool4(param, ref sender) => {
                 let mut value = [0; 4];
                 unsafe {
-                    ctx.gl().get_boolean_v(param as u32, &mut value);
+                    gl.get_boolean_v(param as u32, &mut value);
                 }
                 let value = [value[0] != 0, value[1] != 0, value[2] != 0, value[3] != 0];
                 sender.send(value).unwrap()
@@ -1267,133 +1196,118 @@ impl WebGLImpl {
             WebGLCommand::GetParameterInt(param, ref sender) => {
                 let mut value = [0];
                 unsafe {
-                    ctx.gl().get_integer_v(param as u32, &mut value);
+                    gl.get_integer_v(param as u32, &mut value);
                 }
                 sender.send(value[0]).unwrap()
             },
             WebGLCommand::GetParameterInt2(param, ref sender) => {
                 let mut value = [0; 2];
                 unsafe {
-                    ctx.gl().get_integer_v(param as u32, &mut value);
+                    gl.get_integer_v(param as u32, &mut value);
                 }
                 sender.send(value).unwrap()
             },
             WebGLCommand::GetParameterInt4(param, ref sender) => {
                 let mut value = [0; 4];
                 unsafe {
-                    ctx.gl().get_integer_v(param as u32, &mut value);
+                    gl.get_integer_v(param as u32, &mut value);
                 }
                 sender.send(value).unwrap()
             },
             WebGLCommand::GetParameterFloat(param, ref sender) => {
                 let mut value = [0.];
                 unsafe {
-                    ctx.gl().get_float_v(param as u32, &mut value);
+                    gl.get_float_v(param as u32, &mut value);
                 }
                 sender.send(value[0]).unwrap()
             },
             WebGLCommand::GetParameterFloat2(param, ref sender) => {
                 let mut value = [0.; 2];
                 unsafe {
-                    ctx.gl().get_float_v(param as u32, &mut value);
+                    gl.get_float_v(param as u32, &mut value);
                 }
                 sender.send(value).unwrap()
             },
             WebGLCommand::GetParameterFloat4(param, ref sender) => {
                 let mut value = [0.; 4];
                 unsafe {
-                    ctx.gl().get_float_v(param as u32, &mut value);
+                    gl.get_float_v(param as u32, &mut value);
                 }
                 sender.send(value).unwrap()
             },
             WebGLCommand::GetProgramValidateStatus(program, ref sender) => {
                 let mut value = [0];
                 unsafe {
-                    ctx.gl()
-                        .get_program_iv(program.get(), gl::VALIDATE_STATUS, &mut value);
+                    gl.get_program_iv(program.get(), gl::VALIDATE_STATUS, &mut value);
                 }
                 sender.send(value[0] != 0).unwrap()
             },
             WebGLCommand::GetProgramActiveUniforms(program, ref sender) => {
                 let mut value = [0];
                 unsafe {
-                    ctx.gl()
-                        .get_program_iv(program.get(), gl::ACTIVE_UNIFORMS, &mut value);
+                    gl.get_program_iv(program.get(), gl::ACTIVE_UNIFORMS, &mut value);
                 }
                 sender.send(value[0]).unwrap()
             },
             WebGLCommand::GetCurrentVertexAttrib(index, ref sender) => {
                 let mut value = [0.; 4];
                 unsafe {
-                    ctx.gl()
-                        .get_vertex_attrib_fv(index, gl::CURRENT_VERTEX_ATTRIB, &mut value);
+                    gl.get_vertex_attrib_fv(index, gl::CURRENT_VERTEX_ATTRIB, &mut value);
                 }
                 sender.send(value).unwrap();
             },
             WebGLCommand::GetTexParameterFloat(target, param, ref sender) => {
-                sender
-                    .send(ctx.gl().get_tex_parameter_fv(target, param as u32))
-                    .unwrap();
+                sender.send(gl.get_tex_parameter_fv(target, param as u32)).unwrap();
             },
             WebGLCommand::GetTexParameterInt(target, param, ref sender) => {
-                sender
-                    .send(ctx.gl().get_tex_parameter_iv(target, param as u32))
-                    .unwrap();
+                sender.send(gl.get_tex_parameter_iv(target, param as u32)).unwrap();
             },
             WebGLCommand::TexParameteri(target, param, value) => {
-                ctx.gl().tex_parameter_i(target, param as u32, value)
+                gl.tex_parameter_i(target, param as u32, value)
             },
             WebGLCommand::TexParameterf(target, param, value) => {
-                ctx.gl().tex_parameter_f(target, param as u32, value)
+                gl.tex_parameter_f(target, param as u32, value)
             },
             WebGLCommand::LinkProgram(program_id, ref sender) => {
-                return sender
-                    .send(Self::link_program(ctx.gl(), program_id))
-                    .unwrap();
+                return sender.send(Self::link_program(gl, program_id)).unwrap();
             },
             WebGLCommand::UseProgram(program_id) => {
-                ctx.gl().use_program(program_id.map_or(0, |p| p.get()))
+                gl.use_program(program_id.map_or(0, |p| p.get()))
             },
-            WebGLCommand::DrawArrays { mode, first, count } => {
-                ctx.gl().draw_arrays(mode, first, count)
-            },
+            WebGLCommand::DrawArrays { mode, first, count } => gl.draw_arrays(mode, first, count),
             WebGLCommand::DrawArraysInstanced {
                 mode,
                 first,
                 count,
                 primcount,
-            } => ctx
-                .gl()
-                .draw_arrays_instanced(mode, first, count, primcount),
+            } => gl.draw_arrays_instanced(mode, first, count, primcount),
             WebGLCommand::DrawElements {
                 mode,
                 count,
                 type_,
                 offset,
-            } => ctx.gl().draw_elements(mode, count, type_, offset),
+            } => gl.draw_elements(mode, count, type_, offset),
             WebGLCommand::DrawElementsInstanced {
                 mode,
                 count,
                 type_,
                 offset,
                 primcount,
-            } => ctx
-                .gl()
-                .draw_elements_instanced(mode, count, type_, offset, primcount),
+            } => gl.draw_elements_instanced(mode, count, type_, offset, primcount),
             WebGLCommand::VertexAttribDivisor { index, divisor } => {
-                ctx.gl().vertex_attrib_divisor(index, divisor)
+                gl.vertex_attrib_divisor(index, divisor)
             },
             WebGLCommand::GetUniformBool(program_id, loc, ref sender) => {
                 let mut value = [0];
                 unsafe {
-                    ctx.gl().get_uniform_iv(program_id.get(), loc, &mut value);
+                    gl.get_uniform_iv(program_id.get(), loc, &mut value);
                 }
                 sender.send(value[0] != 0).unwrap();
             },
             WebGLCommand::GetUniformBool2(program_id, loc, ref sender) => {
                 let mut value = [0; 2];
                 unsafe {
-                    ctx.gl().get_uniform_iv(program_id.get(), loc, &mut value);
+                    gl.get_uniform_iv(program_id.get(), loc, &mut value);
                 }
                 let value = [value[0] != 0, value[1] != 0];
                 sender.send(value).unwrap();
@@ -1401,7 +1315,7 @@ impl WebGLImpl {
             WebGLCommand::GetUniformBool3(program_id, loc, ref sender) => {
                 let mut value = [0; 3];
                 unsafe {
-                    ctx.gl().get_uniform_iv(program_id.get(), loc, &mut value);
+                    gl.get_uniform_iv(program_id.get(), loc, &mut value);
                 }
                 let value = [value[0] != 0, value[1] != 0, value[2] != 0];
                 sender.send(value).unwrap();
@@ -1409,7 +1323,7 @@ impl WebGLImpl {
             WebGLCommand::GetUniformBool4(program_id, loc, ref sender) => {
                 let mut value = [0; 4];
                 unsafe {
-                    ctx.gl().get_uniform_iv(program_id.get(), loc, &mut value);
+                    gl.get_uniform_iv(program_id.get(), loc, &mut value);
                 }
                 let value = [value[0] != 0, value[1] != 0, value[2] != 0, value[3] != 0];
                 sender.send(value).unwrap();
@@ -1417,70 +1331,70 @@ impl WebGLImpl {
             WebGLCommand::GetUniformInt(program_id, loc, ref sender) => {
                 let mut value = [0];
                 unsafe {
-                    ctx.gl().get_uniform_iv(program_id.get(), loc, &mut value);
+                    gl.get_uniform_iv(program_id.get(), loc, &mut value);
                 }
                 sender.send(value[0]).unwrap();
             },
             WebGLCommand::GetUniformInt2(program_id, loc, ref sender) => {
                 let mut value = [0; 2];
                 unsafe {
-                    ctx.gl().get_uniform_iv(program_id.get(), loc, &mut value);
+                    gl.get_uniform_iv(program_id.get(), loc, &mut value);
                 }
                 sender.send(value).unwrap();
             },
             WebGLCommand::GetUniformInt3(program_id, loc, ref sender) => {
                 let mut value = [0; 3];
                 unsafe {
-                    ctx.gl().get_uniform_iv(program_id.get(), loc, &mut value);
+                    gl.get_uniform_iv(program_id.get(), loc, &mut value);
                 }
                 sender.send(value).unwrap();
             },
             WebGLCommand::GetUniformInt4(program_id, loc, ref sender) => {
                 let mut value = [0; 4];
                 unsafe {
-                    ctx.gl().get_uniform_iv(program_id.get(), loc, &mut value);
+                    gl.get_uniform_iv(program_id.get(), loc, &mut value);
                 }
                 sender.send(value).unwrap();
             },
             WebGLCommand::GetUniformFloat(program_id, loc, ref sender) => {
                 let mut value = [0.];
                 unsafe {
-                    ctx.gl().get_uniform_fv(program_id.get(), loc, &mut value);
+                    gl.get_uniform_fv(program_id.get(), loc, &mut value);
                 }
                 sender.send(value[0]).unwrap();
             },
             WebGLCommand::GetUniformFloat2(program_id, loc, ref sender) => {
                 let mut value = [0.; 2];
                 unsafe {
-                    ctx.gl().get_uniform_fv(program_id.get(), loc, &mut value);
+                    gl.get_uniform_fv(program_id.get(), loc, &mut value);
                 }
                 sender.send(value).unwrap();
             },
             WebGLCommand::GetUniformFloat3(program_id, loc, ref sender) => {
                 let mut value = [0.; 3];
                 unsafe {
-                    ctx.gl().get_uniform_fv(program_id.get(), loc, &mut value);
+                    gl.get_uniform_fv(program_id.get(), loc, &mut value);
                 }
                 sender.send(value).unwrap();
             },
             WebGLCommand::GetUniformFloat4(program_id, loc, ref sender) => {
                 let mut value = [0.; 4];
                 unsafe {
-                    ctx.gl().get_uniform_fv(program_id.get(), loc, &mut value);
+                    gl.get_uniform_fv(program_id.get(), loc, &mut value);
                 }
                 sender.send(value).unwrap();
             },
             WebGLCommand::GetUniformFloat9(program_id, loc, ref sender) => {
                 let mut value = [0.; 9];
                 unsafe {
-                    ctx.gl().get_uniform_fv(program_id.get(), loc, &mut value);
+                    gl.get_uniform_fv(program_id.get(), loc, &mut value);
                 }
                 sender.send(value).unwrap();
             },
             WebGLCommand::GetUniformFloat16(program_id, loc, ref sender) => {
                 let mut value = [0.; 16];
                 unsafe {
-                    ctx.gl().get_uniform_fv(program_id.get(), loc, &mut value);
+                    gl.get_uniform_fv(program_id.get(), loc, &mut value);
                 }
                 sender.send(value).unwrap();
             },
@@ -1488,17 +1402,17 @@ impl WebGLImpl {
                 color,
                 depth,
                 stencil,
-            } => Self::initialize_framebuffer(ctx.gl(), state, color, depth, stencil),
+            } => Self::initialize_framebuffer(gl, state, color, depth, stencil),
         }
 
         // TODO: update test expectations in order to enable debug assertions
-        let error = ctx.gl().get_error();
+        let error = gl.get_error();
         if error != gl::NO_ERROR {
             error!("Last GL operation failed: {:?}", command);
             if error == gl::INVALID_FRAMEBUFFER_OPERATION {
                 let mut framebuffer_bindings = [0];
                 unsafe {
-                    ctx.gl().get_integer_v(gl::DRAW_FRAMEBUFFER_BINDING, &mut framebuffer_bindings);
+                    gl.get_integer_v(gl::DRAW_FRAMEBUFFER_BINDING, &mut framebuffer_bindings);
                 }
                 println!("(thread {:?}) Current draw framebuffer binding: {}",
                          ::std::thread::current().id(),
@@ -1798,16 +1712,16 @@ impl WebGLImpl {
     }
 
     #[inline]
-    fn bind_framebuffer<Native: NativeGLContextMethods>(
-        gl: &dyn gl::Gl,
-        target: u32,
-        request: WebGLFramebufferBindingRequest,
-        ctx: &GLContext<Native>,
-    ) {
+    fn bind_framebuffer(gl: &dyn gl::Gl,
+                        target: u32,
+                        request: WebGLFramebufferBindingRequest,
+                        ctx: &Context,
+                        device: &Device) {
         let id = match request {
             WebGLFramebufferBindingRequest::Explicit(id) => id.get(),
             WebGLFramebufferBindingRequest::Default => {
-                ctx.render_target().framebuffer_object().expect("Where's the render target?")
+                device.context_surface_framebuffer_object(ctx)
+                      .expect("No surface attached!")
             },
         };
 
@@ -2198,4 +2112,52 @@ fn flip_pixels_y(
     }
 
     flipped
+}
+
+trait ToSurfmanFlavor {
+    fn to_surfman_flavor(self) -> GLFlavor;
+}
+
+impl ToSurfmanFlavor for WebGLVersion {
+    fn to_surfman_flavor(self) -> GLFlavor {
+        match self {
+            WebGLVersion::WebGL1 => GLFlavor { api: GLApi::GL, version: GLVersion::new(2, 0) },
+            WebGLVersion::WebGL2 => GLFlavor { api: GLApi::GL, version: GLVersion::new(3, 0) },
+        }
+    }
+}
+
+trait SurfmanContextAttributeFlagsConvert {
+    fn to_surfman_context_attribute_flags(&self) -> ContextAttributeFlags;
+}
+
+impl SurfmanContextAttributeFlagsConvert for GLContextAttributes {
+    fn to_surfman_context_attribute_flags(&self) -> ContextAttributeFlags {
+        let mut flags = ContextAttributeFlags::empty();
+        flags.set(ContextAttributeFlags::ALPHA, self.alpha);
+        flags.set(ContextAttributeFlags::DEPTH, self.depth);
+        flags.set(ContextAttributeFlags::STENCIL, self.stencil);
+        flags
+    }
+}
+
+trait ToWebGLLimits {
+    fn to_webgl_limits(&self) -> webgl::GLLimits;
+}
+
+impl ToWebGLLimits for GLLimits {
+    fn to_webgl_limits(&self) -> webgl::GLLimits {
+        webgl::GLLimits {
+            max_vertex_attribs: self.max_vertex_attribs,
+            max_tex_size: self.max_tex_size,
+            max_cube_map_tex_size: self.max_cube_map_tex_size,
+            max_combined_texture_image_units: self.max_combined_texture_image_units,
+            max_fragment_uniform_vectors: self.max_fragment_uniform_vectors,
+            max_renderbuffer_size: self.max_renderbuffer_size,
+            max_texture_image_units: self.max_texture_image_units,
+            max_varying_vectors: self.max_varying_vectors,
+            max_vertex_texture_image_units: self.max_vertex_texture_image_units,
+            max_vertex_uniform_vectors: self.max_vertex_uniform_vectors,
+        }
+    }
 }

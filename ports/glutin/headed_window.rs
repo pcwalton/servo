@@ -21,6 +21,7 @@ use glutin::{ElementState, KeyboardInput, MouseButton, MouseScrollDelta, TouchPh
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 use image;
 use keyboard_types::{Key, KeyState, KeyboardEvent};
+use offscreen_gl_context::Device;
 use servo::compositing::windowing::{AnimationState, MouseWindowEvent, WindowEvent};
 use servo::compositing::windowing::{EmbedderCoordinates, WindowMethods};
 use servo::embedder_traits::Cursor;
@@ -68,6 +69,7 @@ pub struct Window {
     animation_state: Cell<AnimationState>,
     fullscreen: Cell<bool>,
     gl: Rc<dyn gl::Gl>,
+    device: Rc<Device>,
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -164,8 +166,10 @@ impl Window {
         gl.finish();
 
         let mut context = GlContext::Current(context);
-
         context.make_not_current();
+
+        let device = Device::from_glutin_window(&context.window());
+        let device = Rc::new(device.expect("Failed to open a `surfman` device!"));
 
         let window = Window {
             gl_context: RefCell::new(context),
@@ -181,6 +185,7 @@ impl Window {
             inner_size: Cell::new(inner_size),
             primary_monitor,
             screen_size,
+            device,
         };
 
         window.present();
@@ -557,7 +562,7 @@ impl WindowMethods for Window {
         self.animation_state.set(state);
     }
 
-    fn prepare_for_composite(&self) {
+    fn make_gl_context_current(&self) {
         self.gl_context.borrow_mut().make_current();
     }
 
@@ -655,6 +660,11 @@ impl WindowMethods for Window {
             glutin::Api::OpenGlEs => GlApi::Gles1,
             _ => GlApi::None,
         }
+    }
+
+    #[inline]
+    fn surfman_device(&self) -> Rc<Device> {
+        self.device.clone()
     }
 }
 

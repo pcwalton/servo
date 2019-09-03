@@ -2,14 +2,14 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-use crate::gl_context::GLContextFactory;
 use crate::webgl_thread::{WebGLThread, WebGLThreadInit};
 use canvas_traits::webgl::{WebGLMsg, WebGLSender, WebGLThreads, WebVRRenderHandler, webgl_channel};
 use euclid::default::Size2D;
 use fnv::FnvHashMap;
 use gleam::gl;
-use offscreen_gl_context::{NativeSurface, NativeSurfaceTexture};
+use offscreen_gl_context::{Context, Device, Surface, SurfaceTexture};
 use servo_config::pref;
+use std::cell::RefCell;
 use std::default::Default;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -26,7 +26,8 @@ pub struct WebGLComm {
 impl WebGLComm {
     /// Creates a new `WebGLComm` object.
     pub fn new(
-        gl_factory: GLContextFactory,
+        device: Rc<Device>,
+        context: Rc<RefCell<Context>>,
         webrender_gl: Rc<dyn gl::Gl>,
         webrender_api_sender: webrender_api::RenderApiSender,
         webvr_compositor: Option<Box<dyn WebVRRenderHandler>>,
@@ -40,7 +41,6 @@ impl WebGLComm {
 
         // This implementation creates a single `WebGLThread` for all the pipelines.
         let init = WebGLThreadInit {
-            gl_factory,
             webrender_api_sender,
             webvr_compositor,
             external_images,
@@ -58,7 +58,11 @@ impl WebGLComm {
             None
         };
 
-        let external = WebGLExternalImages::new(webrender_gl, front_buffer, sender.clone());
+        let external = WebGLExternalImages::new(device,
+                                                context,
+                                                webrender_gl,
+                                                front_buffer,
+                                                sender.clone());
 
         WebGLThread::run_on_own_thread(init);
 
@@ -101,18 +105,24 @@ impl webxr_api::WebGLExternalImageApi for SendableWebGLExternalImages {
 
 /// Bridge between the webrender::ExternalImage callbacks and the WebGLThreads.
 struct WebGLExternalImages {
+    device: Rc<Device>,
+    context: Rc<RefCell<Context>>,
     webrender_gl: Rc<dyn gl::Gl>,
     front_buffer: Arc<FrontBuffer>,
-    locked_front_buffer: Option<NativeSurfaceTexture>,
+    locked_front_buffer: Option<SurfaceTexture>,
     sendable: SendableWebGLExternalImages,
 }
 
 impl WebGLExternalImages {
-    fn new(webrender_gl: Rc<dyn gl::Gl>,    
+    fn new(device: Rc<Device>,
+           context: Rc<RefCell<Context>>,
+           webrender_gl: Rc<dyn gl::Gl>,    
            front_buffer: Arc<FrontBuffer>,
            channel: WebGLSender<WebGLMsg>)
            -> Self {
         Self {
+            device,
+            context,
             webrender_gl,
             front_buffer,
             locked_front_buffer: None,
@@ -122,6 +132,7 @@ impl WebGLExternalImages {
 }
 
 impl WebrenderExternalImageApi for WebGLExternalImages {
+    // FIXME(pcwalton): What is the ID for?
     fn lock(&mut self, id: u64) -> (u32, Size2D<i32>) {
         let (gl_texture, size);
         match self.front_buffer.take() {
@@ -131,10 +142,11 @@ impl WebrenderExternalImageApi for WebGLExternalImages {
                 self.locked_front_buffer = None;
             }
             Some(front_buffer) => {
-                let locked_front_buffer = NativeSurfaceTexture::new(&*self.webrender_gl,
-                                                                    front_buffer);
+                let mut context = self.context.borrow_mut();
+                let locked_front_buffer =
+                    self.device.create_surface_texture(&mut *context, front_buffer).unwrap();
                 gl_texture = locked_front_buffer.gl_texture();
-                size = locked_front_buffer.surface().size();
+                size = locked_front_buffer.surface().descriptor().size;
                 self.locked_front_buffer = Some(locked_front_buffer);
             }
         }
@@ -144,23 +156,25 @@ impl WebrenderExternalImageApi for WebGLExternalImages {
     fn unlock(&mut self, id: u64) {
         self.sendable.unlock(id as usize);
         if let Some(locked_front_buffer) = self.locked_front_buffer.take() {
-            self.front_buffer.put_back(locked_front_buffer.into_surface(&*self.webrender_gl));
+            let mut context = self.context.borrow_mut();
+            self.front_buffer.put_back(
+                self.device.destroy_surface_texture(&mut *context, locked_front_buffer).unwrap());
         }
     }
 }
 
-pub struct FrontBuffer(Mutex<Option<NativeSurface>>);
+pub struct FrontBuffer(Mutex<Option<Surface>>);
 
 impl FrontBuffer {
     fn new() -> FrontBuffer {
         FrontBuffer(Mutex::new(None))
     }
 
-    fn take(&self) -> Option<NativeSurface> {
+    fn take(&self) -> Option<Surface> {
         self.0.lock().unwrap().take()
     }
 
-    fn put_back(&self, old_front_buffer: NativeSurface) {
+    fn put_back(&self, old_front_buffer: Surface) {
         let mut slot = self.0.lock().unwrap();
         if slot.is_none() {
             *slot = Some(old_front_buffer);
@@ -170,7 +184,7 @@ impl FrontBuffer {
         }
     }
 
-    pub(crate) fn lock(&self) -> MutexGuard<Option<NativeSurface>> {
+    pub(crate) fn lock(&self) -> MutexGuard<Option<Surface>> {
         self.0.lock().unwrap()
     }
 }

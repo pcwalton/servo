@@ -17,6 +17,5 @@ pub use webgl_mode::WebGLComm;
 
 pub mod canvas_data;
 pub mod canvas_paint_thread;
-pub mod gl_context;
 mod webgl_mode;
 pub mod webgl_thread;

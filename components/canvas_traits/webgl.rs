@@ -6,7 +6,7 @@ use euclid::default::{Rect, Size2D};
 use gleam::gl;
 use gleam::gl::Gl;
 use ipc_channel::ipc::{IpcBytesReceiver, IpcBytesSender, IpcSharedMemory};
-use offscreen_gl_context::NativeSurface;
+use offscreen_gl_context::Surface;
 use pixels::PixelFormat;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::borrow::Cow;
@@ -39,7 +39,7 @@ pub struct WebGLCommandBacktrace {
 
 #[derive(Debug)]
 pub struct WebGLLockMessage {
-    pub surface: NativeSurface,
+    pub surface: Surface,
     pub sync: WebGLSync,
 }
 
@@ -121,20 +121,10 @@ pub struct WebGLCreateContextResult {
     pub sender: WebGLMsgSender,
     /// Information about the internal GL Context.
     pub limits: GLLimits,
-    /// How the WebGLContext is shared with WebRender.
-    pub share_mode: WebGLContextShareMode,
     /// The GLSL version supported by the context.
     pub glsl_version: WebGLSLVersion,
     /// The GL API used by the context.
     pub api_type: GlType,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, MallocSizeOf, Serialize)]
-pub enum WebGLContextShareMode {
-    /// Fast: a shared texture_id is used in WebRender.
-    SharedTexture,
-    /// Slow: glReadPixels is used to send pixels to WebRender each frame.
-    Readback,
 }
 
 /// Defines the WebGL version
