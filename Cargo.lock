@@ -404,11 +404,11 @@ dependencies = [
  "ipc-channel 0.11.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.4.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "num-traits 0.2.4 (registry+https://github.com/rust-lang/crates.io-index)",
- "offscreen_gl_context 0.23.0",
  "pixels 0.0.1",
  "raqote 0.6.1-alpha.0 (git+https://github.com/jrmuizel/raqote)",
  "serde_bytes 0.10.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "servo_config 0.0.1",
+ "surfman 0.23.0",
  "webrender 0.60.0 (git+https://github.com/servo/webrender)",
  "webrender_api 0.60.0 (git+https://github.com/servo/webrender)",
  "webrender_traits 0.0.1",
@@ -427,11 +427,11 @@ dependencies = [
  "lazy_static 1.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "malloc_size_of 0.0.1",
  "malloc_size_of_derive 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "offscreen_gl_context 0.23.0",
  "pixels 0.0.1",
  "serde 1.0.88 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde_bytes 0.10.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "servo_config 0.0.1",
+ "surfman 0.23.0",
  "typetag 0.1.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "webrender_api 0.60.0 (git+https://github.com/servo/webrender)",
  "webvr_traits 0.0.1",
@@ -612,7 +612,6 @@ dependencies = [
  "msg 0.0.1",
  "net_traits 0.0.1",
  "num-traits 0.2.4 (registry+https://github.com/rust-lang/crates.io-index)",
- "offscreen_gl_context 0.23.0",
  "pixels 0.0.1",
  "profile_traits 0.0.1",
  "script_traits 0.0.1",
@@ -620,6 +619,7 @@ dependencies = [
  "servo_geometry 0.0.1",
  "servo_url 0.0.1",
  "style_traits 0.0.1",
+ "surfman 0.23.0",
  "time 0.1.42 (registry+https://github.com/rust-lang/crates.io-index)",
  "toml 0.4.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "webrender 0.60.0 (git+https://github.com/servo/webrender)",
@@ -2540,7 +2540,6 @@ dependencies = [
  "msg 0.0.1",
  "net 0.0.1",
  "net_traits 0.0.1",
- "offscreen_gl_context 0.23.0",
  "profile 0.0.1",
  "profile_traits 0.0.1",
  "script 0.0.1",
@@ -2554,6 +2553,7 @@ dependencies = [
  "servo_url 0.0.1",
  "style 0.0.1",
  "style_traits 0.0.1",
+ "surfman 0.23.0",
  "webdriver_server 0.0.1",
  "webrender 0.60.0 (git+https://github.com/servo/webrender)",
  "webrender_api 0.60.0 (git+https://github.com/servo/webrender)",
@@ -3172,25 +3172,6 @@ version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "objc 0.2.6 (registry+https://github.com/rust-lang/crates.io-index)",
-]
-
-[[package]]
-name = "offscreen_gl_context"
-version = "0.23.0"
-dependencies = [
- "bitflags 1.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "cgl 0.2.3 (registry+https://github.com/rust-lang/crates.io-index)",
- "core-foundation 0.6.4 (git+https://github.com/zakorgy/core-foundation-rs?branch=io-surface-alpha)",
- "euclid 0.20.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "gl 0.13.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "gl_generator 0.11.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "glutin 0.21.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "io-surface 0.11.1 (git+https://github.com/zakorgy/core-foundation-rs?branch=io-surface-alpha)",
- "lazy_static 1.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "libloading 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "objc 0.2.6 (registry+https://github.com/rust-lang/crates.io-index)",
- "winapi 0.3.7 (registry+https://github.com/rust-lang/crates.io-index)",
- "wio 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -4117,12 +4098,12 @@ dependencies = [
  "libc 0.2.53 (registry+https://github.com/rust-lang/crates.io-index)",
  "libservo 0.0.1",
  "log 0.4.6 (registry+https://github.com/rust-lang/crates.io-index)",
- "offscreen_gl_context 0.23.0",
  "osmesa-src 0.1.0 (git+https://github.com/servo/osmesa-src)",
  "osmesa-sys 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "rust-webvr 0.13.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "servo-media 0.1.0 (git+https://github.com/servo/media)",
  "sig 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "surfman 0.23.0",
  "tinyfiledialogs 3.3.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "webxr 0.0.1 (git+https://github.com/servo/webxr)",
  "webxr-api 0.0.1 (git+https://github.com/servo/webxr)",
@@ -4753,6 +4734,24 @@ dependencies = [
  "to_shmem 0.0.1",
  "to_shmem_derive 0.0.1",
  "webrender_api 0.60.0 (git+https://github.com/servo/webrender)",
+]
+
+[[package]]
+name = "surfman"
+version = "0.23.0"
+dependencies = [
+ "bitflags 1.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "cgl 0.2.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "core-foundation 0.6.4 (git+https://github.com/zakorgy/core-foundation-rs?branch=io-surface-alpha)",
+ "euclid 0.20.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "gl 0.13.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "gl_generator 0.11.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "io-surface 0.11.1 (git+https://github.com/zakorgy/core-foundation-rs?branch=io-surface-alpha)",
+ "lazy_static 1.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "libloading 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "objc 0.2.6 (registry+https://github.com/rust-lang/crates.io-index)",
+ "winapi 0.3.7 (registry+https://github.com/rust-lang/crates.io-index)",
+ "wio 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]

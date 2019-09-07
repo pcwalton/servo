@@ -62,9 +62,8 @@ tinyfiledialogs = "3.0"
 webxr-api = { git = "https://github.com/servo/webxr", features = ["ipc"] }
 webxr = { git = "https://github.com/servo/webxr", features = ["ipc", "glwindow", "headless"] }
 
-[dependencies.offscreen_gl_context]
-path = "/Users/pcwalton/Source/rorc"
-features = ["sm-glutin"]
+[dependencies.surfman]
+path = "/Users/pcwalton/Source/surfman"
 
 [target.'cfg(any(target_os = "linux", target_os = "windows"))'.dependencies]
 image = "0.21"

@@ -17,8 +17,9 @@ use euclid::default::Size2D;
 use fnv::FnvHashMap;
 use gleam::gl::{self, Gl, GlFns};
 use half::f16;
-use offscreen_gl_context::{Context, ContextAttributeFlags, ContextAttributes, Device, GLApi};
-use offscreen_gl_context::{GLFlavor, GLLimits, GLVersion, SurfaceDescriptor, SurfaceTexture};
+use surfman::{Adapter, Context, ContextAttributeFlags, ContextAttributes, Device};
+use surfman::{GLApi, GLFlavor, GLLimits, GLVersion};
+use surfman::{SurfaceDescriptor, SurfaceTexture};
 use pixels::{self, PixelFormat};
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
@@ -27,6 +28,10 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use webrender_traits::{WebrenderExternalImageRegistry, WebrenderImageHandlerType};
+
+thread_local! {
+    static COLOR: Cell<f32> = Cell::new(0.0);
+}
 
 struct GLContextData {
     ctx: Context,
@@ -101,6 +106,7 @@ pub(crate) struct WebGLThreadInit {
     pub sender: WebGLSender<WebGLMsg>,
     pub receiver: WebGLReceiver<WebGLMsg>,
     pub front_buffer: Arc<FrontBuffer>,
+    pub adapter: Adapter,
 }
 
 /// The extra data required to run an instance of WebGLThread when it is
@@ -144,10 +150,11 @@ impl WebGLThread {
             sender,
             receiver,
             front_buffer,
+            adapter,
         }: WebGLThreadInit,
     ) -> Self {
         WebGLThread {
-            device: Device::new().expect("Couldn't open WebGL device!"),
+            device: Device::new(&adapter).expect("Couldn't open WebGL device!"),
             webrender_api: webrender_api_sender.create_api(),
             contexts: Default::default(),
             cached_context_info: Default::default(),
@@ -206,7 +213,7 @@ impl WebGLThread {
                             gl::GlType::Gles => GlType::Gles,
                         };
 
-                        // FIXME(nox): Should probably be done by offscreen_gl_context.
+                        // FIXME(nox): Should probably be done by surfman.
                         if api_type != GlType::Gles {
                             // Points sprites are enabled by default in OpenGL 3.2 core
                             // and in GLES. Rather than doing version detection, it does
@@ -359,6 +366,10 @@ impl WebGLThread {
 
         let limits = self.device.context_gl_info(&ctx).limits;
 
+        self.device.make_context_current(&ctx).unwrap();
+        let framebuffer = self.device.context_surface_framebuffer_object(&ctx).unwrap();
+        gl.bind_framebuffer(gl::FRAMEBUFFER, framebuffer);
+
         //let gl_sync = ctx.gl().fence_sync(gl::SYNC_GPU_COMMANDS_COMPLETE, 0);
 
         let state = Default::default();
@@ -398,6 +409,9 @@ impl WebGLThread {
                               .create_surface_from_descriptor(&mut data.ctx, &surface_descriptor)
                               .unwrap();
         drop(self.device.replace_context_color_surface(&mut data.ctx, new_surface).unwrap());
+
+        let framebuffer = self.device.context_surface_framebuffer_object(&data.ctx).unwrap();
+        data.gl.bind_framebuffer(gl::FRAMEBUFFER, framebuffer);
 
         // Update WR image if needed. Resize image updates are only required for SharedTexture mode.
         // Readback mode already updates the image every frame to send the raw pixels.
@@ -452,6 +466,7 @@ impl WebGLThread {
         context_id: WebGLContextId,
         sender: WebGLSender<webrender_api::ImageKey>,
     ) {
+        println!("handle_update_wr_image()");
         self.handle_swap_buffers(context_id);
 
         let data = Self::make_current_if_needed_mut(
@@ -487,6 +502,7 @@ impl WebGLThread {
     }
 
     fn handle_swap_buffers(&mut self, context_id: WebGLContextId) {
+        println!("handle_swap_buffers()");
         let data = Self::make_current_if_needed_mut(
             &self.device,
             context_id,
@@ -509,11 +525,22 @@ impl WebGLThread {
             }
         };
 
+        println!("... new back buffer will become {:?}", new_back_buffer.id());
+
         // Swap the buffers.
         let new_front_buffer = self.device
                                    .replace_context_color_surface(&mut data.ctx, new_back_buffer)
                                    .expect("Where's the new front buffer?");
+        if let Some(ref front_buffer) = new_front_buffer {
+            println!("... front buffer is now {:?}", front_buffer.id());
+        }
         *front_buffer_slot = new_front_buffer;
+
+        let framebuffer = self.device.context_surface_framebuffer_object(&data.ctx).unwrap();
+        data.gl.bind_framebuffer(gl::FRAMEBUFFER, framebuffer);
+        println!("... rebound framebuffer {}, new back buffer surface is {:?}",
+                 framebuffer,
+                 self.device.context_color_surface(&data.ctx).unwrap().id());
     }
 
     fn handle_dom_to_texture(&mut self, command: DOMToTextureCommand) {
@@ -758,6 +785,7 @@ impl WebGLImpl {
         command: WebGLCommand,
         _backtrace: WebGLCommandBacktrace,
     ) {
+        println!("WebGLImpl::apply({:?})", command);
         match command {
             WebGLCommand::GetContextAttributes(ref sender) => sender.send(*attributes).unwrap(),
             WebGLCommand::ActiveTexture(target) => gl.active_texture(target),
@@ -789,7 +817,11 @@ impl WebGLImpl {
                 state.clear_mask = mask;
                 gl.clear(mask);
             },
-            WebGLCommand::ClearColor(r, g, b, a) => {
+            WebGLCommand::ClearColor(mut r, g, b, a) => {
+                COLOR.with(|color| {
+                    r = color.get();
+                    color.set(r + 0.01);
+                });
                 state.clear_color = (r, g, b, a);
                 gl.clear_color(r, g, b, a);
             },
@@ -847,7 +879,7 @@ impl WebGLImpl {
                 }
                 gl.disable(cap);
             },
-            WebGLCommand::Enable(cap) => {
+            WebGLCommand::Enable(mut cap) => {
                 if cap == gl::SCISSOR_TEST {
                     state.scissor_test_enabled = true;
                 }

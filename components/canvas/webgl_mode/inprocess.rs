@@ -7,7 +7,7 @@ use canvas_traits::webgl::{WebGLMsg, WebGLSender, WebGLThreads, WebVRRenderHandl
 use euclid::default::Size2D;
 use fnv::FnvHashMap;
 use gleam::gl;
-use offscreen_gl_context::{Context, Device, Surface, SurfaceTexture};
+use surfman::{Context, Device, Surface, SurfaceTexture};
 use servo_config::pref;
 use std::cell::RefCell;
 use std::default::Default;
@@ -47,6 +47,7 @@ impl WebGLComm {
             sender: sender.clone(),
             receiver,
             front_buffer: front_buffer.clone(),
+            adapter: device.adapter(),
         };
 
         let output_handler = if pref!(dom.webgl.dom_to_texture.enabled) {
@@ -147,6 +148,10 @@ impl WebrenderExternalImageApi for WebGLExternalImages {
                     self.device.create_surface_texture(&mut *context, front_buffer).unwrap();
                 gl_texture = locked_front_buffer.gl_texture();
                 size = locked_front_buffer.surface().descriptor().size;
+                println!("presenting front buffer: {:?} (texture {}, size={:?})",
+                         locked_front_buffer.surface().id(),
+                         gl_texture,
+                         size);
                 self.locked_front_buffer = Some(locked_front_buffer);
             }
         }
@@ -155,11 +160,26 @@ impl WebrenderExternalImageApi for WebGLExternalImages {
 
     fn unlock(&mut self, id: u64) {
         self.sendable.unlock(id as usize);
-        if let Some(locked_front_buffer) = self.locked_front_buffer.take() {
-            let mut context = self.context.borrow_mut();
-            self.front_buffer.put_back(
-                self.device.destroy_surface_texture(&mut *context, locked_front_buffer).unwrap());
+
+        let locked_front_buffer = match self.locked_front_buffer.take() {
+            None => return,
+            Some(locked_front_buffer) => locked_front_buffer,
+        };
+
+        let mut context = self.context.borrow_mut();
+        let locked_front_buffer = self.device
+                                      .destroy_surface_texture(&mut *context, locked_front_buffer)
+                                      .unwrap();
+
+        let mut front_buffer_slot = self.front_buffer.0.lock().unwrap();
+        if front_buffer_slot.is_none() {
+            *front_buffer_slot = Some(locked_front_buffer);
+            return;
         }
+
+        println!("*** (unlock) front buffer already has surface {}, dropping",
+                 front_buffer_slot.as_ref().unwrap().id());
+        self.device.destroy_surface(&mut *context, locked_front_buffer).unwrap();
     }
 }
 
@@ -172,16 +192,6 @@ impl FrontBuffer {
 
     fn take(&self) -> Option<Surface> {
         self.0.lock().unwrap().take()
-    }
-
-    fn put_back(&self, old_front_buffer: Surface) {
-        let mut slot = self.0.lock().unwrap();
-        if slot.is_none() {
-            *slot = Some(old_front_buffer);
-        } else {
-            println!("*** (unlock) front buffer already has surface {}, dropping",
-                     slot.as_ref().unwrap().id());
-        }
     }
 
     pub(crate) fn lock(&self) -> MutexGuard<Option<Surface>> {

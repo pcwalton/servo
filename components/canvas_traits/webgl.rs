@@ -6,7 +6,7 @@ use euclid::default::{Rect, Size2D};
 use gleam::gl;
 use gleam::gl::Gl;
 use ipc_channel::ipc::{IpcBytesReceiver, IpcBytesSender, IpcSharedMemory};
-use offscreen_gl_context::Surface;
+use surfman::Surface;
 use pixels::PixelFormat;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::borrow::Cow;

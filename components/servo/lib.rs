@@ -100,7 +100,7 @@ use media::{GLPlayerThreads, WindowGLContext};
 use msg::constellation_msg::{PipelineNamespace, PipelineNamespaceId};
 use net::resource_thread::new_resource_threads;
 use net_traits::IpcSend;
-use offscreen_gl_context::{Context, Device};
+use surfman::Device;
 use profile::mem as profile_mem;
 use profile::time as profile_time;
 use profile_traits::mem;
@@ -989,19 +989,22 @@ fn create_webgl_threads<W>(window: &W,
                            external_images: Arc<Mutex<WebrenderExternalImageRegistry>>)
                            -> WebGLThreads
                            where W: WindowMethods + 'static + ?Sized {
-    // Get a reference to the `surfman` device, and create a context.
-    let device = window.surfman_device();
+    // Create a `surfman` device and context.
+    //
+    // FIXME(pcwalton): The `NoopContextReleaser` is an unsafe hack to get around the fact that
+    // Glutin doesn't provide an obvious way to reference count windows.
     window.make_gl_context_current();
-    let context = Rc::new(RefCell::new(device.create_context_from_current_window_context()
-                                             .expect("Failed to create graphics context!")));
+    let (device, context) = unsafe {
+        Device::from_current_context().expect("Failed to create graphics context!")
+    };
 
     let WebGLComm {
         webgl_threads,
         webxr_handler,
         image_handler,
         output_handler,
-    } = WebGLComm::new(device,
-                       context,
+    } = WebGLComm::new(Rc::new(device),
+                       Rc::new(RefCell::new(context)),
                        window.gl(),
                        webrender_api_sender,
                        webvr_compositor.map(|compositor| compositor as Box<_>),

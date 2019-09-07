@@ -43,9 +43,8 @@ webvr_traits = {path = "../webvr_traits"}
 webvr = {path = "../webvr"}
 webxr-api = {git = "https://github.com/servo/webxr"}
 
-[dependencies.offscreen_gl_context]
-path = "/Users/pcwalton/Source/rorc"
-features = ["sm-glutin"]
+[dependencies.surfman]
+path = "/Users/pcwalton/Source/surfman"
 
 [build-dependencies]
 toml = "0.4.5"

@@ -21,7 +21,7 @@ use glutin::{ElementState, KeyboardInput, MouseButton, MouseScrollDelta, TouchPh
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 use image;
 use keyboard_types::{Key, KeyState, KeyboardEvent};
-use offscreen_gl_context::Device;
+use surfman::Device;
 use servo::compositing::windowing::{AnimationState, MouseWindowEvent, WindowEvent};
 use servo::compositing::windowing::{EmbedderCoordinates, WindowMethods};
 use servo::embedder_traits::Cursor;
@@ -166,10 +166,13 @@ impl Window {
         gl.finish();
 
         let mut context = GlContext::Current(context);
-        context.make_not_current();
 
-        let device = Device::from_glutin_window(&context.window());
-        let device = Rc::new(device.expect("Failed to open a `surfman` device!"));
+        let (device, mut surfman_context) = unsafe {
+            Device::from_current_context().expect("Failed to create a `surfman` device!")
+        };
+        device.destroy_context(&mut surfman_context).unwrap();
+
+        context.make_not_current();
 
         let window = Window {
             gl_context: RefCell::new(context),
@@ -185,7 +188,7 @@ impl Window {
             inner_size: Cell::new(inner_size),
             primary_monitor,
             screen_size,
-            device,
+            device: Rc::new(device),
         };
 
         window.present();

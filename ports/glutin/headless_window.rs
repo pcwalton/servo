@@ -8,7 +8,7 @@ use crate::window_trait::WindowPortsMethods;
 use glutin;
 use euclid::{default::Size2D as UntypedSize2D, Point2D, Scale, Size2D};
 use gleam::gl;
-use offscreen_gl_context::Device;
+use surfman::Device;
 use servo::compositing::windowing::{AnimationState, WindowEvent};
 use servo::compositing::windowing::{EmbedderCoordinates, WindowMethods};
 use servo::servo_config::opts;

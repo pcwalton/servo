@@ -142,7 +142,7 @@ pub struct WebGLRenderingContext {
     webrender_image: Cell<Option<webrender_api::ImageKey>>,
     webgl_version: WebGLVersion,
     glsl_version: WebGLSLVersion,
-    #[ignore_malloc_size_of = "Defined in offscreen_gl_context"]
+    #[ignore_malloc_size_of = "Defined in surfman"]
     limits: GLLimits,
     canvas: Dom<HTMLCanvasElement>,
     #[ignore_malloc_size_of = "Defined in canvas_traits"]
@@ -298,7 +298,7 @@ impl WebGLRenderingContext {
         self.send_command(WebGLCommand::Scissor(rect.0, rect.1, rect.2, rect.3));
 
         // Bound texture must not change when the canvas is resized.
-        // Right now offscreen_gl_context generates a new FBO and the bound texture is changed
+        // Right now surfman generates a new FBO and the bound texture is changed
         // in order to create a new render to texture attachment.
         // Send a command to re-bind the TEXTURE_2D, if any.
         if let Some(texture) = self
@@ -314,7 +314,7 @@ impl WebGLRenderingContext {
         }
 
         // Bound framebuffer must not change when the canvas is resized.
-        // Right now offscreen_gl_context generates a new FBO on resize.
+        // Right now surfman generates a new FBO on resize.
         // Send a command to re-bind the framebuffer, if any.
         if let Some(fbo) = self.bound_framebuffer.get() {
             let id = WebGLFramebufferBindingRequest::Explicit(fbo.id());

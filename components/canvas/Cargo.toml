@@ -37,9 +37,8 @@ webrender_api = {git = "https://github.com/servo/webrender", features = ["ipc"]}
 webrender_traits = {path = "../webrender_traits"}
 webxr-api = {git = "https://github.com/servo/webxr", features = ["ipc"]}
 
-[dependencies.offscreen_gl_context]
-path = "/Users/pcwalton/Source/rorc"
-features = ["sm-glutin"]
+[dependencies.surfman]
+path = "/Users/pcwalton/Source/surfman"
 
 [target.x86_64-apple-darwin.dependencies]
 io-surface = "0.11.1"

@@ -10,7 +10,7 @@ use euclid::Scale;
 use gleam::gl;
 use keyboard_types::KeyboardEvent;
 use msg::constellation_msg::{PipelineId, TopLevelBrowsingContextId, TraversalDirection};
-use offscreen_gl_context::Device;
+use surfman::Device;
 use script_traits::{MouseButton, TouchEventType, TouchId, WheelDelta};
 use servo_geometry::DeviceIndependentPixel;
 use servo_media::player::context::{GlApi, GlContext, NativeDisplay};
