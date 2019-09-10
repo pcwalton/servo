@@ -338,17 +338,17 @@ impl WebGLThread {
             flavor: version.to_surfman_flavor(),
             flags: attributes.to_surfman_context_attribute_flags(),
         };
-        let mut ctx = self.device
-                          .create_context(&context_attributes)
-                          .expect("Failed to create the GL context!");
 
         let surface_descriptor =
             SurfaceDescriptor::from_context_attributes_and_size(&context_attributes,
                                                                 &size.to_i32());
         let back_buffer = self.device
-                              .create_surface_from_descriptor(&mut ctx, &surface_descriptor)
+                              .create_surface_from_descriptor(&surface_descriptor)
                               .expect("Failed to create the initial back buffer!");
-        drop(self.device.replace_context_color_surface(&mut ctx, back_buffer));
+
+        let ctx = self.device
+                      .create_context(&context_attributes, back_buffer)
+                     .expect("Failed to create the GL context!");
 
         let id = WebGLContextId(
             self.external_images
@@ -401,13 +401,9 @@ impl WebGLThread {
         let surface_descriptor =
             SurfaceDescriptor::from_context_attributes_and_size(&gl_info.attributes,
                                                                 &size.to_i32());
-        let new_surface = self.device
-                              .create_surface_from_descriptor(&mut data.ctx, &surface_descriptor)
-                              .unwrap();
+        let new_surface = self.device.create_surface_from_descriptor(&surface_descriptor).unwrap();
         drop(self.device.replace_context_color_surface(&mut data.ctx, new_surface).unwrap());
-        let new_surface = self.device
-                              .create_surface_from_descriptor(&mut data.ctx, &surface_descriptor)
-                              .unwrap();
+        let new_surface = self.device.create_surface_from_descriptor(&surface_descriptor).unwrap();
         drop(self.device.replace_context_color_surface(&mut data.ctx, new_surface).unwrap());
 
         let framebuffer = self.device.context_surface_framebuffer_object(&data.ctx).unwrap();
@@ -520,7 +516,7 @@ impl WebGLThread {
                                       .expect("Where's the front buffer?")
                                       .descriptor();
                 self.device
-                    .create_surface_from_descriptor(&mut data.ctx, &descriptor)
+                    .create_surface_from_descriptor(&descriptor)
                     .expect("Failed to create a new back buffer!")
             }
         };
@@ -531,10 +527,8 @@ impl WebGLThread {
         let new_front_buffer = self.device
                                    .replace_context_color_surface(&mut data.ctx, new_back_buffer)
                                    .expect("Where's the new front buffer?");
-        if let Some(ref front_buffer) = new_front_buffer {
-            println!("... front buffer is now {:?}", front_buffer.id());
-        }
-        *front_buffer_slot = new_front_buffer;
+        println!("... front buffer is now {:?}", new_front_buffer.id());
+        *front_buffer_slot = Some(new_front_buffer);
 
         let framebuffer = self.device.context_surface_framebuffer_object(&data.ctx).unwrap();
         data.gl.bind_framebuffer(gl::FRAMEBUFFER, framebuffer);

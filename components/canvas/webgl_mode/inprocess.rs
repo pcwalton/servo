@@ -179,7 +179,7 @@ impl WebrenderExternalImageApi for WebGLExternalImages {
 
         println!("*** (unlock) front buffer already has surface {}, dropping",
                  front_buffer_slot.as_ref().unwrap().id());
-        self.device.destroy_surface(&mut *context, locked_front_buffer).unwrap();
+        self.device.destroy_surface(locked_front_buffer).unwrap();
     }
 }
 
