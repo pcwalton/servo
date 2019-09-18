@@ -147,7 +147,7 @@ impl WebrenderExternalImageApi for WebGLExternalImages {
                 let locked_front_buffer =
                     self.device.create_surface_texture(&mut *context, front_buffer).unwrap();
                 gl_texture = locked_front_buffer.gl_texture();
-                size = locked_front_buffer.surface().descriptor().size;
+                size = locked_front_buffer.surface().size();
                 println!("presenting front buffer: {:?} (texture {}, size={:?})",
                          locked_front_buffer.surface().id(),
                          gl_texture,
@@ -179,7 +179,7 @@ impl WebrenderExternalImageApi for WebGLExternalImages {
 
         println!("*** (unlock) front buffer already has surface {}, dropping",
                  front_buffer_slot.as_ref().unwrap().id());
-        self.device.destroy_surface(locked_front_buffer).unwrap();
+        self.device.destroy_surface(&mut *context, locked_front_buffer).unwrap();
     }
 }
 

@@ -17,10 +17,9 @@ use euclid::default::Size2D;
 use fnv::FnvHashMap;
 use gleam::gl::{self, Gl, GlFns};
 use half::f16;
-use surfman::{Adapter, Context, ContextAttributeFlags, ContextAttributes, Device};
-use surfman::{GLApi, GLFlavor, GLLimits, GLVersion};
-use surfman::{SurfaceDescriptor, SurfaceTexture};
 use pixels::{self, PixelFormat};
+use surfman::{Adapter, Context, ContextAttributeFlags, ContextAttributes, Device};
+use surfman::{GLApi, GLFlavor, GLLimits, GLVersion, SurfaceTexture};
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
 use std::ptr;
@@ -339,16 +338,13 @@ impl WebGLThread {
             flags: attributes.to_surfman_context_attribute_flags(),
         };
 
-        let surface_descriptor =
-            SurfaceDescriptor::from_context_attributes_and_size(&context_attributes,
-                                                                &size.to_i32());
-        let back_buffer = self.device
-                              .create_surface_from_descriptor(&surface_descriptor)
-                              .expect("Failed to create the initial back buffer!");
+        let context_descriptor = self.device
+                                     .create_context_descriptor(&context_attributes)
+                                     .unwrap();
 
         let ctx = self.device
-                      .create_context(&context_attributes, back_buffer)
-                     .expect("Failed to create the GL context!");
+                      .create_context(&context_descriptor, &size.to_i32())
+                      .expect("Failed to create the GL context!");
 
         let id = WebGLContextId(
             self.external_images
@@ -397,14 +393,11 @@ impl WebGLThread {
             &mut self.bound_context_id).expect("Missing WebGL context!");
 
         // Throw out all buffers.
-        let gl_info = *self.device.context_gl_info(&data.ctx);
-        let surface_descriptor =
-            SurfaceDescriptor::from_context_attributes_and_size(&gl_info.attributes,
-                                                                &size.to_i32());
-        let new_surface = self.device.create_surface_from_descriptor(&surface_descriptor).unwrap();
-        drop(self.device.replace_context_color_surface(&mut data.ctx, new_surface).unwrap());
-        let new_surface = self.device.create_surface_from_descriptor(&surface_descriptor).unwrap();
-        drop(self.device.replace_context_color_surface(&mut data.ctx, new_surface).unwrap());
+        let context_descriptor = self.device.context_descriptor(&data.ctx);
+        let new_surface = self.device.create_surface(&data.ctx, &size.to_i32()).unwrap();
+        drop(self.device.replace_context_surface(&mut data.ctx, new_surface).unwrap());
+        let new_surface = self.device.create_surface(&data.ctx, &size.to_i32()).unwrap();
+        drop(self.device.replace_context_surface(&mut data.ctx, new_surface).unwrap());
 
         let framebuffer = self.device.context_surface_framebuffer_object(&data.ctx).unwrap();
         data.gl.bind_framebuffer(gl::FRAMEBUFFER, framebuffer);
@@ -414,7 +407,11 @@ impl WebGLThread {
         // See `handle_update_wr_image`.
         let info = self.cached_context_info.get_mut(&context_id).unwrap();
         if let Some(image_key) = info.image_key {
-            let has_alpha = gl_info.attributes.flags.contains(ContextAttributeFlags::ALPHA);
+            let has_alpha = self.device
+                                .context_descriptor_attributes(&context_descriptor)
+                                .flags
+                                .contains(ContextAttributeFlags::ALPHA);
+
             Self::update_wr_external_image(&self.webrender_api,
                                            size.to_i32(),
                                            has_alpha,
@@ -471,12 +468,16 @@ impl WebGLThread {
             &mut self.contexts,
             &mut self.bound_context_id).expect("Where's the GL data?");
 
-        let front_surface_descriptor = self.device
-                                           .context_color_surface(&data.ctx)
-                                           .expect("Where's the render target?")
-                                           .descriptor();
-        let size = front_surface_descriptor.size;
-        let format = front_surface_descriptor.format;
+        let front_surface = self.device
+                                .context_surface(&data.ctx)
+                                .expect("Where's the front surface?");
+        let size = front_surface.size();
+        let descriptor = self.device.context_descriptor(&data.ctx);
+        let has_alpha = self.device
+                            .context_descriptor_attributes(&descriptor)
+                            .flags
+                            .contains(ContextAttributeFlags::ALPHA);
+
         let texture_target = current_wr_texture_target();
         let webrender_api = &self.webrender_api;
 
@@ -484,13 +485,11 @@ impl WebGLThread {
         // When using a shared texture ImageKeys are only generated after a WebGLContext creation.
         let info = self.cached_context_info.get_mut(&context_id).unwrap();
         let image_key = *info.image_key.get_or_insert_with(|| {
-            Self::create_wr_external_image(
-                webrender_api,
-                size,
-                format.has_alpha(),
-                context_id,
-                texture_target,
-            )
+            Self::create_wr_external_image(webrender_api,
+                                           size,
+                                           has_alpha,
+                                           context_id,
+                                           texture_target)
         });
 
         // Send the ImageKey to the Layout thread.
@@ -511,12 +510,9 @@ impl WebGLThread {
         let new_back_buffer = match front_buffer_slot.take() {
             Some(new_back_buffer) => new_back_buffer,
             None => {
-                let descriptor = *self.device
-                                      .context_color_surface(&data.ctx)
-                                      .expect("Where's the front buffer?")
-                                      .descriptor();
+                let size = self.device.context_surface(&data.ctx).unwrap().size();
                 self.device
-                    .create_surface_from_descriptor(&descriptor)
+                    .create_surface(&data.ctx, &size)
                     .expect("Failed to create a new back buffer!")
             }
         };
@@ -525,7 +521,7 @@ impl WebGLThread {
 
         // Swap the buffers.
         let new_front_buffer = self.device
-                                   .replace_context_color_surface(&mut data.ctx, new_back_buffer)
+                                   .replace_context_surface(&mut data.ctx, new_back_buffer)
                                    .expect("Where's the new front buffer?");
         println!("... front buffer is now {:?}", new_front_buffer.id());
         *front_buffer_slot = Some(new_front_buffer);
@@ -534,7 +530,7 @@ impl WebGLThread {
         data.gl.bind_framebuffer(gl::FRAMEBUFFER, framebuffer);
         println!("... rebound framebuffer {}, new back buffer surface is {:?}",
                  framebuffer,
-                 self.device.context_color_surface(&data.ctx).unwrap().id());
+                 self.device.context_surface(&data.ctx).unwrap().id());
     }
 
     fn handle_dom_to_texture(&mut self, command: DOMToTextureCommand) {
@@ -1183,17 +1179,15 @@ impl WebGLImpl {
                 );
             },
             WebGLCommand::DrawingBufferWidth(ref sender) => {
-                let size = device.context_color_surface(&ctx)
+                let size = device.context_surface(&ctx)
                                  .expect("Where's the front buffer?")
-                                 .descriptor()
-                                 .size;
+                                 .size();
                 sender.send(size.width).unwrap()
             }
             WebGLCommand::DrawingBufferHeight(ref sender) => {
-                let size = device.context_color_surface(&ctx)
+                let size = device.context_surface(&ctx)
                                  .expect("Where's the front buffer?")
-                                 .descriptor()
-                                 .size;
+                                 .size();
                 sender.send(size.height).unwrap()
             }
             WebGLCommand::Finish(ref sender) => Self::finish(gl, sender),
