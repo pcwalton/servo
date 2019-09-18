@@ -28,10 +28,6 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use webrender_traits::{WebrenderExternalImageRegistry, WebrenderImageHandlerType};
 
-thread_local! {
-    static COLOR: Cell<f32> = Cell::new(0.0);
-}
-
 struct GLContextData {
     ctx: Context,
     gl: Rc<dyn Gl>,
@@ -807,11 +803,7 @@ impl WebGLImpl {
                 state.clear_mask = mask;
                 gl.clear(mask);
             },
-            WebGLCommand::ClearColor(mut r, g, b, a) => {
-                COLOR.with(|color| {
-                    r = color.get();
-                    color.set(r + 0.01);
-                });
+            WebGLCommand::ClearColor(r, g, b, a) => {
                 state.clear_color = (r, g, b, a);
                 gl.clear_color(r, g, b, a);
             },
