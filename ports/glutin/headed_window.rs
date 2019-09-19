@@ -21,7 +21,6 @@ use glutin::{ElementState, KeyboardInput, MouseButton, MouseScrollDelta, TouchPh
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 use image;
 use keyboard_types::{Key, KeyState, KeyboardEvent};
-use surfman::Device;
 use servo::compositing::windowing::{AnimationState, MouseWindowEvent, WindowEvent};
 use servo::compositing::windowing::{EmbedderCoordinates, WindowMethods};
 use servo::embedder_traits::Cursor;
@@ -35,6 +34,7 @@ use servo_media::player::context::{GlApi, GlContext as PlayerGLContext, NativeDi
 use std::cell::{Cell, RefCell};
 use std::mem;
 use std::rc::Rc;
+use surfman::{self, Device};
 #[cfg(target_os = "windows")]
 use winapi;
 
@@ -166,6 +166,9 @@ impl Window {
         gl.finish();
 
         let mut context = GlContext::Current(context);
+
+        // Make sure to initialize `surfman` here so that it loads the GL functions.
+        surfman::init();
 
         let (device, mut surfman_context) = unsafe {
             Device::from_current_context().expect("Failed to create a `surfman` device!")

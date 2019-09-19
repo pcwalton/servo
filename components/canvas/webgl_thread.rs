@@ -2,24 +2,25 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+use crate::webgl_limits::GLLimitsDetect;
 use crate::webgl_mode::FrontBuffer;
 use byteorder::{ByteOrder, NativeEndian, WriteBytesExt};
 use canvas_traits::webgl::{self, ActiveAttribInfo, ActiveUniformInfo, AlphaTreatment};
-use canvas_traits::webgl::{DOMToTextureCommand, GLContextAttributes, GlType, ProgramLinkInfo};
-use canvas_traits::webgl::{TexDataType, TexFormat, WebGLBufferId, WebGLChan, WebGLCommand};
-use canvas_traits::webgl::{WebGLCommandBacktrace, WebGLContextId, WebGLCreateContextResult};
-use canvas_traits::webgl::{WebGLFramebufferBindingRequest, WebGLFramebufferId, WebGLMsg};
-use canvas_traits::webgl::{WebGLMsgSender, WebGLProgramId, WebGLReceiver, WebGLRenderbufferId};
-use canvas_traits::webgl::{WebGLSLVersion, WebGLSender, WebGLShaderId, WebGLTextureId};
-use canvas_traits::webgl::{WebGLVersion, WebGLVertexArrayId, WebVRCommand};
-use canvas_traits::webgl::{WebVRRenderHandler, YAxisTreatment};
+use canvas_traits::webgl::{DOMToTextureCommand, GLContextAttributes, GLLimits, GlType};
+use canvas_traits::webgl::{ProgramLinkInfo, TexDataType, TexFormat, WebGLBufferId, WebGLChan};
+use canvas_traits::webgl::{WebGLCommand, WebGLCommandBacktrace, WebGLContextId};
+use canvas_traits::webgl::{WebGLCreateContextResult, WebGLFramebufferBindingRequest};
+use canvas_traits::webgl::{WebGLFramebufferId, WebGLMsg, WebGLMsgSender, WebGLProgramId};
+use canvas_traits::webgl::{WebGLReceiver, WebGLRenderbufferId, WebGLSLVersion, WebGLSender};
+use canvas_traits::webgl::{WebGLShaderId, WebGLTextureId, WebGLVersion, WebGLVertexArrayId};
+use canvas_traits::webgl::{WebVRCommand, WebVRRenderHandler, YAxisTreatment};
 use euclid::default::Size2D;
 use fnv::FnvHashMap;
 use gleam::gl::{self, Gl, GlFns};
 use half::f16;
 use pixels::{self, PixelFormat};
-use surfman::{Adapter, Context, ContextAttributeFlags, ContextAttributes, Device};
-use surfman::{GLApi, GLFlavor, GLLimits, GLVersion, SurfaceTexture};
+use surfman::{self, Adapter, Context, ContextAttributeFlags, ContextAttributes, Device};
+use surfman::{GLVersion, SurfaceTexture};
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
 use std::ptr;
@@ -330,7 +331,7 @@ impl WebGLThread {
         self.bound_context_id = None;
 
         let context_attributes = &ContextAttributes {
-            flavor: version.to_surfman_flavor(),
+            version: version.to_surfman_version(),
             flags: attributes.to_surfman_context_attribute_flags(),
         };
 
@@ -350,19 +351,13 @@ impl WebGLThread {
                 .0 as usize,
         );
 
-        let gl = unsafe {
-            GlFns::load_with(|function_name| {
-                self.device.get_proc_address(&ctx, function_name).unwrap_or(ptr::null())
-            })
-        };
+        let gl = unsafe { GlFns::load_with(surfman::get_proc_address) };
 
-        let limits = self.device.context_gl_info(&ctx).limits;
+        let limits = GLLimits::detect(&*gl);
 
         self.device.make_context_current(&ctx).unwrap();
         let framebuffer = self.device.context_surface_framebuffer_object(&ctx).unwrap();
         gl.bind_framebuffer(gl::FRAMEBUFFER, framebuffer);
-
-        //let gl_sync = ctx.gl().fence_sync(gl::SYNC_GPU_COMMANDS_COMPLETE, 0);
 
         let state = Default::default();
         self.contexts.insert(id, GLContextData { ctx, gl, state, attributes });
@@ -372,7 +367,7 @@ impl WebGLThread {
             WebGLContextInfo { image_key: None, received_webgl_command: false },
         );
 
-        Ok((id, limits.to_webgl_limits()))
+        Ok((id, limits))
     }
 
     /// Resizes a WebGLContext
@@ -2126,15 +2121,15 @@ fn flip_pixels_y(
     flipped
 }
 
-trait ToSurfmanFlavor {
-    fn to_surfman_flavor(self) -> GLFlavor;
+trait ToSurfmanVersion {
+    fn to_surfman_version(self) -> GLVersion;
 }
 
-impl ToSurfmanFlavor for WebGLVersion {
-    fn to_surfman_flavor(self) -> GLFlavor {
+impl ToSurfmanVersion for WebGLVersion {
+    fn to_surfman_version(self) -> GLVersion {
         match self {
-            WebGLVersion::WebGL1 => GLFlavor { api: GLApi::GL, version: GLVersion::new(2, 0) },
-            WebGLVersion::WebGL2 => GLFlavor { api: GLApi::GL, version: GLVersion::new(3, 0) },
+            WebGLVersion::WebGL1 => GLVersion::new(2, 0),
+            WebGLVersion::WebGL2 => GLVersion::new(3, 0),
         }
     }
 }
@@ -2150,26 +2145,5 @@ impl SurfmanContextAttributeFlagsConvert for GLContextAttributes {
         flags.set(ContextAttributeFlags::DEPTH, self.depth);
         flags.set(ContextAttributeFlags::STENCIL, self.stencil);
         flags
-    }
-}
-
-trait ToWebGLLimits {
-    fn to_webgl_limits(&self) -> webgl::GLLimits;
-}
-
-impl ToWebGLLimits for GLLimits {
-    fn to_webgl_limits(&self) -> webgl::GLLimits {
-        webgl::GLLimits {
-            max_vertex_attribs: self.max_vertex_attribs,
-            max_tex_size: self.max_tex_size,
-            max_cube_map_tex_size: self.max_cube_map_tex_size,
-            max_combined_texture_image_units: self.max_combined_texture_image_units,
-            max_fragment_uniform_vectors: self.max_fragment_uniform_vectors,
-            max_renderbuffer_size: self.max_renderbuffer_size,
-            max_texture_image_units: self.max_texture_image_units,
-            max_varying_vectors: self.max_varying_vectors,
-            max_vertex_texture_image_units: self.max_vertex_texture_image_units,
-            max_vertex_uniform_vectors: self.max_vertex_uniform_vectors,
-        }
     }
 }

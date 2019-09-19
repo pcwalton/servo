@@ -7,12 +7,12 @@ use canvas_traits::webgl::{WebGLMsg, WebGLSender, WebGLThreads, WebVRRenderHandl
 use euclid::default::Size2D;
 use fnv::FnvHashMap;
 use gleam::gl;
-use surfman::{Context, Device, Surface, SurfaceTexture};
 use servo_config::pref;
 use std::cell::RefCell;
 use std::default::Default;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex, MutexGuard};
+use surfman::{self, Context, Device, Surface, SurfaceTexture};
 use webrender_traits::{WebrenderExternalImageApi, WebrenderExternalImageRegistry};
 use webxr_api::WebGLExternalImageApi;
 
