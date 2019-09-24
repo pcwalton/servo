@@ -44,7 +44,7 @@ webvr = {path = "../webvr"}
 webxr-api = {git = "https://github.com/servo/webxr"}
 
 [dependencies.surfman]
-path = "/Users/pcwalton/Source/surfman"
+path = "/Users/pcwalton/Source/surfman/surfman"
 
 [build-dependencies]
 toml = "0.4.5"

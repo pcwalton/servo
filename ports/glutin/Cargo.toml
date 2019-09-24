@@ -63,7 +63,7 @@ webxr-api = { git = "https://github.com/servo/webxr", features = ["ipc"] }
 webxr = { git = "https://github.com/servo/webxr", features = ["ipc", "glwindow", "headless"] }
 
 [dependencies.surfman]
-path = "/Users/pcwalton/Source/surfman"
+path = "/Users/pcwalton/Source/surfman/surfman"
 
 [target.'cfg(any(target_os = "linux", target_os = "windows"))'.dependencies]
 image = "0.21"

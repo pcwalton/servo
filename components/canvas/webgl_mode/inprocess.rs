@@ -144,10 +144,10 @@ impl WebrenderExternalImageApi for WebGLExternalImages {
             }
             Some(front_buffer) => {
                 let mut context = self.context.borrow_mut();
+                size = front_buffer.size();
                 let locked_front_buffer =
                     self.device.create_surface_texture(&mut *context, front_buffer).unwrap();
                 gl_texture = locked_front_buffer.gl_texture();
-                size = locked_front_buffer.surface().size();
                 self.locked_front_buffer = Some(locked_front_buffer);
             }
         }

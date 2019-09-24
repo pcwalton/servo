@@ -20,10 +20,9 @@ use gleam::gl::{self, Gl, GlFns};
 use half::f16;
 use pixels::{self, PixelFormat};
 use surfman::{self, Adapter, Context, ContextAttributeFlags, ContextAttributes, Device};
-use surfman::{GLVersion, SurfaceTexture};
+use surfman::GLVersion;
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
-use std::ptr;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -351,7 +350,9 @@ impl WebGLThread {
                 .0 as usize,
         );
 
-        let gl = unsafe { GlFns::load_with(surfman::get_proc_address) };
+        let gl = unsafe {
+            GlFns::load_with(|symbol_name| self.device.get_proc_address(&ctx, symbol_name))
+        };
 
         let limits = GLLimits::detect(&*gl);
 
@@ -402,13 +403,13 @@ impl WebGLThread {
                                 .context_descriptor_attributes(&context_descriptor)
                                 .flags
                                 .contains(ContextAttributeFlags::ALPHA);
-
+            let texture_target = current_wr_texture_target(&self.device);
             Self::update_wr_external_image(&self.webrender_api,
                                            size.to_i32(),
                                            has_alpha,
                                            context_id,
                                            image_key,
-                                           current_wr_texture_target());
+                                           texture_target);
         }
 
         sender.send(Ok(())).unwrap();
@@ -459,17 +460,16 @@ impl WebGLThread {
             &mut self.contexts,
             &mut self.bound_context_id).expect("Where's the GL data?");
 
-        let front_surface = self.device
-                                .context_surface(&data.ctx)
-                                .expect("Where's the front surface?");
-        let size = front_surface.size();
+        let size = self.device
+                       .context_surface_size(&data.ctx)
+                       .expect("Where's the front surface?");
         let descriptor = self.device.context_descriptor(&data.ctx);
         let has_alpha = self.device
                             .context_descriptor_attributes(&descriptor)
                             .flags
                             .contains(ContextAttributeFlags::ALPHA);
 
-        let texture_target = current_wr_texture_target();
+        let texture_target = current_wr_texture_target(&self.device);
         let webrender_api = &self.webrender_api;
 
         // Reuse existing ImageKey or generate a new one.
@@ -501,7 +501,7 @@ impl WebGLThread {
         let new_back_buffer = match front_buffer_slot.take() {
             Some(new_back_buffer) => new_back_buffer,
             None => {
-                let size = self.device.context_surface(&data.ctx).unwrap().size();
+                let size = self.device.context_surface_size(&data.ctx).unwrap();
                 self.device
                     .create_surface(&data.ctx, &size)
                     .expect("Failed to create a new back buffer!")
@@ -521,7 +521,7 @@ impl WebGLThread {
         data.gl.bind_framebuffer(gl::FRAMEBUFFER, framebuffer);
         println!("... rebound framebuffer {}, new back buffer surface is {:?}",
                  framebuffer,
-                 self.device.context_surface(&data.ctx).unwrap().id());
+                 self.device.context_surface_id(&data.ctx).unwrap());
     }
 
     fn handle_dom_to_texture(&mut self, command: DOMToTextureCommand) {
@@ -737,8 +737,9 @@ struct WebGLContextInfo {
     received_webgl_command: bool,
 }
 
-fn current_wr_texture_target() -> webrender_api::TextureTarget {
-    match SurfaceTexture::gl_texture_target() {
+// TODO(pcwalton): Add `GL_TEXTURE_EXTERNAL_OES`?
+fn current_wr_texture_target(device: &Device) -> webrender_api::TextureTarget {
+    match device.surface_gl_texture_target() {
         gl::TEXTURE_RECTANGLE_ARB => webrender_api::TextureTarget::Rect,
         _ => webrender_api::TextureTarget::Default,
     }
@@ -856,7 +857,7 @@ impl WebGLImpl {
                 }
                 gl.disable(cap);
             },
-            WebGLCommand::Enable(mut cap) => {
+            WebGLCommand::Enable(cap) => {
                 if cap == gl::SCISSOR_TEST {
                     state.scissor_test_enabled = true;
                 }
@@ -1166,15 +1167,11 @@ impl WebGLImpl {
                 );
             },
             WebGLCommand::DrawingBufferWidth(ref sender) => {
-                let size = device.context_surface(&ctx)
-                                 .expect("Where's the front buffer?")
-                                 .size();
+                let size = device.context_surface_size(&ctx).expect("Where's the front buffer?");
                 sender.send(size.width).unwrap()
             }
             WebGLCommand::DrawingBufferHeight(ref sender) => {
-                let size = device.context_surface(&ctx)
-                                 .expect("Where's the front buffer?")
-                                 .size();
+                let size = device.context_surface_size(&ctx).expect("Where's the front buffer?");
                 sender.send(size.height).unwrap()
             }
             WebGLCommand::Finish(ref sender) => Self::finish(gl, sender),

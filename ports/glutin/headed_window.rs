@@ -167,9 +167,6 @@ impl Window {
 
         let mut context = GlContext::Current(context);
 
-        // Make sure to initialize `surfman` here so that it loads the GL functions.
-        surfman::init();
-
         let (device, mut surfman_context) = unsafe {
             Device::from_current_context().expect("Failed to create a `surfman` device!")
         };

@@ -31,7 +31,7 @@ webvr_traits = {path = "../webvr_traits"}
 webxr-api = {git = "https://github.com/servo/webxr"}
 
 [dependencies.surfman]
-path = "/Users/pcwalton/Source/surfman"
+path = "/Users/pcwalton/Source/surfman/surfman"
 
 [target.x86_64-apple-darwin.dependencies]
 io-surface = "0.11.1"
