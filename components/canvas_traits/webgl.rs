@@ -532,7 +532,7 @@ define_resource_id!(WebGLVertexArrayId);
 #[derive(
     Clone, Copy, Debug, Deserialize, Eq, Hash, MallocSizeOf, Ord, PartialEq, PartialOrd, Serialize,
 )]
-pub struct WebGLContextId(pub usize);
+pub struct WebGLContextId(pub u64);
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 pub enum WebGLError {

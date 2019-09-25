@@ -188,7 +188,7 @@ impl XRSession {
             if let Some(layer) = pending.GetBaseLayer() {
                 let attachment = layer.framebuffer().attachment(constants::COLOR_ATTACHMENT0);
                 if let Some(WebGLFramebufferAttachmentRoot::Texture(texture)) = attachment {
-                    let context = layer.Context().context_id().0;
+                    let context = layer.Context().context_id().0 as usize;
                     let texture_id = texture.id().get();
                     if let Some((width, height)) = layer.framebuffer().size() {
                         let size = Size2D::new(width, height);

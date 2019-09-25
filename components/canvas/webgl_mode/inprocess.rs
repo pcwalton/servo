@@ -3,12 +3,14 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 use crate::webgl_thread::{WebGLThread, WebGLThreadInit};
-use canvas_traits::webgl::{WebGLMsg, WebGLSender, WebGLThreads, WebVRRenderHandler, webgl_channel};
+use canvas_traits::webgl::{WebGLContextId, WebGLMsg, WebGLSender, WebGLThreads};
+use canvas_traits::webgl::{WebVRRenderHandler, webgl_channel};
 use euclid::default::Size2D;
 use fnv::FnvHashMap;
 use gleam::gl;
 use servo_config::pref;
 use std::cell::RefCell;
+use std::collections::hash_map::Entry;
 use std::default::Default;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -36,8 +38,8 @@ impl WebGLComm {
         println!("WebGLThreads::new()");
         let (sender, receiver) = webgl_channel::<WebGLMsg>().unwrap();
 
-        // Make a front buffer.
-        let front_buffer = Arc::new(FrontBuffer::new());
+        // Make our front buffer table.
+        let front_buffers = FrontBuffers::new();
 
         // This implementation creates a single `WebGLThread` for all the pipelines.
         let init = WebGLThreadInit {
@@ -46,7 +48,7 @@ impl WebGLComm {
             external_images,
             sender: sender.clone(),
             receiver,
-            front_buffer: front_buffer.clone(),
+            front_buffers: front_buffers.clone(),
             adapter: device.adapter(),
         };
 
@@ -62,7 +64,7 @@ impl WebGLComm {
         let external = WebGLExternalImages::new(device,
                                                 context,
                                                 webrender_gl,
-                                                front_buffer,
+                                                front_buffers,
                                                 sender.clone());
 
         WebGLThread::run_on_own_thread(init);
@@ -109,8 +111,8 @@ struct WebGLExternalImages {
     device: Rc<Device>,
     context: Rc<RefCell<Context>>,
     webrender_gl: Rc<dyn gl::Gl>,
-    front_buffer: Arc<FrontBuffer>,
-    locked_front_buffer: Option<SurfaceTexture>,
+    front_buffers: FrontBuffers,
+    locked_front_buffers: FnvHashMap<WebGLContextId, SurfaceTexture>,
     sendable: SendableWebGLExternalImages,
 }
 
@@ -118,29 +120,29 @@ impl WebGLExternalImages {
     fn new(device: Rc<Device>,
            context: Rc<RefCell<Context>>,
            webrender_gl: Rc<dyn gl::Gl>,    
-           front_buffer: Arc<FrontBuffer>,
+           front_buffers: FrontBuffers,
            channel: WebGLSender<WebGLMsg>)
            -> Self {
         Self {
             device,
             context,
             webrender_gl,
-            front_buffer,
-            locked_front_buffer: None,
+            front_buffers,
+            locked_front_buffers: FnvHashMap::default(),
             sendable: SendableWebGLExternalImages::new(channel),
         }
     }
 }
 
 impl WebrenderExternalImageApi for WebGLExternalImages {
-    // FIXME(pcwalton): What is the ID for?
     fn lock(&mut self, id: u64) -> (u32, Size2D<i32>) {
+        let id = WebGLContextId(id);
         let (gl_texture, size);
-        match self.front_buffer.take() {
+        match self.front_buffers.remove(id) {
             None => {
                 gl_texture = 0;
                 size = Size2D::new(0, 0);
-                self.locked_front_buffer = None;
+                self.locked_front_buffers.remove(&id);
             }
             Some(front_buffer) => {
                 let mut context = self.context.borrow_mut();
@@ -148,7 +150,7 @@ impl WebrenderExternalImageApi for WebGLExternalImages {
                 let locked_front_buffer =
                     self.device.create_surface_texture(&mut *context, front_buffer).unwrap();
                 gl_texture = locked_front_buffer.gl_texture();
-                self.locked_front_buffer = Some(locked_front_buffer);
+                self.locked_front_buffers.insert(id, locked_front_buffer);
             }
         }
         (gl_texture, size)
@@ -157,7 +159,8 @@ impl WebrenderExternalImageApi for WebGLExternalImages {
     fn unlock(&mut self, id: u64) {
         self.sendable.unlock(id as usize);
 
-        let locked_front_buffer = match self.locked_front_buffer.take() {
+        let id = WebGLContextId(id);
+        let locked_front_buffer = match self.locked_front_buffers.remove(&id) {
             None => return,
             Some(locked_front_buffer) => locked_front_buffer,
         };
@@ -167,31 +170,70 @@ impl WebrenderExternalImageApi for WebGLExternalImages {
                                       .destroy_surface_texture(&mut *context, locked_front_buffer)
                                       .unwrap();
 
-        let mut front_buffer_slot = self.front_buffer.0.lock().unwrap();
-        if front_buffer_slot.is_none() {
-            *front_buffer_slot = Some(locked_front_buffer);
+        if let Err(locked_front_buffer) = self.front_buffers
+                                              .insert_if_not_present(id, locked_front_buffer) {
+            println!("spuriously destroying surface");
+            self.device.destroy_surface(&mut *context, locked_front_buffer).unwrap();
+        }
+
+        /*
+        let mut front_buffer_slot = self.front_buffers.get(id);
+        let mut locked_front_buffer_slot = front_buffer_slot.lock();
+        if locked_front_buffer_slot.is_none() {
+            *locked_front_buffer_slot = Some(locked_front_buffer);
             return;
         }
 
+        println!("spuriously destroying surface");
         self.device.destroy_surface(&mut *context, locked_front_buffer).unwrap();
+        */
     }
 }
 
-pub struct FrontBuffer(Mutex<Option<Surface>>);
+#[derive(Clone)]
+pub struct FrontBuffers {
+    table: Arc<Mutex<FnvHashMap<WebGLContextId, Surface>>>,
+}
 
-impl FrontBuffer {
-    fn new() -> FrontBuffer {
-        FrontBuffer(Mutex::new(None))
+impl FrontBuffers {
+    fn new() -> FrontBuffers {
+        FrontBuffers {
+            table: Arc::new(Mutex::new(FnvHashMap::default())),
+        }
     }
 
+    fn remove(&self, context_id: WebGLContextId) -> Option<Surface> {
+        self.lock().remove(&context_id)
+    }
+
+    fn insert_if_not_present(&self, context_id: WebGLContextId, surface: Surface)
+                             -> Result<(), Surface> {
+        let mut table = self.lock();
+        match table.entry(context_id) {
+            Entry::Vacant(vacant_entry) => {
+                vacant_entry.insert(surface);
+                Ok(())
+            }
+            Entry::Occupied(_) => Err(surface),
+        }
+    }
+
+    pub(crate) fn lock(&self) -> MutexGuard<FnvHashMap<WebGLContextId, Surface>> {
+        self.table.lock().unwrap()
+    }
+}
+
+/*
+impl FrontBuffer {
     fn take(&self) -> Option<Surface> {
-        self.0.lock().unwrap().take()
+        self.surface.lock().unwrap().take()
     }
 
     pub(crate) fn lock(&self) -> MutexGuard<Option<Surface>> {
-        self.0.lock().unwrap()
+        self.surface.lock().unwrap()
     }
 }
+*/
 
 /// struct used to implement DOMToTexture feature and webrender::OutputImageHandler trait.
 //type OutputHandlerData = Option<(u32, Size2D<i32>)>;

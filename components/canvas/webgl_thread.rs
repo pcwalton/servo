@@ -3,7 +3,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 use crate::webgl_limits::GLLimitsDetect;
-use crate::webgl_mode::FrontBuffer;
+use crate::webgl_mode::FrontBuffers;
 use byteorder::{ByteOrder, NativeEndian, WriteBytesExt};
 use canvas_traits::webgl::{self, ActiveAttribInfo, ActiveUniformInfo, AlphaTreatment};
 use canvas_traits::webgl::{DOMToTextureCommand, GLContextAttributes, GLLimits, GlType};
@@ -83,8 +83,8 @@ pub(crate) struct WebGLThread {
     receiver: WebGLReceiver<WebGLMsg>,
     /// The receiver that should be used to send WebGL messages for processing.
     sender: WebGLSender<WebGLMsg>,
-    /// FIXME(pcwalton): Should be one front buffer per context ID!!
-    front_buffer: Arc<FrontBuffer>,
+    /// The front buffer for each WebGL context ID.
+    front_buffers: FrontBuffers,
 }
 
 #[derive(PartialEq)]
@@ -100,7 +100,7 @@ pub(crate) struct WebGLThreadInit {
     pub external_images: Arc<Mutex<WebrenderExternalImageRegistry>>,
     pub sender: WebGLSender<WebGLMsg>,
     pub receiver: WebGLReceiver<WebGLMsg>,
-    pub front_buffer: Arc<FrontBuffer>,
+    pub front_buffers: FrontBuffers,
     pub adapter: Adapter,
 }
 
@@ -144,7 +144,7 @@ impl WebGLThread {
             external_images,
             sender,
             receiver,
-            front_buffer,
+            front_buffers,
             adapter,
         }: WebGLThreadInit,
     ) -> Self {
@@ -159,7 +159,7 @@ impl WebGLThread {
             external_images,
             sender,
             receiver,
-            front_buffer,
+            front_buffers,
         }
     }
 
@@ -347,7 +347,7 @@ impl WebGLThread {
                 .lock()
                 .unwrap()
                 .next_id(WebrenderImageHandlerType::WebGL)
-                .0 as usize,
+                .0,
         );
 
         let gl = unsafe {
@@ -496,26 +496,29 @@ impl WebGLThread {
             &mut self.bound_context_id,
         ).expect("Where's the GL data?");
 
-        // Fetch a new back buffer.
-        let mut front_buffer_slot = self.front_buffer.lock();
-        let new_back_buffer = match front_buffer_slot.take() {
-            Some(new_back_buffer) => new_back_buffer,
-            None => {
-                let size = self.device.context_surface_size(&data.ctx).unwrap();
-                self.device
-                    .create_surface(&data.ctx, &size)
-                    .expect("Failed to create a new back buffer!")
-            }
-        };
+        {
+            let mut front_buffers = self.front_buffers.lock();
 
-        println!("... new back buffer will become {:?}", new_back_buffer.id());
+            // Fetch a new back buffer.
+            let new_back_buffer = match front_buffers.remove(&context_id) {
+                Some(new_back_buffer) => new_back_buffer,
+                None => {
+                    let size = self.device.context_surface_size(&data.ctx).unwrap();
+                    self.device
+                        .create_surface(&data.ctx, &size)
+                        .expect("Failed to create a new back buffer!")
+                }
+            };
 
-        // Swap the buffers.
-        let new_front_buffer = self.device
-                                   .replace_context_surface(&mut data.ctx, new_back_buffer)
-                                   .expect("Where's the new front buffer?");
-        println!("... front buffer is now {:?}", new_front_buffer.id());
-        *front_buffer_slot = Some(new_front_buffer);
+            println!("... new back buffer will become {:?}", new_back_buffer.id());
+
+            // Swap the buffers.
+            let new_front_buffer = self.device
+                                    .replace_context_surface(&mut data.ctx, new_back_buffer)
+                                    .expect("Where's the new front buffer?");
+            println!("... front buffer is now {:?}", new_front_buffer.id());
+            front_buffers.insert(context_id, new_front_buffer);
+        }
 
         let framebuffer = self.device.context_surface_framebuffer_object(&data.ctx).unwrap();
         data.gl.bind_framebuffer(gl::FRAMEBUFFER, framebuffer);
