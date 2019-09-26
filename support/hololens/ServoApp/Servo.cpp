@@ -34,7 +34,7 @@ Servo::Servo(GLsizei width, GLsizei height, ServoDelegate &aDelegate)
 
   capi::CInitOptions o;
   o.args = NULL;
-  o.url = "https://servo.org";
+  o.url = "https://mrdoob.neocities.org/018";
   o.width = mWindowWidth;
   o.height = mWindowHeight;
   o.density = 1.0;
