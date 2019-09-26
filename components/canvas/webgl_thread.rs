@@ -16,7 +16,7 @@ use canvas_traits::webgl::{WebGLShaderId, WebGLTextureId, WebGLVersion, WebGLVer
 use canvas_traits::webgl::{WebVRCommand, WebVRRenderHandler, YAxisTreatment};
 use euclid::default::Size2D;
 use fnv::FnvHashMap;
-use gleam::gl::{self, Gl, GlFns};
+use gleam::gl::{self, Gl, GlFns, GlesFns};
 use half::f16;
 use pixels::{self, PixelFormat};
 use std::borrow::Cow;
@@ -87,6 +87,8 @@ pub(crate) struct WebGLThread {
     sender: WebGLSender<WebGLMsg>,
     /// The front buffer for each WebGL context ID.
     swap_chains: SwapChains,
+    ///
+    api_type: gl::GlType,
 }
 
 #[derive(PartialEq)]
@@ -104,6 +106,7 @@ pub(crate) struct WebGLThreadInit {
     pub receiver: WebGLReceiver<WebGLMsg>,
     pub swap_chains: SwapChains,
     pub adapter: Adapter,
+    pub api_type: gl::GlType,
 }
 
 /// The extra data required to run an instance of WebGLThread when it is
@@ -148,6 +151,7 @@ impl WebGLThread {
             receiver,
             swap_chains,
             adapter,
+            api_type,
         }: WebGLThreadInit,
     ) -> Self {
         WebGLThread {
@@ -162,6 +166,7 @@ impl WebGLThread {
             sender,
             receiver,
             swap_chains,
+            api_type,
         }
     }
 
@@ -352,8 +357,13 @@ impl WebGLThread {
                 .0,
         );
 
-        let gl = unsafe {
-            GlFns::load_with(|symbol_name| self.device.get_proc_address(&ctx, symbol_name))
+        let gl = match self.api_type {
+            gl::GlType::Gl => unsafe {
+                GlFns::load_with(|symbol_name| self.device.get_proc_address(&ctx, symbol_name))
+            },
+            gl::GlType::Gles => unsafe {
+                GlesFns::load_with(|symbol_name| self.device.get_proc_address(&ctx, symbol_name))
+            },
         };
 
         let limits = GLLimits::detect(&*gl);
