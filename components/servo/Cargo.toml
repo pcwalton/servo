@@ -79,9 +79,7 @@ webdriver_server = {path = "../webdriver_server", optional = true}
 webvr = {path = "../webvr"}
 webvr_traits = {path = "../webvr_traits"}
 webxr-api = {git = "https://github.com/servo/webxr"}
-
-[dependencies.surfman]
-path = "/Users/pcwalton/Source/surfman/surfman"
+surfman = { git = "https://github.com/pcwalton/surfman" }
 
 [target.'cfg(all(not(target_os = "windows"), not(target_os = "ios"), not(target_os="android"), not(target_arch="arm"), not(target_arch="aarch64")))'.dependencies]
 gaol = {git = "https://github.com/servo/gaol"}
