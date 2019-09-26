@@ -3,7 +3,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 use crate::webgl_limits::GLLimitsDetect;
-use crate::webgl_mode::FrontBuffers;
+use crate::webgl_mode::{FrontBufferInfo, FrontBuffers};
 use byteorder::{ByteOrder, NativeEndian, WriteBytesExt};
 use canvas_traits::webgl::{self, ActiveAttribInfo, ActiveUniformInfo, AlphaTreatment};
 use canvas_traits::webgl::{DOMToTextureCommand, GLContextAttributes, GLLimits, GlType};
@@ -19,13 +19,14 @@ use fnv::FnvHashMap;
 use gleam::gl::{self, Gl, GlFns};
 use half::f16;
 use pixels::{self, PixelFormat};
-use surfman::{self, Adapter, Context, ContextAttributeFlags, ContextAttributes, Device};
-use surfman::GLVersion;
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
+use std::collections::hash_map::Entry;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::thread;
+use surfman::{self, Adapter, Context, ContextAttributeFlags, ContextAttributes, Device};
+use surfman::GLVersion;
 use webrender_traits::{WebrenderExternalImageRegistry, WebrenderImageHandlerType};
 
 struct GLContextData {
@@ -502,9 +503,11 @@ impl WebGLThread {
             let mut front_buffers = self.front_buffers.lock();
 
             // Fetch a new back buffer.
-            let new_back_buffer = match front_buffers.remove(&context_id) {
-                Some(new_back_buffer) => new_back_buffer,
-                None => {
+            let new_back_buffer = match front_buffers.get_mut(&context_id) {
+                Some(ref mut buffer_info) if buffer_info.front_buffer.is_some() => {
+                    buffer_info.front_buffer.take().unwrap()
+                }
+                _ => {
                     let size = self.device.context_surface_size(&data.ctx).unwrap();
                     self.device
                         .create_surface(&data.ctx, &size)
@@ -516,10 +519,22 @@ impl WebGLThread {
 
             // Swap the buffers.
             let new_front_buffer = self.device
-                                    .replace_context_surface(&mut data.ctx, new_back_buffer)
-                                    .expect("Where's the new front buffer?");
+                                       .replace_context_surface(&mut data.ctx, new_back_buffer)
+                                       .expect("Where's the new front buffer?");
             println!("... front buffer is now {:?}", new_front_buffer.id());
-            front_buffers.insert(context_id, new_front_buffer);
+
+            // Return the new front buffer.
+            match front_buffers.entry(context_id) {
+                Entry::Occupied(mut occupied_entry) => {
+                    occupied_entry.get_mut().front_buffer = Some(new_front_buffer);
+                }
+                Entry::Vacant(vacant_entry) => {
+                    vacant_entry.insert(FrontBufferInfo {
+                        front_buffer: Some(new_front_buffer),
+                        discarded_surfaces: vec![],
+                    });
+                }
+            }
         }
 
         let framebuffer = self.device.context_surface_framebuffer_object(&data.ctx).unwrap();

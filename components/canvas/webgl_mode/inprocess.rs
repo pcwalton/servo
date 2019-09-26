@@ -138,7 +138,7 @@ impl WebrenderExternalImageApi for WebGLExternalImages {
     fn lock(&mut self, id: u64) -> (u32, Size2D<i32>) {
         let id = WebGLContextId(id);
         let (gl_texture, size);
-        match self.front_buffers.remove(id) {
+        match self.front_buffers.take(id) {
             None => {
                 gl_texture = 0;
                 size = Size2D::new(0, 0);
@@ -172,8 +172,8 @@ impl WebrenderExternalImageApi for WebGLExternalImages {
 
         if let Err(locked_front_buffer) = self.front_buffers
                                               .insert_if_not_present(id, locked_front_buffer) {
-            println!("spuriously destroying surface");
-            self.device.destroy_surface(&mut *context, locked_front_buffer).unwrap();
+            println!("*** discarding surface");
+            self.front_buffers.discard_surface(id, locked_front_buffer);
         }
 
         /*
@@ -192,7 +192,12 @@ impl WebrenderExternalImageApi for WebGLExternalImages {
 
 #[derive(Clone)]
 pub struct FrontBuffers {
-    table: Arc<Mutex<FnvHashMap<WebGLContextId, Surface>>>,
+    table: Arc<Mutex<FnvHashMap<WebGLContextId, FrontBufferInfo>>>,
+}
+
+pub(crate) struct FrontBufferInfo {
+    pub(crate) front_buffer: Option<Surface>,
+    pub(crate) discarded_surfaces: Vec<Surface>,
 }
 
 impl FrontBuffers {
@@ -202,8 +207,12 @@ impl FrontBuffers {
         }
     }
 
-    fn remove(&self, context_id: WebGLContextId) -> Option<Surface> {
-        self.lock().remove(&context_id)
+    fn take(&self, context_id: WebGLContextId) -> Option<Surface> {
+        let mut this = self.lock();
+        match this.get_mut(&context_id) {
+            None => None,
+            Some(ref mut front_buffer_info) => front_buffer_info.front_buffer.take(),
+        }
     }
 
     fn insert_if_not_present(&self, context_id: WebGLContextId, surface: Surface)
@@ -211,14 +220,40 @@ impl FrontBuffers {
         let mut table = self.lock();
         match table.entry(context_id) {
             Entry::Vacant(vacant_entry) => {
-                vacant_entry.insert(surface);
+                vacant_entry.insert(FrontBufferInfo {
+                    front_buffer: Some(surface),
+                    discarded_surfaces: vec![],
+                });
                 Ok(())
             }
-            Entry::Occupied(_) => Err(surface),
+            Entry::Occupied(mut occupied_entry) => {
+                let mut front_buffer_info = occupied_entry.get_mut();
+                if front_buffer_info.front_buffer.is_none() {
+                    front_buffer_info.front_buffer = Some(surface);
+                    Ok(())
+                } else {
+                    Err(surface)
+                }
+            }
         }
     }
 
-    pub(crate) fn lock(&self) -> MutexGuard<FnvHashMap<WebGLContextId, Surface>> {
+    fn discard_surface(&self, context_id: WebGLContextId, surface: Surface) {
+        let mut table = self.lock();
+        match table.entry(context_id) {
+            Entry::Vacant(vacant_entry) => {
+                vacant_entry.insert(FrontBufferInfo {
+                    front_buffer: None,
+                    discarded_surfaces: vec![surface],
+                });
+            }
+            Entry::Occupied(mut occupied_entry) => {
+                occupied_entry.get_mut().discarded_surfaces.push(surface);
+            }
+        }
+    }
+
+    pub(crate) fn lock(&self) -> MutexGuard<FnvHashMap<WebGLContextId, FrontBufferInfo>> {
         self.table.lock().unwrap()
     }
 }
