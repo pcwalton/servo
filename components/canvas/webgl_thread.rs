@@ -433,13 +433,28 @@ impl WebGLThread {
         }
 
         // We need to make the context current so its resources can be disposed of.
-        drop(Self::make_current_if_needed(&self.device,
+        Self::make_current_if_needed(&self.device,
                                           context_id,
                                           &self.contexts,
-                                          &mut self.bound_context_id));
-
+                                          &mut self.bound_context_id);
         // Release GL context.
-        self.contexts.remove(&context_id);
+        let mut data = match self.contexts.remove(&context_id) {
+            Some(data) => data,
+            None => return,
+        };
+
+        // Destroy all the surfaces
+        if let Some(swap_chain) = self.swap_chains.lock().remove(&context_id) {
+            for surface in swap_chain.pending_surface {
+                self.device.destroy_surface(&mut data.ctx, surface).unwrap();
+            }
+            for surface in swap_chain.presented_surfaces {
+                  self.device.destroy_surface(&mut data.ctx, surface).unwrap();
+            }
+        }
+
+        // Destroy the context
+        self.device.destroy_context(&mut data.ctx).unwrap();
 
         // Removing a GLContext may make the current bound context_id dirty.
         self.bound_context_id = None;
