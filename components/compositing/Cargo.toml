@@ -42,9 +42,7 @@ webrender_api = {git = "https://github.com/servo/webrender", features = ["ipc"]}
 webvr_traits = {path = "../webvr_traits"}
 webvr = {path = "../webvr"}
 webxr-api = {git = "https://github.com/servo/webxr"}
-
-[dependencies.surfman]
-path = "/Users/pcwalton/Source/surfman/surfman"
+surfman = { git = "https://github.com/pcwalton/surfman" }
 
 [build-dependencies]
 toml = "0.4.5"
