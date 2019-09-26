@@ -4,5 +4,5 @@
 
 mod inprocess;
 
-pub use self::inprocess::{FrontBuffers, WebGLComm};
-pub(crate) use self::inprocess::FrontBufferInfo;
+pub use self::inprocess::{SwapChains, WebGLComm};
+pub(crate) use self::inprocess::SwapChain;

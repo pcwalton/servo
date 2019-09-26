@@ -3,7 +3,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 use crate::webgl_limits::GLLimitsDetect;
-use crate::webgl_mode::{FrontBufferInfo, FrontBuffers};
+use crate::webgl_mode::{SwapChain, SwapChains};
 use byteorder::{ByteOrder, NativeEndian, WriteBytesExt};
 use canvas_traits::webgl::{self, ActiveAttribInfo, ActiveUniformInfo, AlphaTreatment};
 use canvas_traits::webgl::{DOMToTextureCommand, GLContextAttributes, GLLimits, GlType};
@@ -22,6 +22,7 @@ use pixels::{self, PixelFormat};
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
 use std::collections::hash_map::Entry;
+use std::mem;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -85,7 +86,7 @@ pub(crate) struct WebGLThread {
     /// The receiver that should be used to send WebGL messages for processing.
     sender: WebGLSender<WebGLMsg>,
     /// The front buffer for each WebGL context ID.
-    front_buffers: FrontBuffers,
+    swap_chains: SwapChains,
 }
 
 #[derive(PartialEq)]
@@ -101,7 +102,7 @@ pub(crate) struct WebGLThreadInit {
     pub external_images: Arc<Mutex<WebrenderExternalImageRegistry>>,
     pub sender: WebGLSender<WebGLMsg>,
     pub receiver: WebGLReceiver<WebGLMsg>,
-    pub front_buffers: FrontBuffers,
+    pub swap_chains: SwapChains,
     pub adapter: Adapter,
 }
 
@@ -145,7 +146,7 @@ impl WebGLThread {
             external_images,
             sender,
             receiver,
-            front_buffers,
+            swap_chains,
             adapter,
         }: WebGLThreadInit,
     ) -> Self {
@@ -160,7 +161,7 @@ impl WebGLThread {
             external_images,
             sender,
             receiver,
-            front_buffers,
+            swap_chains,
         }
     }
 
@@ -379,7 +380,7 @@ impl WebGLThread {
         size: Size2D<u32>,
         sender: WebGLSender<Result<(), String>>,
     ) {
-        let mut data = Self::make_current_if_needed_mut(
+        let data = Self::make_current_if_needed_mut(
             &self.device,
             context_id,
             &mut self.contexts,
@@ -499,16 +500,26 @@ impl WebGLThread {
             &mut self.bound_context_id,
         ).expect("Where's the GL data?");
 
+        let mut surfaces_to_destroy = vec![];
         {
-            let mut front_buffers = self.front_buffers.lock();
+            let mut swap_chains = self.swap_chains.lock();
+            let size = self.device.context_surface_size(&data.ctx).unwrap();
 
             // Fetch a new back buffer.
-            let new_back_buffer = match front_buffers.get_mut(&context_id) {
-                Some(ref mut buffer_info) if buffer_info.front_buffer.is_some() => {
-                    buffer_info.front_buffer.take().unwrap()
+            let mut new_back_buffer = None;
+            if let Some(ref mut swap_chain) = swap_chains.get_mut(&context_id) {
+                for presented_surface_index in 0..swap_chain.presented_surfaces.len() {
+                    if size == swap_chain.presented_surfaces[presented_surface_index].size() {
+                        new_back_buffer = Some(swap_chain.presented_surfaces
+                                                         .swap_remove(presented_surface_index));
+                        break;
+                    }
                 }
-                _ => {
-                    let size = self.device.context_surface_size(&data.ctx).unwrap();
+                surfaces_to_destroy = mem::replace(&mut swap_chain.presented_surfaces, vec![]);
+            }
+            let new_back_buffer = match new_back_buffer {
+                Some(new_back_buffer) => new_back_buffer,
+                None => {
                     self.device
                         .create_surface(&data.ctx, &size)
                         .expect("Failed to create a new back buffer!")
@@ -523,18 +534,31 @@ impl WebGLThread {
                                        .expect("Where's the new front buffer?");
             println!("... front buffer is now {:?}", new_front_buffer.id());
 
-            // Return the new front buffer.
-            match front_buffers.entry(context_id) {
+            // Hand the new front buffer to the compositor.
+            match swap_chains.entry(context_id) {
                 Entry::Occupied(mut occupied_entry) => {
-                    occupied_entry.get_mut().front_buffer = Some(new_front_buffer);
+                    let mut swap_chain = occupied_entry.get_mut();
+                    if let Some(old_front_buffer) = mem::replace(&mut swap_chain.pending_surface,
+                                                                 Some(new_front_buffer)) {
+                        // Compositor was too slow. Drop the old frame and replace it with this
+                        // one.
+                        surfaces_to_destroy.push(old_front_buffer);
+                    }
                 }
                 Entry::Vacant(vacant_entry) => {
-                    vacant_entry.insert(FrontBufferInfo {
-                        front_buffer: Some(new_front_buffer),
-                        discarded_surfaces: vec![],
+                    vacant_entry.insert(SwapChain {
+                        pending_surface: Some(new_front_buffer),
+                        presented_surfaces: vec![],
                     });
                 }
             }
+        }
+
+        if surfaces_to_destroy.len() > 0 {
+            println!("*** destroying {} surface(s)", surfaces_to_destroy.len());
+        }
+        for surface in surfaces_to_destroy {
+            self.device.destroy_surface(&mut data.ctx, surface).unwrap();
         }
 
         let framebuffer = self.device.context_surface_framebuffer_object(&data.ctx).unwrap();

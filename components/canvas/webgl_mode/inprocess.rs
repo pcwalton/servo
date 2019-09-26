@@ -39,7 +39,7 @@ impl WebGLComm {
         let (sender, receiver) = webgl_channel::<WebGLMsg>().unwrap();
 
         // Make our front buffer table.
-        let front_buffers = FrontBuffers::new();
+        let swap_chains = SwapChains::new();
 
         // This implementation creates a single `WebGLThread` for all the pipelines.
         let init = WebGLThreadInit {
@@ -48,7 +48,7 @@ impl WebGLComm {
             external_images,
             sender: sender.clone(),
             receiver,
-            front_buffers: front_buffers.clone(),
+            swap_chains: swap_chains.clone(),
             adapter: device.adapter(),
         };
 
@@ -64,7 +64,7 @@ impl WebGLComm {
         let external = WebGLExternalImages::new(device,
                                                 context,
                                                 webrender_gl,
-                                                front_buffers,
+                                                swap_chains,
                                                 sender.clone());
 
         WebGLThread::run_on_own_thread(init);
@@ -111,7 +111,7 @@ struct WebGLExternalImages {
     device: Rc<Device>,
     context: Rc<RefCell<Context>>,
     webrender_gl: Rc<dyn gl::Gl>,
-    front_buffers: FrontBuffers,
+    swap_chains: SwapChains,
     locked_front_buffers: FnvHashMap<WebGLContextId, SurfaceTexture>,
     sendable: SendableWebGLExternalImages,
 }
@@ -120,14 +120,14 @@ impl WebGLExternalImages {
     fn new(device: Rc<Device>,
            context: Rc<RefCell<Context>>,
            webrender_gl: Rc<dyn gl::Gl>,    
-           front_buffers: FrontBuffers,
+           swap_chains: SwapChains,
            channel: WebGLSender<WebGLMsg>)
            -> Self {
         Self {
             device,
             context,
             webrender_gl,
-            front_buffers,
+            swap_chains,
             locked_front_buffers: FnvHashMap::default(),
             sendable: SendableWebGLExternalImages::new(channel),
         }
@@ -137,22 +137,28 @@ impl WebGLExternalImages {
 impl WebrenderExternalImageApi for WebGLExternalImages {
     fn lock(&mut self, id: u64) -> (u32, Size2D<i32>) {
         let id = WebGLContextId(id);
-        let (gl_texture, size);
-        match self.front_buffers.take(id) {
-            None => {
-                gl_texture = 0;
-                size = Size2D::new(0, 0);
-                self.locked_front_buffers.remove(&id);
-            }
-            Some(front_buffer) => {
-                let mut context = self.context.borrow_mut();
-                size = front_buffer.size();
-                let locked_front_buffer =
-                    self.device.create_surface_texture(&mut *context, front_buffer).unwrap();
-                gl_texture = locked_front_buffer.gl_texture();
-                self.locked_front_buffers.insert(id, locked_front_buffer);
+
+        let mut swap_chains = self.swap_chains.lock();
+        let mut front_buffer = None;
+        if let Some(ref mut swap_chain) = swap_chains.get_mut(&id) {
+            front_buffer = swap_chain.pending_surface.take();
+            if front_buffer.is_none() {
+                println!("*** no surface ready, presenting last one");
+                front_buffer = swap_chain.presented_surfaces.pop();
             }
         }
+
+        let (mut gl_texture, mut size) = (0, Size2D::new(0, 0));
+        if let Some(front_buffer) = front_buffer {
+            let mut context = self.context.borrow_mut();
+            size = front_buffer.size();
+            let front_buffer_texture = self.device
+                                           .create_surface_texture(&mut *context, front_buffer)
+                                           .unwrap();
+            gl_texture = front_buffer_texture.gl_texture();
+            self.locked_front_buffers.insert(id, front_buffer_texture);
+        }
+
         (gl_texture, size)
     }
 
@@ -170,14 +176,10 @@ impl WebrenderExternalImageApi for WebGLExternalImages {
                                       .destroy_surface_texture(&mut *context, locked_front_buffer)
                                       .unwrap();
 
-        if let Err(locked_front_buffer) = self.front_buffers
-                                              .insert_if_not_present(id, locked_front_buffer) {
-            println!("*** discarding surface");
-            self.front_buffers.discard_surface(id, locked_front_buffer);
-        }
+        self.swap_chains.push_presented_surface(id, locked_front_buffer);
 
         /*
-        let mut front_buffer_slot = self.front_buffers.get(id);
+        let mut front_buffer_slot = self.swap_chains.get(id);
         let mut locked_front_buffer_slot = front_buffer_slot.lock();
         if locked_front_buffer_slot.is_none() {
             *locked_front_buffer_slot = Some(locked_front_buffer);
@@ -191,69 +193,38 @@ impl WebrenderExternalImageApi for WebGLExternalImages {
 }
 
 #[derive(Clone)]
-pub struct FrontBuffers {
-    table: Arc<Mutex<FnvHashMap<WebGLContextId, FrontBufferInfo>>>,
+pub struct SwapChains {
+    table: Arc<Mutex<FnvHashMap<WebGLContextId, SwapChain>>>,
 }
 
-pub(crate) struct FrontBufferInfo {
-    pub(crate) front_buffer: Option<Surface>,
-    pub(crate) discarded_surfaces: Vec<Surface>,
+pub(crate) struct SwapChain {
+    pub(crate) pending_surface: Option<Surface>,
+    pub(crate) presented_surfaces: Vec<Surface>,
 }
 
-impl FrontBuffers {
-    fn new() -> FrontBuffers {
-        FrontBuffers {
+impl SwapChains {
+    fn new() -> SwapChains {
+        SwapChains {
             table: Arc::new(Mutex::new(FnvHashMap::default())),
         }
     }
 
-    fn take(&self, context_id: WebGLContextId) -> Option<Surface> {
-        let mut this = self.lock();
-        match this.get_mut(&context_id) {
-            None => None,
-            Some(ref mut front_buffer_info) => front_buffer_info.front_buffer.take(),
-        }
-    }
-
-    fn insert_if_not_present(&self, context_id: WebGLContextId, surface: Surface)
-                             -> Result<(), Surface> {
+    fn push_presented_surface(&self, context_id: WebGLContextId, surface: Surface) {
         let mut table = self.lock();
         match table.entry(context_id) {
             Entry::Vacant(vacant_entry) => {
-                vacant_entry.insert(FrontBufferInfo {
-                    front_buffer: Some(surface),
-                    discarded_surfaces: vec![],
+                vacant_entry.insert(SwapChain {
+                    pending_surface: None,
+                    presented_surfaces: vec![surface],
                 });
-                Ok(())
             }
             Entry::Occupied(mut occupied_entry) => {
-                let mut front_buffer_info = occupied_entry.get_mut();
-                if front_buffer_info.front_buffer.is_none() {
-                    front_buffer_info.front_buffer = Some(surface);
-                    Ok(())
-                } else {
-                    Err(surface)
-                }
+                occupied_entry.get_mut().presented_surfaces.push(surface);
             }
         }
     }
 
-    fn discard_surface(&self, context_id: WebGLContextId, surface: Surface) {
-        let mut table = self.lock();
-        match table.entry(context_id) {
-            Entry::Vacant(vacant_entry) => {
-                vacant_entry.insert(FrontBufferInfo {
-                    front_buffer: None,
-                    discarded_surfaces: vec![surface],
-                });
-            }
-            Entry::Occupied(mut occupied_entry) => {
-                occupied_entry.get_mut().discarded_surfaces.push(surface);
-            }
-        }
-    }
-
-    pub(crate) fn lock(&self) -> MutexGuard<FnvHashMap<WebGLContextId, FrontBufferInfo>> {
+    pub(crate) fn lock(&self) -> MutexGuard<FnvHashMap<WebGLContextId, SwapChain>> {
         self.table.lock().unwrap()
     }
 }
