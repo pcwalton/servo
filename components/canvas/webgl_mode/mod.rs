@@ -4,5 +4,6 @@
 
 mod inprocess;
 
-pub use self::inprocess::{SwapChains, WebGLComm};
+pub use self::inprocess::WebGLComm;
 pub(crate) use self::inprocess::SwapChain;
+pub(crate) use self::inprocess::SwapChains;
