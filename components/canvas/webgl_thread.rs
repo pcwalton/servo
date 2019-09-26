@@ -23,12 +23,14 @@ use pixels::{self, PixelFormat};
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
 use std::collections::hash_map::Entry;
+use std::iter;
 use std::mem;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use surfman::{self, Adapter, Context, ContextAttributeFlags, ContextAttributes, Device};
 use surfman::GLVersion;
+use surfman::Surface;
 use webrender_traits::{WebrenderExternalImageRegistry, WebrenderImageHandlerType};
 
 struct GLContextData {
@@ -36,6 +38,11 @@ struct GLContextData {
     gl: Rc<dyn Gl>,
     state: GLState,
     attributes: GLContextAttributes,
+    // Each WebGL context has a collection of swap chains, one of which is attached
+    // (that is, its surface is the current surface of the context).
+    attached: SwapChainId,
+    // The other swap chains are unattached, and their surfaces are not the current surface of the context.
+    unattached: FnvHashMap<SwapChainId, Surface>,
 }
 
 pub struct GLState {
@@ -364,7 +371,9 @@ impl WebGLThread {
         gl.bind_framebuffer(gl::FRAMEBUFFER, framebuffer);
 
         let state = Default::default();
-        self.contexts.insert(id, GLContextData { ctx, gl, state, attributes });
+        let attached = SwapChainId::Context(id);
+        let unattached = Default::default();
+        self.contexts.insert(id, GLContextData { ctx, gl, state, attributes, attached, unattached });
 
         self.cached_context_info.insert(
             id,
@@ -388,9 +397,13 @@ impl WebGLThread {
             &mut self.bound_context_id).expect("Missing WebGL context!");
 
         // Throw out all buffers.
+        let swap_id = SwapChainId::Context(context_id);
         let context_descriptor = self.device.context_descriptor(&data.ctx);
         let new_surface = self.device.create_surface(&data.ctx, &size.to_i32()).unwrap();
-        let old_surface = self.device.replace_context_surface(&mut data.ctx, new_surface).unwrap();
+        let old_surface = match data.unattached.get_mut(&swap_id) {
+            Some(surface) => mem::replace(surface, new_surface),
+            None => self.device.replace_context_surface(&mut data.ctx, new_surface).unwrap(),
+        };
         self.device.destroy_surface(&mut data.ctx, old_surface).unwrap();
 
         // Update WR image if needed. Resize image updates are only required for SharedTexture mode.
@@ -439,14 +452,20 @@ impl WebGLThread {
         };
 
         // Destroy all the surfaces
-        let swap_id = SwapChainId::Context(context_id);
-        if let Some(swap_chain) = self.swap_chains.lock().remove(&swap_id) {
-            for surface in swap_chain.pending_surface {
-                self.device.destroy_surface(&mut data.ctx, surface).unwrap();
+        let swap_ids = iter::once(data.attached)
+            .chain(data.unattached.keys().cloned());
+        for swap_id in swap_ids {
+            if let Some(swap_chain) = self.swap_chains.lock().remove(&swap_id) {
+                for surface in swap_chain.pending_surface {
+                    self.device.destroy_surface(&mut data.ctx, surface).unwrap();
+                }
+                for surface in swap_chain.presented_surfaces {
+                    self.device.destroy_surface(&mut data.ctx, surface).unwrap();
+                }
             }
-            for surface in swap_chain.presented_surfaces {
-                  self.device.destroy_surface(&mut data.ctx, surface).unwrap();
-            }
+        }
+        for (_, surface) in data.unattached {
+            self.device.destroy_surface(&mut data.ctx, surface).unwrap();
         }
 
         // Destroy the context
@@ -541,8 +560,11 @@ impl WebGLThread {
             println!("... new back buffer will become {:?}", new_back_buffer.id());
 
             // Swap the buffers.
-            let new_front_buffer = self.device.replace_context_surface(&mut data.ctx, new_back_buffer)
-                                       .expect("Where's the new front buffer?");
+            let new_front_buffer = match data.unattached.get_mut(&swap_id) {
+                Some(surface) => mem::replace(surface, new_back_buffer),
+                None => self.device.replace_context_surface(&mut data.ctx, new_back_buffer)
+                                   .expect("Where's the new front buffer?"),
+            };
             println!("... front buffer is now {:?}", new_front_buffer.id());
 
             // Hand the new front buffer to the compositor.
