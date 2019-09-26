@@ -378,7 +378,7 @@ impl WebGLThread {
         size: Size2D<u32>,
         sender: WebGLSender<Result<(), String>>,
     ) {
-        let data = Self::make_current_if_needed_mut(
+        let mut data = Self::make_current_if_needed_mut(
             &self.device,
             context_id,
             &mut self.contexts,
@@ -387,9 +387,11 @@ impl WebGLThread {
         // Throw out all buffers.
         let context_descriptor = self.device.context_descriptor(&data.ctx);
         let new_surface = self.device.create_surface(&data.ctx, &size.to_i32()).unwrap();
-        drop(self.device.replace_context_surface(&mut data.ctx, new_surface).unwrap());
+        let old_surface = self.device.replace_context_surface(&mut data.ctx, new_surface).unwrap();
+        self.device.destroy_surface(&mut data.ctx, old_surface).unwrap();
         let new_surface = self.device.create_surface(&data.ctx, &size.to_i32()).unwrap();
-        drop(self.device.replace_context_surface(&mut data.ctx, new_surface).unwrap());
+        let old_surface = self.device.replace_context_surface(&mut data.ctx, new_surface).unwrap();
+        self.device.destroy_surface(&mut data.ctx, old_surface).unwrap();
 
         let framebuffer = self.device.context_surface_framebuffer_object(&data.ctx).unwrap();
         data.gl.bind_framebuffer(gl::FRAMEBUFFER, framebuffer);
