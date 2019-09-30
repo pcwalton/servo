@@ -34,6 +34,7 @@ impl WebGLComm {
         webrender_api_sender: webrender_api::RenderApiSender,
         webvr_compositor: Option<Box<dyn WebVRRenderHandler>>,
         external_images: Arc<Mutex<WebrenderExternalImageRegistry>>,
+        api_type: gl::GlType,
     ) -> WebGLComm {
         println!("WebGLThreads::new()");
         let (sender, receiver) = webgl_channel::<WebGLMsg>().unwrap();
@@ -50,6 +51,7 @@ impl WebGLComm {
             receiver,
             swap_chains: swap_chains.clone(),
             adapter: device.adapter(),
+            api_type,
         };
 
         let output_handler = if pref!(dom.webgl.dom_to_texture.enabled) {
