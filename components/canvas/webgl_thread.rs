@@ -14,6 +14,7 @@ use canvas_traits::webgl::{WebGLFramebufferId, WebGLMsg, WebGLMsgSender, WebGLPr
 use canvas_traits::webgl::{WebGLReceiver, WebGLRenderbufferId, WebGLSLVersion, WebGLSender};
 use canvas_traits::webgl::{WebGLShaderId, WebGLTextureId, WebGLVersion, WebGLVertexArrayId};
 use canvas_traits::webgl::{WebVRCommand, WebVRRenderHandler, YAxisTreatment};
+use canvas_traits::webgl::SwapChainId;
 use euclid::default::Size2D;
 use fnv::FnvHashMap;
 use gleam::gl::{self, Gl, GlFns, GlesFns};
@@ -85,7 +86,7 @@ pub(crate) struct WebGLThread {
     receiver: WebGLReceiver<WebGLMsg>,
     /// The receiver that should be used to send WebGL messages for processing.
     sender: WebGLSender<WebGLMsg>,
-    /// The front buffer for each WebGL context ID.
+    /// The front buffer for each swap chain ID.
     swap_chains: SwapChains,
     ///
     api_type: gl::GlType,
@@ -258,8 +259,8 @@ impl WebGLThread {
             WebGLMsg::UpdateWebRenderImage(ctx_id, sender) => {
                 self.handle_update_wr_image(ctx_id, sender);
             },
-            WebGLMsg::SwapBuffers(ctx_id) => {
-                self.handle_swap_buffers(ctx_id);
+            WebGLMsg::SwapBuffers(swap_id) => {
+                self.handle_swap_buffers(swap_id);
             },
             WebGLMsg::DOMToTextureCommand(command) => {
                 self.handle_dom_to_texture(command);
@@ -401,12 +402,6 @@ impl WebGLThread {
         let new_surface = self.device.create_surface(&data.ctx, &size.to_i32()).unwrap();
         let old_surface = self.device.replace_context_surface(&mut data.ctx, new_surface).unwrap();
         self.device.destroy_surface(&mut data.ctx, old_surface).unwrap();
-        let new_surface = self.device.create_surface(&data.ctx, &size.to_i32()).unwrap();
-        let old_surface = self.device.replace_context_surface(&mut data.ctx, new_surface).unwrap();
-        self.device.destroy_surface(&mut data.ctx, old_surface).unwrap();
-
-        let framebuffer = self.device.context_surface_framebuffer_object(&data.ctx).unwrap();
-        data.gl.bind_framebuffer(gl::FRAMEBUFFER, framebuffer);
 
         // Update WR image if needed. Resize image updates are only required for SharedTexture mode.
         // Readback mode already updates the image every frame to send the raw pixels.
@@ -454,7 +449,8 @@ impl WebGLThread {
         };
 
         // Destroy all the surfaces
-        if let Some(swap_chain) = self.swap_chains.lock().remove(&context_id) {
+        let swap_id = SwapChainId::Context(context_id);
+        if let Some(swap_chain) = self.swap_chains.lock().remove(&swap_id) {
             for surface in swap_chain.pending_surface {
                 self.device.destroy_surface(&mut data.ctx, surface).unwrap();
             }
@@ -481,7 +477,7 @@ impl WebGLThread {
         sender: WebGLSender<webrender_api::ImageKey>,
     ) {
         println!("handle_update_wr_image()");
-        self.handle_swap_buffers(context_id);
+        self.handle_swap_buffers(SwapChainId::Context(context_id));
 
         let data = Self::make_current_if_needed_mut(
             &self.device,
@@ -516,8 +512,9 @@ impl WebGLThread {
         sender.send(image_key).unwrap();
     }
 
-    fn handle_swap_buffers(&mut self, context_id: WebGLContextId) {
+    fn handle_swap_buffers(&mut self, swap_id: SwapChainId) {
         println!("handle_swap_buffers()");
+        let context_id = swap_id.context_id();
         let data = Self::make_current_if_needed_mut(
             &self.device,
             context_id,
@@ -532,7 +529,7 @@ impl WebGLThread {
 
             // Fetch a new back buffer.
             let mut new_back_buffer = None;
-            if let Some(ref mut swap_chain) = swap_chains.get_mut(&context_id) {
+            if let Some(ref mut swap_chain) = swap_chains.get_mut(&swap_id) {
                 for presented_surface_index in 0..swap_chain.presented_surfaces.len() {
                     if size == swap_chain.presented_surfaces[presented_surface_index].size() {
                         new_back_buffer = Some(swap_chain.presented_surfaces
@@ -554,13 +551,12 @@ impl WebGLThread {
             println!("... new back buffer will become {:?}", new_back_buffer.id());
 
             // Swap the buffers.
-            let new_front_buffer = self.device
-                                       .replace_context_surface(&mut data.ctx, new_back_buffer)
+            let new_front_buffer = self.device.replace_context_surface(&mut data.ctx, new_back_buffer)
                                        .expect("Where's the new front buffer?");
             println!("... front buffer is now {:?}", new_front_buffer.id());
 
             // Hand the new front buffer to the compositor.
-            match swap_chains.entry(context_id) {
+            match swap_chains.entry(swap_id) {
                 Entry::Occupied(mut occupied_entry) => {
                     let mut swap_chain = occupied_entry.get_mut();
                     if let Some(old_front_buffer) = mem::replace(&mut swap_chain.pending_surface,

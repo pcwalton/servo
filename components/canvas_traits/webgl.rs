@@ -96,7 +96,7 @@ pub enum WebGLMsg {
     /// Commands used for the DOMToTexture feature.
     DOMToTextureCommand(DOMToTextureCommand),
     /// Performs a buffer swap.
-    SwapBuffers(WebGLContextId),
+    SwapBuffers(SwapChainId),
     /// Frees all resources and closes the thread.
     Exit,
 }
@@ -198,7 +198,8 @@ impl WebGLMsgSender {
 
     #[inline]
     pub fn send_swap_buffers(&self) -> WebGLSendResult {
-        self.sender.send(WebGLMsg::SwapBuffers(self.ctx_id))
+        let swap_id = SwapChainId::Context(self.ctx_id);
+        self.sender.send(WebGLMsg::SwapBuffers(swap_id))
     }
 
     pub fn send_dom_to_texture(&self, command: DOMToTextureCommand) -> WebGLSendResult {
@@ -526,6 +527,20 @@ define_resource_id!(WebGLVertexArrayId);
     Clone, Copy, Debug, Deserialize, Eq, Hash, MallocSizeOf, Ord, PartialEq, PartialOrd, Serialize,
 )]
 pub struct WebGLContextId(pub u64);
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+pub enum SwapChainId {
+    Context(WebGLContextId),
+    // TODO: support opaque framebuffers
+}
+
+impl SwapChainId {
+    pub fn context_id(&self) -> WebGLContextId {
+        match *self {
+	    SwapChainId::Context(id) => id,
+	}
+    }
+}
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 pub enum WebGLError {

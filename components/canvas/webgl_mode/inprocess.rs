@@ -5,6 +5,7 @@
 use crate::webgl_thread::{WebGLThread, WebGLThreadInit};
 use canvas_traits::webgl::{WebGLContextId, WebGLMsg, WebGLSender, WebGLThreads};
 use canvas_traits::webgl::{WebVRRenderHandler, webgl_channel};
+use canvas_traits::webgl::SwapChainId;
 use euclid::default::Size2D;
 use fnv::FnvHashMap;
 use gleam::gl;
@@ -114,7 +115,7 @@ struct WebGLExternalImages {
     context: Rc<RefCell<Context>>,
     webrender_gl: Rc<dyn gl::Gl>,
     swap_chains: SwapChains,
-    locked_front_buffers: FnvHashMap<WebGLContextId, SurfaceTexture>,
+    locked_front_buffers: FnvHashMap<SwapChainId, SurfaceTexture>,
     sendable: SendableWebGLExternalImages,
 }
 
@@ -136,50 +137,36 @@ impl WebGLExternalImages {
     }
 }
 
-impl WebrenderExternalImageApi for WebGLExternalImages {
-    fn lock(&mut self, id: u64) -> (u32, Size2D<i32>) {
-        let id = WebGLContextId(id);
-
+impl WebGLExternalImages {
+    fn lock_swap_chain(&mut self, id: SwapChainId) -> Option<(u32, Size2D<i32>)> {
         let mut swap_chains = self.swap_chains.lock();
-        let mut front_buffer = None;
-        if let Some(ref mut swap_chain) = swap_chains.get_mut(&id) {
-            front_buffer = swap_chain.pending_surface.take();
-            if front_buffer.is_none() {
-                println!("*** no surface ready, presenting last one");
-                front_buffer = swap_chain.presented_surfaces.pop();
-            }
-        }
+        let swap_chain = swap_chains.get_mut(&id)?;
+        let front_buffer = swap_chain.pending_surface.take().or_else(|| {
+            println!("*** no surface ready, presenting last one");
+            swap_chain.presented_surfaces.pop()
+        })?;
 
-        let (mut gl_texture, mut size) = (0, Size2D::new(0, 0));
-        if let Some(front_buffer) = front_buffer {
-            let mut context = self.context.borrow_mut();
-            size = front_buffer.size();
-            let front_buffer_texture = self.device
-                                           .create_surface_texture(&mut *context, front_buffer)
-                                           .unwrap();
-            gl_texture = front_buffer_texture.gl_texture();
-            self.locked_front_buffers.insert(id, front_buffer_texture);
-        }
+        let mut context = self.context.borrow_mut();
+        let size = front_buffer.size();
+        let front_buffer_texture = self.device
+                                       .create_surface_texture(&mut *context, front_buffer)
+                                       .unwrap();
+        let gl_texture = front_buffer_texture.gl_texture();
 
-        (gl_texture, size)
+        self.locked_front_buffers.insert(id, front_buffer_texture);
+
+        Some((gl_texture, size))
     }
 
-    fn unlock(&mut self, id: u64) {
-        self.sendable.unlock(id as usize);
-
-        let id = WebGLContextId(id);
-        let locked_front_buffer = match self.locked_front_buffers.remove(&id) {
-            None => return,
-            Some(locked_front_buffer) => locked_front_buffer,
-        };
-
+    fn unlock_swap_chain(&mut self, id: SwapChainId) -> Option<()> {
+        let locked_front_buffer = self.locked_front_buffers.remove(&id)?;
         let mut context = self.context.borrow_mut();
         let locked_front_buffer = self.device
                                       .destroy_surface_texture(&mut *context, locked_front_buffer)
                                       .unwrap();
 
         self.swap_chains.push_presented_surface(id, locked_front_buffer);
-
+        Some(())
         /*
         let mut front_buffer_slot = self.swap_chains.get(id);
         let mut locked_front_buffer_slot = front_buffer_slot.lock();
@@ -194,9 +181,21 @@ impl WebrenderExternalImageApi for WebGLExternalImages {
     }
 }
 
+impl WebrenderExternalImageApi for WebGLExternalImages {
+    fn lock(&mut self, id: u64) -> (u32, Size2D<i32>) {
+        let id = SwapChainId::Context(WebGLContextId(id));
+        self.lock_swap_chain(id).unwrap_or_default()
+    }
+
+    fn unlock(&mut self, id: u64) {
+        let id = SwapChainId::Context(WebGLContextId(id));
+        self.unlock_swap_chain(id);
+    }
+}
+
 #[derive(Clone)]
 pub struct SwapChains {
-    table: Arc<Mutex<FnvHashMap<WebGLContextId, SwapChain>>>,
+    table: Arc<Mutex<FnvHashMap<SwapChainId, SwapChain>>>,
 }
 
 pub(crate) struct SwapChain {
@@ -211,9 +210,9 @@ impl SwapChains {
         }
     }
 
-    fn push_presented_surface(&self, context_id: WebGLContextId, surface: Surface) {
+    fn push_presented_surface(&self, swap_id: SwapChainId, surface: Surface) {
         let mut table = self.lock();
-        match table.entry(context_id) {
+        match table.entry(swap_id) {
             Entry::Vacant(vacant_entry) => {
                 vacant_entry.insert(SwapChain {
                     pending_surface: None,
@@ -226,7 +225,7 @@ impl SwapChains {
         }
     }
 
-    pub(crate) fn lock(&self) -> MutexGuard<FnvHashMap<WebGLContextId, SwapChain>> {
+    pub(crate) fn lock(&self) -> MutexGuard<FnvHashMap<SwapChainId, SwapChain>> {
         self.table.lock().unwrap()
     }
 }
