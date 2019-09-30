@@ -6,7 +6,6 @@ use euclid::default::{Rect, Size2D};
 use gleam::gl;
 use gleam::gl::Gl;
 use ipc_channel::ipc::{IpcBytesReceiver, IpcBytesSender, IpcSharedMemory};
-use surfman::Surface;
 use pixels::PixelFormat;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::borrow::Cow;
@@ -35,12 +34,6 @@ pub struct WebGLCommandBacktrace {
     pub backtrace: String,
     #[cfg(feature = "webgl_backtrace")]
     pub js_backtrace: Option<String>,
-}
-
-#[derive(Debug)]
-pub struct WebGLLockMessage {
-    pub surface: Surface,
-    pub sync: WebGLSync,
 }
 
 #[derive(Debug)]
