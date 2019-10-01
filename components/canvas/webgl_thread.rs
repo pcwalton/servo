@@ -202,8 +202,15 @@ impl WebGLThread {
         match msg {
             WebGLMsg::CreateContext(version, size, attributes, result_sender) => {
                 let result = self.create_webgl_context(version, size, attributes);
+
                 result_sender
                     .send(result.map(|(id, limits)| {
+                        let image_key = self.cached_context_info
+                                            .get_mut(&id)
+                                            .expect("Where's the cached context info?")
+                                            .image_key
+                                            .expect("Where's the WebRender image key?");
+
                         let data = Self::make_current_if_needed(
                             &self.device,
                             id,
@@ -239,6 +246,7 @@ impl WebGLThread {
                             limits,
                             glsl_version,
                             api_type,
+                            image_key,
                         }
                     }))
                     .unwrap();
@@ -255,11 +263,8 @@ impl WebGLThread {
             WebGLMsg::WebVRCommand(ctx_id, command) => {
                 self.handle_webvr_command(ctx_id, command);
             },
-            WebGLMsg::UpdateWebRenderImage(ctx_id, sender) => {
-                self.handle_update_wr_image(ctx_id, sender);
-            },
-            WebGLMsg::SwapBuffers(ctx_id) => {
-                self.handle_swap_buffers(ctx_id);
+            WebGLMsg::SwapBuffers(context_ids, sender) => {
+                self.handle_swap_buffers(context_ids, sender);
             },
             WebGLMsg::DOMToTextureCommand(command) => {
                 self.handle_dom_to_texture(command);
@@ -372,12 +377,25 @@ impl WebGLThread {
         let framebuffer = self.device.context_surface_framebuffer_object(&ctx).unwrap();
         gl.bind_framebuffer(gl::FRAMEBUFFER, framebuffer);
 
+        let descriptor = self.device.context_descriptor(&ctx);
+        let has_alpha = self.device
+                            .context_descriptor_attributes(&descriptor)
+                            .flags
+                            .contains(ContextAttributeFlags::ALPHA);
+        let texture_target = current_wr_texture_target(&self.device);
+
         let state = Default::default();
         self.contexts.insert(id, GLContextData { ctx, gl, state, attributes });
 
+        let image_key = Self::create_wr_external_image(&self.webrender_api,
+                                                       size.to_i32(),
+                                                       has_alpha,
+                                                       id,
+                                                       texture_target);
+
         self.cached_context_info.insert(
             id,
-            WebGLContextInfo { image_key: None, received_webgl_command: false },
+            WebGLContextInfo { image_key: Some(image_key), received_webgl_command: false },
         );
 
         Ok((id, limits))
@@ -410,7 +428,6 @@ impl WebGLThread {
 
         // Update WR image if needed. Resize image updates are only required for SharedTexture mode.
         // Readback mode already updates the image every frame to send the raw pixels.
-        // See `handle_update_wr_image`.
         let info = self.cached_context_info.get_mut(&context_id).unwrap();
         if let Some(image_key) = info.image_key {
             let has_alpha = self.device
@@ -455,138 +472,98 @@ impl WebGLThread {
         self.bound_context_id = None;
     }
 
-    /// Handles the creation/update of webrender_api::ImageKeys for a specific WebGLContext.
-    /// This method is invoked from a UpdateWebRenderImage message sent by the layout thread.
-    /// If SharedTexture is used the UpdateWebRenderImage message is sent only after a WebGLContext creation.
-    /// If Readback is used UpdateWebRenderImage message is sent always on each layout iteration in order to
-    /// submit the updated raw pixels.
-    fn handle_update_wr_image(
-        &mut self,
-        context_id: WebGLContextId,
-        sender: WebGLSender<webrender_api::ImageKey>,
-    ) {
-        println!("handle_update_wr_image()");
-        self.handle_swap_buffers(context_id);
+    fn handle_swap_buffers(&mut self,
+                           context_ids: Vec<WebGLContextId>,
+                           completed_sender: WebGLSender<()>) {
+        for context_id in context_ids {
+            println!("handle_swap_buffers()");
+            let data = Self::make_current_if_needed_mut(
+                &self.device,
+                context_id,
+                &mut self.contexts,
+                &mut self.bound_context_id,
+            ).expect("Where's the GL data?");
 
-        let data = Self::make_current_if_needed_mut(
-            &self.device,
-            context_id,
-            &mut self.contexts,
-            &mut self.bound_context_id).expect("Where's the GL data?");
+            let mut surfaces_to_destroy = vec![];
+            {
+                let mut swap_chains = self.swap_chains.lock();
+                let size = self.device.context_surface_size(&data.ctx).unwrap();
 
-        let size = self.device
-                       .context_surface_size(&data.ctx)
-                       .expect("Where's the front surface?");
-        let descriptor = self.device.context_descriptor(&data.ctx);
-        let has_alpha = self.device
-                            .context_descriptor_attributes(&descriptor)
-                            .flags
-                            .contains(ContextAttributeFlags::ALPHA);
-
-        let texture_target = current_wr_texture_target(&self.device);
-        let webrender_api = &self.webrender_api;
-
-        // Reuse existing ImageKey or generate a new one.
-        // When using a shared texture ImageKeys are only generated after a WebGLContext creation.
-        let info = self.cached_context_info.get_mut(&context_id).unwrap();
-        let image_key = *info.image_key.get_or_insert_with(|| {
-            Self::create_wr_external_image(webrender_api,
-                                           size,
-                                           has_alpha,
-                                           context_id,
-                                           texture_target)
-        });
-
-        // Send the ImageKey to the Layout thread.
-        sender.send(image_key).unwrap();
-    }
-
-    fn handle_swap_buffers(&mut self, context_id: WebGLContextId) {
-        println!("handle_swap_buffers()");
-        let data = Self::make_current_if_needed_mut(
-            &self.device,
-            context_id,
-            &mut self.contexts,
-            &mut self.bound_context_id,
-        ).expect("Where's the GL data?");
-
-        let mut surfaces_to_destroy = vec![];
-        {
-            let mut swap_chains = self.swap_chains.lock();
-            let size = self.device.context_surface_size(&data.ctx).unwrap();
-
-            // Fetch a new back buffer.
-            let mut new_back_buffer = None;
-            if let Some(ref mut swap_chain) = swap_chains.get_mut(&context_id) {
-                while let Some(back_buffer) = swap_chain.free_surfaces.pop() {
-                    if back_buffer.size() == size {
-                        new_back_buffer = Some(back_buffer);
-                        break;
-                    }
-                    surfaces_to_destroy.push(back_buffer);
-                }
-            }
-            let new_back_buffer = match new_back_buffer {
-                Some(new_back_buffer) => new_back_buffer,
-                None => {
-                    self.device
-                        .create_surface(&data.ctx, &size)
-                        .expect("Failed to create a new back buffer!")
-                }
-            };
-
-            println!("... new back buffer will become {:?}", new_back_buffer.id());
-
-            // Swap the buffers.
-            let new_front_buffer = self.device
-                                       .replace_context_surface(&mut data.ctx, new_back_buffer)
-                                       .expect("Where's the new front buffer?");
-            println!("... front buffer is now {:?}", new_front_buffer.id());
-
-            // Hand the new front buffer to the compositor.
-            match swap_chains.entry(context_id) {
-                Entry::Occupied(mut occupied_entry) => {
-                    let mut swap_chain = occupied_entry.get_mut();
-                    match mem::replace(&mut swap_chain.front_surface, FrontSurface::None) {
-                        FrontSurface::None => {
-                            swap_chain.front_surface = FrontSurface::Ready(new_front_buffer);
+                // Fetch a new back buffer.
+                let mut new_back_buffer = None;
+                if let Some(ref mut swap_chain) = swap_chains.get_mut(&context_id) {
+                    while let Some(back_buffer) = swap_chain.free_surfaces.pop() {
+                        if back_buffer.size() == size {
+                            new_back_buffer = Some(back_buffer);
+                            break;
                         }
-                        FrontSurface::Ready(old_front_buffer) => {
-                            println!("*** replacing ready front buffer, compositor too slow?");
-                            swap_chain.front_surface = FrontSurface::Ready(new_front_buffer);
-                            swap_chain.free_surfaces.push(old_front_buffer);
-                        }
-                        FrontSurface::CompositionInProgress => {
-                            swap_chain.front_surface = FrontSurface::Pending(new_front_buffer);
-                        }
-                        FrontSurface::Pending(old_front_buffer) => {
-                            println!("*** replacing pending front buffer, compositor too slow?");
-                            swap_chain.front_surface = FrontSurface::Ready(new_front_buffer);
-                            swap_chain.free_surfaces.push(old_front_buffer);
-                        }
+                        surfaces_to_destroy.push(back_buffer);
                     }
                 }
-                Entry::Vacant(vacant_entry) => {
-                    vacant_entry.insert(SwapChain {
-                        front_surface: FrontSurface::Ready(new_front_buffer),
-                        free_surfaces: vec![],
-                    });
+                let new_back_buffer = match new_back_buffer {
+                    Some(new_back_buffer) => new_back_buffer,
+                    None => {
+                        self.device
+                            .create_surface(&data.ctx, &size)
+                            .expect("Failed to create a new back buffer!")
+                    }
+                };
+
+                println!("... new back buffer will become {:?}", new_back_buffer.id());
+
+                // Swap the buffers.
+                let new_front_buffer = self.device
+                                        .replace_context_surface(&mut data.ctx, new_back_buffer)
+                                        .expect("Where's the new front buffer?");
+                println!("... front buffer is now {:?}", new_front_buffer.id());
+
+                // Hand the new front buffer to the compositor.
+                match swap_chains.entry(context_id) {
+                    Entry::Occupied(mut occupied_entry) => {
+                        let mut swap_chain = occupied_entry.get_mut();
+                        match mem::replace(&mut swap_chain.front_surface, FrontSurface::None) {
+                            FrontSurface::None => {
+                                swap_chain.front_surface = FrontSurface::Ready(new_front_buffer);
+                            }
+                            FrontSurface::Ready(old_front_buffer) => {
+                                swap_chain.front_surface = FrontSurface::Ready(new_front_buffer);
+                                swap_chain.free_surfaces.push(old_front_buffer);
+                            }
+                            FrontSurface::CompositionInProgress => {
+                                swap_chain.front_surface = FrontSurface::Pending(new_front_buffer);
+                            }
+                            FrontSurface::Pending(old_front_buffer) => {
+                                println!("*** replacing pending front buffer, compositor too \
+                                          slow?");
+                                swap_chain.front_surface = FrontSurface::Ready(new_front_buffer);
+                                swap_chain.free_surfaces.push(old_front_buffer);
+                            }
+                        }
+                    }
+                    Entry::Vacant(vacant_entry) => {
+                        vacant_entry.insert(SwapChain {
+                            front_surface: FrontSurface::Ready(new_front_buffer),
+                            free_surfaces: vec![],
+                        });
+                    }
                 }
             }
+
+            if surfaces_to_destroy.len() > 0 {
+                println!("*** destroying {} surface(s)", surfaces_to_destroy.len());
+            }
+            for surface in surfaces_to_destroy {
+                self.device.destroy_surface(&mut data.ctx, surface).unwrap();
+            }
+
+            let framebuffer = self.device.context_surface_framebuffer_object(&data.ctx).unwrap();
+            data.gl.bind_framebuffer(gl::FRAMEBUFFER, framebuffer);
+            println!("... rebound framebuffer {}, new back buffer surface is {:?}",
+                    framebuffer,
+                    self.device.context_surface_id(&data.ctx).unwrap());
         }
 
-        if surfaces_to_destroy.len() > 0 {
-            println!("*** destroying {} surface(s)", surfaces_to_destroy.len());
-        }
-        for surface in surfaces_to_destroy {
-            self.device.destroy_surface(&mut data.ctx, surface).unwrap();
-        }
-
-        let framebuffer = self.device.context_surface_framebuffer_object(&data.ctx).unwrap();
-        data.gl.bind_framebuffer(gl::FRAMEBUFFER, framebuffer);
-        println!("... rebound framebuffer {}, new back buffer surface is {:?}",
-                 framebuffer,
-                 self.device.context_surface_id(&data.ctx).unwrap());
+        completed_sender.send(()).unwrap();
     }
 
     fn handle_dom_to_texture(&mut self, command: DOMToTextureCommand) {

@@ -1205,16 +1205,6 @@ impl LayoutThread {
                             }
                         }
 
-                        if !build_state.dirty_canvases.is_empty() {
-                            let dirty_canvases = mem::replace(&mut build_state.dirty_canvases,
-                                                              vec![]);
-                            let msg = ConstellationMsg::SwapWebGLBuffers(dirty_canvases);
-                            if let Err(error) = self.constellation_chan.send(msg) {
-                                warn!("Dirty canvases couldn't be sent to constellation: {:?}",
-                                      error);
-                            }
-                        }
-
                         rw_data.indexable_text = std::mem::replace(
                             &mut build_state.indexable_text,
                             IndexableText::default(),

@@ -326,9 +326,6 @@ pub struct DisplayListBuildState<'a> {
 
     /// Stores text runs to answer text queries used to place a cursor inside text.
     pub indexable_text: IndexableText,
-
-    /// Vector containing canvas IDs that need to have their buffers swapped.
-    pub dirty_canvases: Vec<WebGLContextId>,
 }
 
 impl<'a> DisplayListBuildState<'a> {
@@ -349,7 +346,6 @@ impl<'a> DisplayListBuildState<'a> {
             ),
             iframe_sizes: Vec::new(),
             indexable_text: IndexableText::default(),
-            dirty_canvases: Vec::new(),
         }
     }
 
@@ -1873,10 +1869,7 @@ impl Fragment {
             },
             SpecificFragmentInfo::Canvas(ref canvas_fragment_info) => {
                 let image_key = match canvas_fragment_info.source {
-                    CanvasFragmentSource::WebGL { image_key, context_id } => {
-                        state.dirty_canvases.push(context_id);
-                        image_key
-                    }
+                    CanvasFragmentSource::WebGL { image_key, context_id } => image_key,
                     CanvasFragmentSource::Image(ref ipc_renderer) => match *ipc_renderer {
                         Some(ref ipc_renderer) => {
                             let ipc_renderer = ipc_renderer.lock().unwrap();

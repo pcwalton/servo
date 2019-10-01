@@ -61,8 +61,6 @@ pub enum LayoutMsg {
     PendingPaintMetric(PipelineId, Epoch),
     /// Notifies the constellation that the viewport has been constrained in some manner
     ViewportConstrained(PipelineId, ViewportConstraints),
-    /// Notifies the constellation that WebGL buffer swaps need to happen.
-    SwapWebGLBuffers(Vec<WebGLContextId>),
 }
 
 impl fmt::Debug for LayoutMsg {
@@ -73,7 +71,6 @@ impl fmt::Debug for LayoutMsg {
             IFrameSizes(..) => "IFrameSizes",
             PendingPaintMetric(..) => "PendingPaintMetric",
             ViewportConstrained(..) => "ViewportConstrained",
-            SwapWebGLBuffers(..) => "SwapWebGLBuffers",
         };
         write!(formatter, "LayoutMsg::{}", variant)
     }

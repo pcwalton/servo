@@ -46,7 +46,7 @@ use canvas_traits::canvas::{
 };
 use canvas_traits::canvas::{CompositionOrBlending, LineCapStyle, LineJoinStyle, RepetitionStyle};
 use canvas_traits::webgl::{ActiveAttribInfo, ActiveUniformInfo, GLLimits, GlType, TexDataType};
-use canvas_traits::webgl::{TexFormat, WebGLBufferId, WebGLChan, WebGLError};
+use canvas_traits::webgl::{TexFormat, WebGLBufferId, WebGLChan, WebGLContextId, WebGLError};
 use canvas_traits::webgl::{WebGLFramebufferId, WebGLMsgSender, WebGLPipeline, WebGLProgramId};
 use canvas_traits::webgl::{WebGLReceiver, WebGLRenderbufferId, WebGLSLVersion, WebGLSender};
 use canvas_traits::webgl::{WebGLShaderId, WebGLTextureId, WebGLVersion, WebGLVertexArrayId};
@@ -510,6 +510,7 @@ unsafe_no_jsmanaged_fields!(Point2D<f32>, Rect<Au>);
 unsafe_no_jsmanaged_fields!(Rect<f32>);
 unsafe_no_jsmanaged_fields!(CascadeData);
 unsafe_no_jsmanaged_fields!(WindowGLContext);
+unsafe_no_jsmanaged_fields!(WebGLContextId);
 
 unsafe impl<'a> JSTraceable for &'a str {
     #[inline]

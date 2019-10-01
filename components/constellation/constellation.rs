@@ -1652,9 +1652,6 @@ where
             FromLayoutMsg::ViewportConstrained(pipeline_id, constraints) => {
                 self.handle_viewport_constrained_msg(pipeline_id, constraints);
             },
-            FromLayoutMsg::SwapWebGLBuffers(context_ids) => {
-                self.handle_swap_webgl_buffers_msg(context_ids);
-            }
         }
     }
 
@@ -2124,16 +2121,6 @@ where
             };
 
             self.resize_browsing_context(window_size, type_, data.id);
-        }
-    }
-
-    fn handle_swap_webgl_buffers_msg(&mut self, context_ids: Vec<WebGLContextId>) {
-        if let Some(ref webgl_threads) = self.webgl_threads {
-            for context_id in context_ids {
-                if webgl_threads.0.send(WebGLMsg::SwapBuffers(context_id)).is_err() {
-                    warn!("Failed to send WebGL buffer swap message!")
-                }
-            }
         }
     }
 

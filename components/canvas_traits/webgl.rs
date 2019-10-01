@@ -98,12 +98,10 @@ pub enum WebGLMsg {
     WebGLCommand(WebGLContextId, WebGLCommand, WebGLCommandBacktrace),
     /// Runs a WebVRCommand in a specific WebGLContext.
     WebVRCommand(WebGLContextId, WebVRCommand),
-    /// Creates or updates the image keys required for WebRender.
-    UpdateWebRenderImage(WebGLContextId, WebGLSender<ImageKey>),
     /// Commands used for the DOMToTexture feature.
     DOMToTextureCommand(DOMToTextureCommand),
     /// Performs a buffer swap.
-    SwapBuffers(WebGLContextId),
+    SwapBuffers(Vec<WebGLContextId>, WebGLSender<()>),
     /// Frees all resources and closes the thread.
     Exit,
 }
@@ -125,6 +123,8 @@ pub struct WebGLCreateContextResult {
     pub glsl_version: WebGLSLVersion,
     /// The GL API used by the context.
     pub api_type: GlType,
+    /// The WebRender image key.
+    pub image_key: ImageKey
 }
 
 /// Defines the WebGL version
@@ -195,17 +195,6 @@ impl WebGLMsgSender {
     #[inline]
     pub fn send_remove(&self) -> WebGLSendResult {
         self.sender.send(WebGLMsg::RemoveContext(self.ctx_id))
-    }
-
-    #[inline]
-    pub fn send_update_wr_image(&self, sender: WebGLSender<ImageKey>) -> WebGLSendResult {
-        self.sender
-            .send(WebGLMsg::UpdateWebRenderImage(self.ctx_id, sender))
-    }
-
-    #[inline]
-    pub fn send_swap_buffers(&self) -> WebGLSendResult {
-        self.sender.send(WebGLMsg::SwapBuffers(self.ctx_id))
     }
 
     pub fn send_dom_to_texture(&self, command: DOMToTextureCommand) -> WebGLSendResult {
