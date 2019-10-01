@@ -3,7 +3,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 use crate::webgl_limits::GLLimitsDetect;
-use crate::webgl_mode::{SwapChain, SwapChains};
+use crate::webgl_mode::{FrontSurface, SwapChain, SwapChains};
 use byteorder::{ByteOrder, NativeEndian, WriteBytesExt};
 use canvas_traits::webgl::{self, ActiveAttribInfo, ActiveUniformInfo, AlphaTreatment};
 use canvas_traits::webgl::{DOMToTextureCommand, GLContextAttributes, GLLimits, GlType};
@@ -518,14 +518,13 @@ impl WebGLThread {
             // Fetch a new back buffer.
             let mut new_back_buffer = None;
             if let Some(ref mut swap_chain) = swap_chains.get_mut(&context_id) {
-                for presented_surface_index in 0..swap_chain.presented_surfaces.len() {
-                    if size == swap_chain.presented_surfaces[presented_surface_index].size() {
-                        new_back_buffer = Some(swap_chain.presented_surfaces
-                                                         .swap_remove(presented_surface_index));
+                while let Some(back_buffer) = swap_chain.free_surfaces.pop() {
+                    if back_buffer.size() == size {
+                        new_back_buffer = Some(back_buffer);
                         break;
                     }
+                    surfaces_to_destroy.push(back_buffer);
                 }
-                surfaces_to_destroy = mem::replace(&mut swap_chain.presented_surfaces, vec![]);
             }
             let new_back_buffer = match new_back_buffer {
                 Some(new_back_buffer) => new_back_buffer,
@@ -548,17 +547,29 @@ impl WebGLThread {
             match swap_chains.entry(context_id) {
                 Entry::Occupied(mut occupied_entry) => {
                     let mut swap_chain = occupied_entry.get_mut();
-                    if let Some(old_front_buffer) = mem::replace(&mut swap_chain.pending_surface,
-                                                                 Some(new_front_buffer)) {
-                        // Compositor was too slow. Drop the old frame and replace it with this
-                        // one.
-                        surfaces_to_destroy.push(old_front_buffer);
+                    match mem::replace(&mut swap_chain.front_surface, FrontSurface::None) {
+                        FrontSurface::None => {
+                            swap_chain.front_surface = FrontSurface::Ready(new_front_buffer);
+                        }
+                        FrontSurface::Ready(old_front_buffer) => {
+                            println!("*** replacing ready front buffer, compositor too slow?");
+                            swap_chain.front_surface = FrontSurface::Ready(new_front_buffer);
+                            swap_chain.free_surfaces.push(old_front_buffer);
+                        }
+                        FrontSurface::CompositionInProgress => {
+                            swap_chain.front_surface = FrontSurface::Pending(new_front_buffer);
+                        }
+                        FrontSurface::Pending(old_front_buffer) => {
+                            println!("*** replacing pending front buffer, compositor too slow?");
+                            swap_chain.front_surface = FrontSurface::Ready(new_front_buffer);
+                            swap_chain.free_surfaces.push(old_front_buffer);
+                        }
                     }
                 }
                 Entry::Vacant(vacant_entry) => {
                     vacant_entry.insert(SwapChain {
-                        pending_surface: Some(new_front_buffer),
-                        presented_surfaces: vec![],
+                        front_surface: FrontSurface::Ready(new_front_buffer),
+                        free_surfaces: vec![],
                     });
                 }
             }
@@ -821,7 +832,7 @@ impl WebGLImpl {
         command: WebGLCommand,
         _backtrace: WebGLCommandBacktrace,
     ) {
-        println!("WebGLImpl::apply({:?})", command);
+        //println!("WebGLImpl::apply({:?})", command);
         match command {
             WebGLCommand::GetContextAttributes(ref sender) => sender.send(*attributes).unwrap(),
             WebGLCommand::ActiveTexture(target) => gl.active_texture(target),

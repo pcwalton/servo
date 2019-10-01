@@ -12,6 +12,7 @@ use servo_config::pref;
 use std::cell::RefCell;
 use std::collections::hash_map::Entry;
 use std::default::Default;
+use std::mem;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex, MutexGuard};
 use surfman::{self, Context, Device, Surface, SurfaceTexture};
@@ -143,10 +144,14 @@ impl WebrenderExternalImageApi for WebGLExternalImages {
         let mut swap_chains = self.swap_chains.lock();
         let mut front_buffer = None;
         if let Some(ref mut swap_chain) = swap_chains.get_mut(&id) {
-            front_buffer = swap_chain.pending_surface.take();
-            if front_buffer.is_none() {
-                println!("*** no surface ready, presenting last one");
-                front_buffer = swap_chain.presented_surfaces.pop();
+            match mem::replace(&mut swap_chain.front_surface, FrontSurface::None) {
+                FrontSurface::None => {}
+                FrontSurface::Ready(new_front_buffer) => {
+                    front_buffer = Some(new_front_buffer);
+                    swap_chain.front_surface = FrontSurface::CompositionInProgress;
+                }
+                FrontSurface::CompositionInProgress => unreachable!(),
+                FrontSurface::Pending(new_front_buffer) => unreachable!(),
             }
         }
 
@@ -178,19 +183,29 @@ impl WebrenderExternalImageApi for WebGLExternalImages {
                                       .destroy_surface_texture(&mut *context, locked_front_buffer)
                                       .unwrap();
 
-        self.swap_chains.push_presented_surface(id, locked_front_buffer);
-
-        /*
-        let mut front_buffer_slot = self.swap_chains.get(id);
-        let mut locked_front_buffer_slot = front_buffer_slot.lock();
-        if locked_front_buffer_slot.is_none() {
-            *locked_front_buffer_slot = Some(locked_front_buffer);
-            return;
+        let mut swap_chains = self.swap_chains.lock();
+        match swap_chains.get_mut(&id) {
+            Some(ref mut swap_chain) => {
+                match mem::replace(&mut swap_chain.front_surface, FrontSurface::None) {
+                    FrontSurface::None => unreachable!(),
+                    FrontSurface::Ready(_) => unreachable!(),
+                    FrontSurface::CompositionInProgress => {
+                        swap_chain.front_surface = FrontSurface::Ready(locked_front_buffer);
+                    }
+                    FrontSurface::Pending(next_surface) => {
+                        swap_chain.front_surface = FrontSurface::Ready(next_surface);
+                        swap_chain.free_surfaces.push(locked_front_buffer);
+                    }
+                }
+            }
+            None => {
+                // FIXME(pcwalton): Can this happen?
+                swap_chains.insert(id, SwapChain {
+                    front_surface: FrontSurface::None,
+                    free_surfaces: vec![locked_front_buffer],
+                });
+            }
         }
-
-        println!("spuriously destroying surface");
-        self.device.destroy_surface(&mut *context, locked_front_buffer).unwrap();
-        */
     }
 }
 
@@ -200,8 +215,19 @@ pub struct SwapChains {
 }
 
 pub(crate) struct SwapChain {
-    pub(crate) pending_surface: Option<Surface>,
-    pub(crate) presented_surfaces: Vec<Surface>,
+    pub(crate) front_surface: FrontSurface,
+    pub(crate) free_surfaces: Vec<Surface>,
+}
+
+pub(crate) enum FrontSurface {
+    // There hasn't been a front surface yet.
+    None,
+    // A new front surface is ready to be composited.
+    Ready(Surface),
+    // A front surface is currently being composited.
+    CompositionInProgress,
+    // A front surface is being composited. A new one is ready for the next composite.
+    Pending(Surface),
 }
 
 impl SwapChains {
@@ -211,28 +237,13 @@ impl SwapChains {
         }
     }
 
-    fn push_presented_surface(&self, context_id: WebGLContextId, surface: Surface) {
-        let mut table = self.lock();
-        match table.entry(context_id) {
-            Entry::Vacant(vacant_entry) => {
-                vacant_entry.insert(SwapChain {
-                    pending_surface: None,
-                    presented_surfaces: vec![surface],
-                });
-            }
-            Entry::Occupied(mut occupied_entry) => {
-                occupied_entry.get_mut().presented_surfaces.push(surface);
-            }
-        }
-    }
-
     pub(crate) fn lock(&self) -> MutexGuard<FnvHashMap<WebGLContextId, SwapChain>> {
         self.table.lock().unwrap()
     }
 }
 
 /*
-impl FrontBuffer {
+impl FrontSurface {
     fn take(&self) -> Option<Surface> {
         self.surface.lock().unwrap().take()
     }
