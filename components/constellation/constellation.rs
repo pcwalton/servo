@@ -105,7 +105,7 @@ use backtrace::Backtrace;
 use bluetooth_traits::BluetoothRequest;
 use canvas::canvas_paint_thread::CanvasPaintThread;
 use canvas_traits::canvas::{CanvasId, CanvasMsg};
-use canvas_traits::webgl::{WebGLContextId, WebGLMsg, WebGLThreads};
+use canvas_traits::webgl::{SwapChainId, WebGLContextId, WebGLMsg, WebGLThreads};
 use compositing::compositor_thread::CompositorProxy;
 use compositing::compositor_thread::Msg as ToCompositorMsg;
 use compositing::SendableFrameTree;

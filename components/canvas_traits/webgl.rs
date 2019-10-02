@@ -6,7 +6,6 @@ use euclid::default::{Rect, Size2D};
 use gleam::gl;
 use gleam::gl::Gl;
 use ipc_channel::ipc::{IpcBytesReceiver, IpcBytesSender, IpcSharedMemory};
-use surfman::Surface;
 use pixels::PixelFormat;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::borrow::Cow;
@@ -35,12 +34,6 @@ pub struct WebGLCommandBacktrace {
     pub backtrace: String,
     #[cfg(feature = "webgl_backtrace")]
     pub js_backtrace: Option<String>,
-}
-
-#[derive(Debug)]
-pub struct WebGLLockMessage {
-    pub surface: Surface,
-    pub sync: WebGLSync,
 }
 
 #[derive(Debug)]
@@ -101,7 +94,7 @@ pub enum WebGLMsg {
     /// Commands used for the DOMToTexture feature.
     DOMToTextureCommand(DOMToTextureCommand),
     /// Performs a buffer swap.
-    SwapBuffers(Vec<WebGLContextId>, WebGLSender<()>),
+    SwapBuffers(Vec<SwapChainId>, WebGLSender<()>),
     /// Frees all resources and closes the thread.
     Exit,
 }
@@ -522,6 +515,20 @@ define_resource_id!(WebGLVertexArrayId);
     Clone, Copy, Debug, Deserialize, Eq, Hash, MallocSizeOf, Ord, PartialEq, PartialOrd, Serialize,
 )]
 pub struct WebGLContextId(pub u64);
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+pub enum SwapChainId {
+    Context(WebGLContextId),
+    // TODO: support opaque framebuffers
+}
+
+impl SwapChainId {
+    pub fn context_id(&self) -> WebGLContextId {
+        match *self {
+	    SwapChainId::Context(id) => id,
+	}
+    }
+}
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 pub enum WebGLError {
