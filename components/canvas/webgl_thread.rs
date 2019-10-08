@@ -385,6 +385,7 @@ impl WebGLThread {
         self.device.make_context_current(&ctx).unwrap();
         let framebuffer = self.device.context_surface_framebuffer_object(&ctx).unwrap();
         gl.bind_framebuffer(gl::FRAMEBUFFER, framebuffer);
+        gl.viewport(0, 0, size.width as i32, size.height as i32);
 
         let descriptor = self.device.context_descriptor(&ctx);
         let has_alpha = self.device
@@ -522,9 +523,10 @@ impl WebGLThread {
             ).expect("Where's the GL data?");
 
             let mut surfaces_to_destroy = vec![];
+            let size;
             {
                 let mut swap_chains = self.swap_chains.lock();
-                let size = self.device.context_surface_size(&data.ctx).unwrap();
+                size = self.device.context_surface_size(&data.ctx).unwrap();
 
                 // Fetch a new back buffer.
                 let mut new_back_buffer = None;
@@ -596,6 +598,7 @@ impl WebGLThread {
 
             let framebuffer = self.device.context_surface_framebuffer_object(&data.ctx).unwrap();
             data.gl.bind_framebuffer(gl::FRAMEBUFFER, framebuffer);
+            data.gl.viewport(0, 0, size.width, size.height);
             println!("... rebound framebuffer {}, new back buffer surface is {:?}",
                     framebuffer,
                     self.device.context_surface_id(&data.ctx).unwrap());
