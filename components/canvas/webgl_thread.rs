@@ -17,6 +17,7 @@ use canvas_traits::webgl::{WebVRCommand, WebVRRenderHandler, YAxisTreatment};
 use canvas_traits::webgl::SwapChainId;
 use euclid::default::Size2D;
 use fnv::FnvHashMap;
+use gleam::gl::types::GLuint;
 use gleam::gl::{self, Gl, GlFns, GlesFns};
 use half::f16;
 use pixels::{self, PixelFormat};
@@ -414,6 +415,7 @@ impl WebGLThread {
     }
 
     /// Resizes a WebGLContext
+    #[allow(unsafe_code)]
     fn resize_webgl_context(
         &mut self,
         context_id: WebGLContextId,
@@ -426,6 +428,20 @@ impl WebGLThread {
             &mut self.contexts,
             &mut self.bound_context_id).expect("Missing WebGL context!");
 
+        // Check to see if any of the current framebuffer bindings are the surface we're about to
+        // throw out. If so, we'll have to reset them after destroying the surface.
+        let (read_framebuffer, draw_framebuffer) = unsafe {
+            let (mut read_framebuffer, mut draw_framebuffer) = ([0], [0]);
+            data.gl.get_integer_v(gl::READ_FRAMEBUFFER_BINDING, &mut read_framebuffer);
+            data.gl.get_integer_v(gl::DRAW_FRAMEBUFFER_BINDING, &mut draw_framebuffer);
+            (read_framebuffer[0] as GLuint, draw_framebuffer[0] as GLuint)
+        };
+        let mut context_surface_framebuffer = self.device
+                                                  .context_surface_framebuffer_object(&data.ctx)
+                                                  .unwrap();
+        let must_reset_read_framebuffer = read_framebuffer == context_surface_framebuffer;
+        let must_reset_draw_framebuffer = draw_framebuffer == context_surface_framebuffer;
+
         // Throw out all buffers.
         let swap_id = SwapChainId::Context(context_id);
         let context_descriptor = self.device.context_descriptor(&data.ctx);
@@ -436,6 +452,18 @@ impl WebGLThread {
             None => self.device.replace_context_surface(&mut data.ctx, new_surface).unwrap(),
         };
         self.device.destroy_surface(&mut data.ctx, old_surface).unwrap();
+
+        // Reset framebuffer bindings as appropriate.
+        context_surface_framebuffer = self.device
+                                          .context_surface_framebuffer_object(&data.ctx)
+                                          .unwrap();
+        if must_reset_read_framebuffer {
+            data.gl.bind_framebuffer(gl::READ_FRAMEBUFFER, context_surface_framebuffer);
+        }
+        if must_reset_draw_framebuffer {
+            println!("resize_webgl_context(): resetting draw framebuffer");
+            data.gl.bind_framebuffer(gl::DRAW_FRAMEBUFFER, context_surface_framebuffer);
+        }
 
         // Update WR image if needed. Resize image updates are only required for SharedTexture mode.
         // Readback mode already updates the image every frame to send the raw pixels.
@@ -851,6 +879,10 @@ impl WebGLImpl {
         _backtrace: WebGLCommandBacktrace,
     ) {
         //println!("WebGLImpl::apply({:?})", command);
+
+        let error = gl.get_error();
+        assert_eq!(error, gl::NO_ERROR);
+
         match command {
             WebGLCommand::GetContextAttributes(ref sender) => sender.send(*attributes).unwrap(),
             WebGLCommand::ActiveTexture(target) => gl.active_texture(target),
