@@ -17,6 +17,7 @@ webgl_backtrace = ["canvas_traits/webgl_backtrace"]
 
 [dependencies]
 azure = {git = "https://github.com/servo/rust-azure", optional = true}
+bitflags = "1.0"
 byteorder = "1"
 canvas_traits = {path = "../canvas_traits"}
 cssparser = "0.25"

@@ -17,7 +17,7 @@ use canvas_traits::webgl::{WebVRCommand, WebVRRenderHandler, YAxisTreatment};
 use canvas_traits::webgl::SwapChainId;
 use euclid::default::Size2D;
 use fnv::FnvHashMap;
-use gleam::gl::types::GLuint;
+use gleam::gl::types::{GLint, GLuint};
 use gleam::gl::{self, Gl, GlFns, GlesFns};
 use half::f16;
 use pixels::{self, PixelFormat};
@@ -415,7 +415,6 @@ impl WebGLThread {
     }
 
     /// Resizes a WebGLContext
-    #[allow(unsafe_code)]
     fn resize_webgl_context(
         &mut self,
         context_id: WebGLContextId,
@@ -430,17 +429,8 @@ impl WebGLThread {
 
         // Check to see if any of the current framebuffer bindings are the surface we're about to
         // throw out. If so, we'll have to reset them after destroying the surface.
-        let (read_framebuffer, draw_framebuffer) = unsafe {
-            let (mut read_framebuffer, mut draw_framebuffer) = ([0], [0]);
-            data.gl.get_integer_v(gl::READ_FRAMEBUFFER_BINDING, &mut read_framebuffer);
-            data.gl.get_integer_v(gl::DRAW_FRAMEBUFFER_BINDING, &mut draw_framebuffer);
-            (read_framebuffer[0] as GLuint, draw_framebuffer[0] as GLuint)
-        };
-        let mut context_surface_framebuffer = self.device
-                                                  .context_surface_framebuffer_object(&data.ctx)
-                                                  .unwrap();
-        let must_reset_read_framebuffer = read_framebuffer == context_surface_framebuffer;
-        let must_reset_draw_framebuffer = draw_framebuffer == context_surface_framebuffer;
+        let framebuffer_rebinding_info =
+            FramebufferRebindingInfo::detect(&self.device, &data.ctx, &*data.gl);
 
         // Throw out all buffers.
         let swap_id = SwapChainId::Context(context_id);
@@ -454,16 +444,7 @@ impl WebGLThread {
         self.device.destroy_surface(&mut data.ctx, old_surface).unwrap();
 
         // Reset framebuffer bindings as appropriate.
-        context_surface_framebuffer = self.device
-                                          .context_surface_framebuffer_object(&data.ctx)
-                                          .unwrap();
-        if must_reset_read_framebuffer {
-            data.gl.bind_framebuffer(gl::READ_FRAMEBUFFER, context_surface_framebuffer);
-        }
-        if must_reset_draw_framebuffer {
-            println!("resize_webgl_context(): resetting draw framebuffer");
-            data.gl.bind_framebuffer(gl::DRAW_FRAMEBUFFER, context_surface_framebuffer);
-        }
+        framebuffer_rebinding_info.apply(&self.device, &data.ctx, &*data.gl);
 
         // Update WR image if needed. Resize image updates are only required for SharedTexture mode.
         // Readback mode already updates the image every frame to send the raw pixels.
@@ -550,6 +531,11 @@ impl WebGLThread {
                 &mut self.bound_context_id,
             ).expect("Where's the GL data?");
 
+            // Check to see if any of the current framebuffer bindings are the surface we're about
+            // to swap out. If so, we'll have to reset them after destroying the surface.
+            let framebuffer_rebinding_info =
+                FramebufferRebindingInfo::detect(&self.device, &data.ctx, &*data.gl);
+
             let mut surfaces_to_destroy = vec![];
             let size;
             {
@@ -624,9 +610,10 @@ impl WebGLThread {
                 self.device.destroy_surface(&mut data.ctx, surface).unwrap();
             }
 
+            // Rebind framebuffers as appropriate.
+            framebuffer_rebinding_info.apply(&self.device, &data.ctx, &*data.gl);
+
             let framebuffer = self.device.context_surface_framebuffer_object(&data.ctx).unwrap();
-            data.gl.bind_framebuffer(gl::FRAMEBUFFER, framebuffer);
-            data.gl.viewport(0, 0, size.width, size.height);
             println!("... rebound framebuffer {}, new back buffer surface is {:?}",
                     framebuffer,
                     self.device.context_surface_id(&data.ctx).unwrap());
@@ -2257,5 +2244,61 @@ impl SurfmanContextAttributeFlagsConvert for GLContextAttributes {
         flags.set(ContextAttributeFlags::DEPTH, self.depth);
         flags.set(ContextAttributeFlags::STENCIL, self.stencil);
         flags
+    }
+}
+
+bitflags! {
+    struct FramebufferRebindingFlags: u8 {
+        const REBIND_READ_FRAMEBUFFER = 0x1;
+        const REBIND_DRAW_FRAMEBUFFER = 0x2;
+    }
+}
+
+struct FramebufferRebindingInfo {
+    flags: FramebufferRebindingFlags,
+    viewport: [GLint; 4],
+}
+
+impl FramebufferRebindingInfo {
+    #[allow(unsafe_code)]
+    fn detect(device: &Device, context: &Context, gl: &dyn gl::Gl) -> FramebufferRebindingInfo {
+        unsafe {
+            let (mut read_framebuffer, mut draw_framebuffer) = ([0], [0]);
+            gl.get_integer_v(gl::READ_FRAMEBUFFER_BINDING, &mut read_framebuffer);
+            gl.get_integer_v(gl::DRAW_FRAMEBUFFER_BINDING, &mut draw_framebuffer);
+
+            let mut context_surface_framebuffer = device.context_surface_framebuffer_object(context)
+                                                        .unwrap();
+
+            let mut flags = FramebufferRebindingFlags::empty();
+            if context_surface_framebuffer == read_framebuffer[0] as GLuint {
+                flags.insert(FramebufferRebindingFlags::REBIND_READ_FRAMEBUFFER);
+            }
+            if context_surface_framebuffer == draw_framebuffer[0] as GLuint {
+                flags.insert(FramebufferRebindingFlags::REBIND_DRAW_FRAMEBUFFER);
+            }
+
+            let mut viewport = [0; 4];
+            gl.get_integer_v(gl::VIEWPORT, &mut viewport);
+
+            FramebufferRebindingInfo { flags, viewport }
+        }
+    }
+
+    fn apply(self, device: &Device, context: &Context, gl: &dyn gl::Gl) {
+        if self.flags.is_empty() {
+            return;
+        }
+
+        let context_surface_framebuffer = device.context_surface_framebuffer_object(context)
+                                                .unwrap();
+        if self.flags.contains(FramebufferRebindingFlags::REBIND_READ_FRAMEBUFFER) {
+            gl.bind_framebuffer(gl::READ_FRAMEBUFFER, context_surface_framebuffer);
+        }
+        if self.flags.contains(FramebufferRebindingFlags::REBIND_DRAW_FRAMEBUFFER) {
+            gl.bind_framebuffer(gl::DRAW_FRAMEBUFFER, context_surface_framebuffer);
+        }
+
+        gl.viewport(self.viewport[0], self.viewport[1], self.viewport[2], self.viewport[3]);
     }
 }

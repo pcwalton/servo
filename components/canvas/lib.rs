@@ -5,6 +5,8 @@
 #![deny(unsafe_code)]
 
 #[macro_use]
+extern crate bitflags;
+#[macro_use]
 extern crate log;
 
 #[cfg(feature = "canvas2d-azure")]

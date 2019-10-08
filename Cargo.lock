@@ -397,6 +397,7 @@ name = "canvas"
 version = "0.0.1"
 dependencies = [
  "azure 0.36.1 (git+https://github.com/servo/rust-azure)",
+ "bitflags 1.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "byteorder 1.2.7 (registry+https://github.com/rust-lang/crates.io-index)",
  "canvas_traits 0.0.1",
  "cssparser 0.25.8 (registry+https://github.com/rust-lang/crates.io-index)",
