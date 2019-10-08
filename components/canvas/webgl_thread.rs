@@ -29,8 +29,7 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use surfman::{self, Adapter, Context, ContextAttributeFlags, ContextAttributes, Device};
-use surfman::GLVersion;
-use surfman::Surface;
+use surfman::{GLVersion, Surface, SurfaceType};
 use webrender_traits::{WebrenderExternalImageRegistry, WebrenderImageHandlerType};
 
 struct GLContextData {
@@ -358,8 +357,10 @@ impl WebGLThread {
                                      .create_context_descriptor(&context_attributes)
                                      .unwrap();
 
+        let surface_type = SurfaceType::Generic { size: size.to_i32() };
+
         let ctx = self.device
-                      .create_context(&context_descriptor, &size.to_i32())
+                      .create_context(&context_descriptor, &surface_type)
                       .expect("Failed to create the GL context!");
 
         let id = WebGLContextId(
@@ -427,7 +428,8 @@ impl WebGLThread {
         // Throw out all buffers.
         let swap_id = SwapChainId::Context(context_id);
         let context_descriptor = self.device.context_descriptor(&data.ctx);
-        let new_surface = self.device.create_surface(&data.ctx, &size.to_i32()).unwrap();
+        let surface_type = SurfaceType::Generic { size: size.to_i32() };
+        let new_surface = self.device.create_surface(&data.ctx, &surface_type).unwrap();
         let old_surface = match data.unattached.get_mut(&swap_id) {
             Some(surface) => mem::replace(surface, new_surface),
             None => self.device.replace_context_surface(&mut data.ctx, new_surface).unwrap(),
@@ -538,8 +540,9 @@ impl WebGLThread {
                 let new_back_buffer = match new_back_buffer {
                     Some(new_back_buffer) => new_back_buffer,
                     None => {
+                        let surface_type = SurfaceType::Generic { size };
                         self.device
-                            .create_surface(&data.ctx, &size)
+                            .create_surface(&data.ctx, &surface_type)
                             .expect("Failed to create a new back buffer!")
                     }
                 };
