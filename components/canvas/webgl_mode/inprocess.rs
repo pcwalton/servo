@@ -5,18 +5,16 @@
 use crate::webgl_thread::{WebGLThread, WebGLThreadInit};
 use canvas_traits::webgl::{WebGLContextId, WebGLMsg, WebGLSender, WebGLThreads};
 use canvas_traits::webgl::{WebVRRenderHandler, webgl_channel};
-use canvas_traits::webgl::SwapChainId;
 use euclid::default::Size2D;
 use fnv::FnvHashMap;
 use gleam::gl;
 use servo_config::pref;
 use std::cell::RefCell;
-use std::collections::hash_map::Entry;
 use std::default::Default;
-use std::mem;
 use std::rc::Rc;
-use std::sync::{Arc, Mutex, MutexGuard};
-use surfman::{self, Context, Device, Surface, SurfaceTexture};
+use std::sync::{Arc, Mutex};
+use surfman::{self, Context, Device, SurfaceTexture};
+use swap_chains::SwapChains;
 use webrender_traits::{WebrenderExternalImageApi, WebrenderExternalImageRegistry};
 use webxr_api::WebGLExternalImageApi;
 
@@ -40,9 +38,7 @@ impl WebGLComm {
     ) -> WebGLComm {
         println!("WebGLThreads::new()");
         let (sender, receiver) = webgl_channel::<WebGLMsg>().unwrap();
-
-        // Make our front buffer table.
-        let swap_chains = SwapChains::new();
+        let webrender_swap_chains = SwapChains::new();
 
         // This implementation creates a single `WebGLThread` for all the pipelines.
         let init = WebGLThreadInit {
@@ -51,7 +47,7 @@ impl WebGLComm {
             external_images,
             sender: sender.clone(),
             receiver,
-            swap_chains: swap_chains.clone(),
+            webrender_swap_chains: webrender_swap_chains.clone(),
             adapter: device.adapter(),
             api_type,
         };
@@ -67,15 +63,13 @@ impl WebGLComm {
 
         let external = WebGLExternalImages::new(device,
                                                 context,
-                                                webrender_gl,
-                                                swap_chains,
-                                                sender.clone());
+                                                webrender_swap_chains);
 
         WebGLThread::run_on_own_thread(init);
 
         WebGLComm {
             webgl_threads: WebGLThreads(sender),
-            webxr_handler: external.sendable.clone_box(),
+            webxr_handler: SendableWebGLExternalImages.clone_box(),
             image_handler: Box::new(external),
             output_handler: output_handler.map(|b| b as Box<_>),
         }
@@ -83,17 +77,7 @@ impl WebGLComm {
 }
 
 /// Bridge between the webxr_api::ExternalImage callbacks and the WebGLThreads.
-struct SendableWebGLExternalImages {
-    webgl_channel: WebGLSender<WebGLMsg>,
-}
-
-impl SendableWebGLExternalImages {
-    fn new(channel: WebGLSender<WebGLMsg>) -> Self {
-        Self {
-            webgl_channel: channel,
-        }
-    }
-}
+struct SendableWebGLExternalImages;
 
 impl webxr_api::WebGLExternalImageApi for SendableWebGLExternalImages {
     fn lock(&self, _id: usize) -> Option<gl::GLsync> {
@@ -106,7 +90,7 @@ impl webxr_api::WebGLExternalImageApi for SendableWebGLExternalImages {
     }
 
     fn clone_box(&self) -> Box<dyn webxr_api::WebGLExternalImageApi> {
-        Box::new(Self::new(self.webgl_channel.clone()))
+        Box::new(SendableWebGLExternalImages)
     }
 }
 
@@ -114,51 +98,30 @@ impl webxr_api::WebGLExternalImageApi for SendableWebGLExternalImages {
 struct WebGLExternalImages {
     device: Rc<Device>,
     context: Rc<RefCell<Context>>,
-    webrender_gl: Rc<dyn gl::Gl>,
-    swap_chains: SwapChains,
-    locked_front_buffers: FnvHashMap<SwapChainId, SurfaceTexture>,
-    sendable: SendableWebGLExternalImages,
+    swap_chains: SwapChains<WebGLContextId>,
+    locked_front_buffers: FnvHashMap<WebGLContextId, SurfaceTexture>,
 }
 
 impl WebGLExternalImages {
     fn new(device: Rc<Device>,
            context: Rc<RefCell<Context>>,
-           webrender_gl: Rc<dyn gl::Gl>,    
-           swap_chains: SwapChains,
-           channel: WebGLSender<WebGLMsg>)
+           swap_chains: SwapChains<WebGLContextId>)
            -> Self {
         Self {
             device,
             context,
-            webrender_gl,
             swap_chains,
             locked_front_buffers: FnvHashMap::default(),
-            sendable: SendableWebGLExternalImages::new(channel),
         }
     }
 }
 
 impl WebGLExternalImages {
-    fn lock_swap_chain(&mut self, id: SwapChainId) -> Option<(u32, Size2D<i32>)> {
-        let mut swap_chains = self.swap_chains.lock();
-        let mut front_buffer = None;
-        if let Some(ref mut swap_chain) = swap_chains.get_mut(&id) {
-            match mem::replace(&mut swap_chain.front_surface, FrontSurface::None) {
-                FrontSurface::None => {}
-                FrontSurface::Ready(new_front_buffer) => {
-                    front_buffer = Some(new_front_buffer);
-                    swap_chain.front_surface = FrontSurface::CompositionInProgress;
-                }
-                FrontSurface::CompositionInProgress => unreachable!(),
-                FrontSurface::Pending(new_front_buffer) => unreachable!(),
-            }
-        }
+    fn lock_swap_chain(&mut self, id: WebGLContextId) -> Option<(u32, Size2D<i32>)> {
+        println!("... locking chain {:?}", id);
+        let front_buffer = self.swap_chains.get(id)?.take_surface()?;
 
-        let front_buffer = match front_buffer {
-            None => return None,
-            Some(front_buffer) => front_buffer,
-        };
-
+        println!("... getting texture for surface {:?}", front_buffer.id());
         let mut context = self.context.borrow_mut();
         let size = front_buffer.size();
         let front_buffer_texture = self.device
@@ -171,99 +134,30 @@ impl WebGLExternalImages {
         Some((gl_texture, size))
     }
 
-    fn unlock_swap_chain(&mut self, id: SwapChainId) {
-        let locked_front_buffer = match self.locked_front_buffers.remove(&id) {
-            None => return,
-            Some(locked_front_buffer) => locked_front_buffer,
-        };
-
+    fn unlock_swap_chain(&mut self, id: WebGLContextId) -> Option<()> {
+        let locked_front_buffer = self.locked_front_buffers.remove(&id)?;
         let mut context = self.context.borrow_mut();
         let locked_front_buffer = self.device
                                       .destroy_surface_texture(&mut *context, locked_front_buffer)
                                       .unwrap();
 
-        let mut swap_chains = self.swap_chains.lock();
-        match swap_chains.get_mut(&id) {
-            Some(ref mut swap_chain) => {
-                match mem::replace(&mut swap_chain.front_surface, FrontSurface::None) {
-                    FrontSurface::None => unreachable!(),
-                    FrontSurface::Ready(_) => unreachable!(),
-                    FrontSurface::CompositionInProgress => {
-                        swap_chain.front_surface = FrontSurface::Ready(locked_front_buffer);
-                    }
-                    FrontSurface::Pending(next_surface) => {
-                        swap_chain.front_surface = FrontSurface::Ready(next_surface);
-                        swap_chain.free_surfaces.push(locked_front_buffer);
-                    }
-                }
-            }
-            None => {
-                // FIXME(pcwalton): Can this happen?
-                swap_chains.insert(id, SwapChain {
-                    front_surface: FrontSurface::None,
-                    free_surfaces: vec![locked_front_buffer],
-                });
-            }
-        }
+        println!("... unlocked chain {:?}", id);
+        self.swap_chains.get(id)?.recycle_surface(locked_front_buffer);
+        Some(())
     }
 }
 
 impl WebrenderExternalImageApi for WebGLExternalImages {
     fn lock(&mut self, id: u64) -> (u32, Size2D<i32>) {
-        let id = SwapChainId::Context(WebGLContextId(id));
+        let id = WebGLContextId(id);
         self.lock_swap_chain(id).unwrap_or_default()
     }
 
     fn unlock(&mut self, id: u64) {
-        let id = SwapChainId::Context(WebGLContextId(id));
+        let id = WebGLContextId(id);
         self.unlock_swap_chain(id);
     }
 }
-
-#[derive(Clone)]
-pub struct SwapChains {
-    table: Arc<Mutex<FnvHashMap<SwapChainId, SwapChain>>>,
-}
-
-pub(crate) struct SwapChain {
-    pub(crate) front_surface: FrontSurface,
-    pub(crate) free_surfaces: Vec<Surface>,
-}
-
-pub(crate) enum FrontSurface {
-    // There hasn't been a front surface yet.
-    None,
-    // A new front surface is ready to be composited.
-    Ready(Surface),
-    // A front surface is currently being composited.
-    CompositionInProgress,
-    // A front surface is being composited. A new one is ready for the next composite.
-    Pending(Surface),
-}
-
-impl SwapChains {
-    fn new() -> SwapChains {
-        SwapChains {
-            table: Arc::new(Mutex::new(FnvHashMap::default())),
-        }
-    }
-
-    pub(crate) fn lock(&self) -> MutexGuard<FnvHashMap<SwapChainId, SwapChain>> {
-        self.table.lock().unwrap()
-    }
-}
-
-/*
-impl FrontSurface {
-    fn take(&self) -> Option<Surface> {
-        self.surface.lock().unwrap().take()
-    }
-
-    pub(crate) fn lock(&self) -> MutexGuard<Option<Surface>> {
-        self.surface.lock().unwrap()
-    }
-}
-*/
 
 /// struct used to implement DOMToTexture feature and webrender::OutputImageHandler trait.
 //type OutputHandlerData = Option<(u32, Size2D<i32>)>;

@@ -32,5 +32,3 @@ cmake = { git = "https://github.com/alexcrichton/cmake-rs" }
 
 core-foundation = { git = "https://github.com/zakorgy/core-foundation-rs", branch = "io-surface-alpha" }
 io-surface = { git = "https://github.com/zakorgy/core-foundation-rs", branch = "io-surface-alpha" }
-[patch."https://github.com/pcwalton/surfman"]
-surfman = { path = "../surfman/surfman" }
