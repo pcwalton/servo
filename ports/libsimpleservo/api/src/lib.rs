@@ -187,8 +187,10 @@ pub fn init(
     gl.clear(gl::COLOR_BUFFER_BIT);
     gl.finish();
 
-    let adapter = surfman::Adapter::default().expect("no default adapter??");
-    let device = Rc::new(surfman::Device::new(&adapter).expect("no device??"));
+    let (device, mut surfman_context) = unsafe {                                                                                                            +        surfman::Device::from_current_context().expect("failed to create device")
+        surfman::Device::from_current_context().expect("failed to create device")
+    };
+    device.destroy_context(&mut surfman_context).unwrap();
 
     let window_callbacks = Rc::new(ServoWindowCallbacks {
         gl: gl.clone(),
@@ -197,7 +199,7 @@ pub fn init(
         density: init_opts.density,
         gl_context_pointer: init_opts.gl_context_pointer,
         native_display_pointer: init_opts.native_display_pointer,
-        device,
+        device: Rc::new(device),
     });
 
     let embedder_callbacks = Box::new(ServoEmbedderCallbacks {
