@@ -38,6 +38,7 @@ webrender_api = {git = "https://github.com/servo/webrender", features = ["ipc"]}
 webrender_traits = {path = "../webrender_traits"}
 webxr-api = {git = "https://github.com/servo/webxr", features = ["ipc"]}
 surfman = { git = "https://github.com/pcwalton/surfman" }
+swap-chains =  { git = "https://github.com/asajeffrey/swap-chains" }
 
 [target.x86_64-apple-darwin.dependencies]
 io-surface = "0.11.1"

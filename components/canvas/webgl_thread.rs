@@ -3,7 +3,6 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 use crate::webgl_limits::GLLimitsDetect;
-use crate::webgl_mode::{FrontSurface, SwapChain, SwapChains};
 use byteorder::{ByteOrder, NativeEndian, WriteBytesExt};
 use canvas_traits::webgl::{self, ActiveAttribInfo, ActiveUniformInfo, AlphaTreatment};
 use canvas_traits::webgl::{DOMToTextureCommand, GLContextAttributes, GLLimits, GlType};
@@ -23,14 +22,13 @@ use half::f16;
 use pixels::{self, PixelFormat};
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
-use std::collections::hash_map::Entry;
-use std::iter;
-use std::mem;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use surfman::{self, Adapter, Context, ContextAttributeFlags, ContextAttributes, Device};
-use surfman::{GLVersion, Surface, SurfaceType};
+use surfman::GLVersion;
+use surfman::SurfaceType;
+use swap_chains::SwapChains;
 use webrender_traits::{WebrenderExternalImageRegistry, WebrenderImageHandlerType};
 
 struct GLContextData {
@@ -38,11 +36,6 @@ struct GLContextData {
     gl: Rc<dyn Gl>,
     state: GLState,
     attributes: GLContextAttributes,
-    // Each WebGL context has a collection of swap chains, one of which is attached
-    // (that is, its surface is the current surface of the context).
-    attached: SwapChainId,
-    // The other swap chains are unattached, and their surfaces are not the current surface of the context.
-    unattached: FnvHashMap<SwapChainId, Surface>,
 }
 
 pub struct GLState {
@@ -93,8 +86,8 @@ pub(crate) struct WebGLThread {
     receiver: WebGLReceiver<WebGLMsg>,
     /// The receiver that should be used to send WebGL messages for processing.
     sender: WebGLSender<WebGLMsg>,
-    /// The front buffer for each swap chain ID.
-    swap_chains: SwapChains,
+    /// The swap chains used by webrender
+    webrender_swap_chains: SwapChains<WebGLContextId>,
     ///
     api_type: gl::GlType,
 }
@@ -112,7 +105,7 @@ pub(crate) struct WebGLThreadInit {
     pub external_images: Arc<Mutex<WebrenderExternalImageRegistry>>,
     pub sender: WebGLSender<WebGLMsg>,
     pub receiver: WebGLReceiver<WebGLMsg>,
-    pub swap_chains: SwapChains,
+    pub webrender_swap_chains: SwapChains<WebGLContextId>,
     pub adapter: Adapter,
     pub api_type: gl::GlType,
 }
@@ -157,7 +150,7 @@ impl WebGLThread {
             external_images,
             sender,
             receiver,
-            swap_chains,
+            webrender_swap_chains,
             adapter,
             api_type,
         }: WebGLThreadInit,
@@ -173,7 +166,7 @@ impl WebGLThread {
             external_images,
             sender,
             receiver,
-            swap_chains,
+            webrender_swap_chains,
             api_type,
         }
     }
@@ -302,7 +295,9 @@ impl WebGLThread {
                                                     context_id,
                                                     &mut self.contexts,
                                                     &mut self.bound_context_id);
+
         if let Some(data) = data {
+            println!("WebGLImpl::apply({:?} in {:?})", command, context_id);
             WebGLImpl::apply(&self.device,
                              &data.ctx,
                              &*data.gl,
@@ -343,7 +338,7 @@ impl WebGLThread {
         size: Size2D<u32>,
         attributes: GLContextAttributes,
     ) -> Result<(WebGLContextId, webgl::GLLimits), String> {
-        println!("WebGLThread::create_webgl_context()");
+        println!("WebGLThread::create_webgl_context({:?})", size);
 
         // Creating a new GLContext may make the current bound context_id dirty.
         // Clear it to ensure that  make_current() is called in subsequent commands.
@@ -360,7 +355,7 @@ impl WebGLThread {
 
         let surface_type = SurfaceType::Generic { size: size.to_i32() };
 
-        let ctx = self.device
+        let mut ctx = self.device
                       .create_context(&context_descriptor, &surface_type)
                       .expect("Failed to create the GL context!");
 
@@ -371,6 +366,11 @@ impl WebGLThread {
                 .next_id(WebrenderImageHandlerType::WebGL)
                 .0,
         );
+
+        self.webrender_swap_chains.create_attached_swap_chain(id, &mut self.device, &mut ctx)
+	    .expect("Failed to create the swap chain");
+
+        println!("Created webgl context {:?}/{:?}", id,  ctx.id());
 
         let gl = match self.api_type {
             gl::GlType::Gl => unsafe {
@@ -396,9 +396,7 @@ impl WebGLThread {
         let texture_target = current_wr_texture_target(&self.device);
 
         let state = Default::default();
-        let attached = SwapChainId::Context(id);
-        let unattached = Default::default();
-        self.contexts.insert(id, GLContextData { ctx, gl, state, attributes, attached, unattached });
+        self.contexts.insert(id, GLContextData { ctx, gl, state, attributes });
 
         let image_key = Self::create_wr_external_image(&self.webrender_api,
                                                        size.to_i32(),
@@ -432,16 +430,10 @@ impl WebGLThread {
         let framebuffer_rebinding_info =
             FramebufferRebindingInfo::detect(&self.device, &data.ctx, &*data.gl);
 
-        // Throw out all buffers.
-        let swap_id = SwapChainId::Context(context_id);
-        let context_descriptor = self.device.context_descriptor(&data.ctx);
-        let surface_type = SurfaceType::Generic { size: size.to_i32() };
-        let new_surface = self.device.create_surface(&data.ctx, &surface_type).unwrap();
-        let old_surface = match data.unattached.get_mut(&swap_id) {
-            Some(surface) => mem::replace(surface, new_surface),
-            None => self.device.replace_context_surface(&mut data.ctx, new_surface).unwrap(),
-        };
-        self.device.destroy_surface(&mut data.ctx, old_surface).unwrap();
+        // Resize the swap chains
+        if let Some(swap_chain) = self.webrender_swap_chains.get(context_id) {
+            swap_chain.resize(&mut self.device, &mut data.ctx, size.to_i32()).expect("Failed to resize swap chain");
+        }
 
         // Reset framebuffer bindings as appropriate.
         framebuffer_rebinding_info.apply(&self.device, &data.ctx, &*data.gl);
@@ -450,6 +442,7 @@ impl WebGLThread {
         // Readback mode already updates the image every frame to send the raw pixels.
         let info = self.cached_context_info.get_mut(&context_id).unwrap();
         if let Some(image_key) = info.image_key {
+            let context_descriptor = self.device.context_descriptor(&data.ctx);
             let has_alpha = self.device
                                 .context_descriptor_attributes(&context_descriptor)
                                 .flags
@@ -490,25 +483,8 @@ impl WebGLThread {
             None => return,
         };
 
-        // Destroy all the surfaces
-        let swap_ids = iter::once(data.attached)
-            .chain(data.unattached.keys().cloned());
-        for swap_id in swap_ids {
-            if let Some(swap_chain) = self.swap_chains.lock().remove(&swap_id) {
-                match swap_chain.front_surface {
-                    FrontSurface::None | FrontSurface::CompositionInProgress => {}
-                    FrontSurface::Ready(surface) | FrontSurface::Pending(surface) => {
-                        self.device.destroy_surface(&mut data.ctx, surface).unwrap();
-                    }
-                }
-                for surface in swap_chain.free_surfaces {
-                    self.device.destroy_surface(&mut data.ctx, surface).unwrap();
-                }
-            }
-        }
-        for (_, surface) in data.unattached {
-            self.device.destroy_surface(&mut data.ctx, surface).unwrap();
-        }
+        // Destroy the swap chains
+        self.webrender_swap_chains.destroy(context_id, &mut self.device, &mut data.ctx);
 
         // Destroy the context
         self.device.destroy_context(&mut data.ctx).unwrap();
@@ -522,7 +498,7 @@ impl WebGLThread {
                            completed_sender: WebGLSender<()>) {
         println!("handle_swap_buffers()");
         for swap_id in swap_ids {
-            let context_id = swap_id.context_id();
+	    let context_id = swap_id.context_id();
 
             let data = Self::make_current_if_needed_mut(
                 &self.device,
@@ -536,79 +512,9 @@ impl WebGLThread {
             let framebuffer_rebinding_info =
                 FramebufferRebindingInfo::detect(&self.device, &data.ctx, &*data.gl);
 
-            let mut surfaces_to_destroy = vec![];
-            let size;
-            {
-                let mut swap_chains = self.swap_chains.lock();
-                size = self.device.context_surface_size(&data.ctx).unwrap();
 
-                // Fetch a new back buffer.
-                let mut new_back_buffer = None;
-                if let Some(ref mut swap_chain) = swap_chains.get_mut(&swap_id) {
-                    while let Some(back_buffer) = swap_chain.free_surfaces.pop() {
-                        if back_buffer.size() == size {
-                            new_back_buffer = Some(back_buffer);
-                            break;
-                        }
-                        surfaces_to_destroy.push(back_buffer);
-                    }
-                }
-                let new_back_buffer = match new_back_buffer {
-                    Some(new_back_buffer) => new_back_buffer,
-                    None => {
-                        let surface_type = SurfaceType::Generic { size };
-                        self.device
-                            .create_surface(&data.ctx, &surface_type)
-                            .expect("Failed to create a new back buffer!")
-                    }
-                };
-
-                println!("... new back buffer will become {:?}", new_back_buffer.id());
-
-                // Swap the buffers.
-                let new_front_buffer = self.device
-                                        .replace_context_surface(&mut data.ctx, new_back_buffer)
-                                        .expect("Where's the new front buffer?");
-                println!("... front buffer is now {:?}", new_front_buffer.id());
-
-                // Hand the new front buffer to the compositor.
-                match swap_chains.entry(swap_id) {
-                    Entry::Occupied(mut occupied_entry) => {
-                        let mut swap_chain = occupied_entry.get_mut();
-                        match mem::replace(&mut swap_chain.front_surface, FrontSurface::None) {
-                            FrontSurface::None => {
-                                swap_chain.front_surface = FrontSurface::Ready(new_front_buffer);
-                            }
-                            FrontSurface::Ready(old_front_buffer) => {
-                                swap_chain.front_surface = FrontSurface::Ready(new_front_buffer);
-                                swap_chain.free_surfaces.push(old_front_buffer);
-                            }
-                            FrontSurface::CompositionInProgress => {
-                                swap_chain.front_surface = FrontSurface::Pending(new_front_buffer);
-                            }
-                            FrontSurface::Pending(old_front_buffer) => {
-                                println!("*** replacing pending front buffer, compositor too \
-                                          slow?");
-                                swap_chain.front_surface = FrontSurface::Ready(new_front_buffer);
-                                swap_chain.free_surfaces.push(old_front_buffer);
-                            }
-                        }
-                    }
-                    Entry::Vacant(vacant_entry) => {
-                        vacant_entry.insert(SwapChain {
-                            front_surface: FrontSurface::Ready(new_front_buffer),
-                            free_surfaces: vec![],
-                        });
-                    }
-                }
-            }
-
-            if surfaces_to_destroy.len() > 0 {
-                println!("*** destroying {} surface(s)", surfaces_to_destroy.len());
-            }
-            for surface in surfaces_to_destroy {
-                self.device.destroy_surface(&mut data.ctx, surface).unwrap();
-            }
+            let swap_chain = self.webrender_swap_chains.get(context_id).expect("Where's the swap chain?");
+            swap_chain.swap_buffers(&mut self.device, &mut data.ctx).unwrap();
 
             // Rebind framebuffers as appropriate.
             framebuffer_rebinding_info.apply(&self.device, &data.ctx, &*data.gl);
@@ -1825,7 +1731,7 @@ impl WebGLImpl {
                         device: &Device) {
         let id = match request {
             WebGLFramebufferBindingRequest::Explicit(id) => id.get(),
-            WebGLFramebufferBindingRequest::Default => {
+             WebGLFramebufferBindingRequest::Default => {
                 device.context_surface_framebuffer_object(ctx)
                       .expect("No surface attached!")
             },
@@ -2267,7 +2173,7 @@ impl FramebufferRebindingInfo {
             gl.get_integer_v(gl::READ_FRAMEBUFFER_BINDING, &mut read_framebuffer);
             gl.get_integer_v(gl::DRAW_FRAMEBUFFER_BINDING, &mut draw_framebuffer);
 
-            let mut context_surface_framebuffer = device.context_surface_framebuffer_object(context)
+            let context_surface_framebuffer = device.context_surface_framebuffer_object(context)
                                                         .unwrap();
 
             let mut flags = FramebufferRebindingFlags::empty();
