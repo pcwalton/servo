@@ -201,7 +201,7 @@ impl WebGLTexture {
             let currently_bound_framebuffer =
                 self.upcast::<WebGLObject>().context().bound_framebuffer();
             if let Some(fb) = currently_bound_framebuffer {
-                fb.detach_texture(self);
+                let _ = fb.detach_texture(self);
             }
 
             let cmd = WebGLCommand::DeleteTexture(self.id);

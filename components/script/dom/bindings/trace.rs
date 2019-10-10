@@ -48,6 +48,7 @@ use canvas_traits::canvas::{CompositionOrBlending, LineCapStyle, LineJoinStyle, 
 use canvas_traits::webgl::{ActiveAttribInfo, ActiveUniformInfo, GLLimits, GlType, TexDataType};
 use canvas_traits::webgl::{TexFormat, WebGLBufferId, WebGLChan, WebGLContextId, WebGLError};
 use canvas_traits::webgl::{WebGLFramebufferId, WebGLMsgSender, WebGLPipeline, WebGLProgramId};
+use canvas_traits::webgl::{WebGLOpaqueFramebufferId, WebGLTransparentFramebufferId};
 use canvas_traits::webgl::{WebGLReceiver, WebGLRenderbufferId, WebGLSLVersion, WebGLSender};
 use canvas_traits::webgl::{WebGLShaderId, WebGLTextureId, WebGLVersion, WebGLVertexArrayId};
 use crossbeam_channel::{Receiver, Sender};
@@ -139,6 +140,7 @@ use time::{Duration, Timespec};
 use uuid::Uuid;
 use webrender_api::{DocumentId, ImageKey, RenderApiSender};
 use webvr_traits::{WebVRGamepadData, WebVRGamepadHand, WebVRGamepadState};
+use webxr_api::SwapChainId as WebXRSwapChainId;
 
 /// A trait to allow tracing (only) DOM objects.
 pub unsafe trait JSTraceable {
@@ -471,6 +473,8 @@ unsafe_no_jsmanaged_fields!(ImageKey);
 unsafe_no_jsmanaged_fields!(WebGLBufferId);
 unsafe_no_jsmanaged_fields!(WebGLChan);
 unsafe_no_jsmanaged_fields!(WebGLFramebufferId);
+unsafe_no_jsmanaged_fields!(WebGLOpaqueFramebufferId);
+unsafe_no_jsmanaged_fields!(WebGLTransparentFramebufferId);
 unsafe_no_jsmanaged_fields!(WebGLMsgSender);
 unsafe_no_jsmanaged_fields!(WebGLPipeline);
 unsafe_no_jsmanaged_fields!(WebGLProgramId);
@@ -480,6 +484,7 @@ unsafe_no_jsmanaged_fields!(WebGLTextureId);
 unsafe_no_jsmanaged_fields!(WebGLVertexArrayId);
 unsafe_no_jsmanaged_fields!(WebGLVersion);
 unsafe_no_jsmanaged_fields!(WebGLSLVersion);
+unsafe_no_jsmanaged_fields!(WebXRSwapChainId);
 unsafe_no_jsmanaged_fields!(MediaList);
 unsafe_no_jsmanaged_fields!(WebVRGamepadData, WebVRGamepadState, WebVRGamepadHand);
 unsafe_no_jsmanaged_fields!(

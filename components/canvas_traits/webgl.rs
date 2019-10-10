@@ -14,6 +14,7 @@ use std::num::NonZeroU32;
 use std::ops::Deref;
 use webrender_api::{DocumentId, ImageKey, PipelineId};
 use webvr_traits::WebVRPoseInformation;
+use webxr_api::SwapChainId as WebXRSwapChainId;
 
 /// Helper function that creates a WebGL channel (WebGLSender, WebGLReceiver) to be used in WebGLCommands.
 pub use crate::webgl_channel::webgl_channel;
@@ -93,6 +94,8 @@ pub enum WebGLMsg {
     WebVRCommand(WebGLContextId, WebVRCommand),
     /// Commands used for the DOMToTexture feature.
     DOMToTextureCommand(DOMToTextureCommand),
+    /// Creates a new opaque framebuffer for WebXR.
+    CreateWebXRSwapChain(WebGLContextId, Size2D<i32>, WebGLSender<Option<WebXRSwapChainId>>),
     /// Performs a buffer swap.
     SwapBuffers(Vec<SwapChainId>, WebGLSender<()>),
     /// Frees all resources and closes the thread.
@@ -118,6 +121,7 @@ pub struct WebGLCreateContextResult {
     pub api_type: GlType,
     /// The WebRender image key.
     pub image_key: ImageKey
+
 }
 
 /// Defines the WebGL version
@@ -190,6 +194,27 @@ impl WebGLMsgSender {
         self.sender.send(WebGLMsg::RemoveContext(self.ctx_id))
     }
 
+    #[inline]
+    pub fn send_create_webxr_swap_chain(
+        &self,
+        size: Size2D<i32>,
+        sender: WebGLSender<Option<WebXRSwapChainId>>,
+    ) -> WebGLSendResult {
+        self.sender
+            .send(WebGLMsg::CreateWebXRSwapChain(self.ctx_id, size, sender))
+    }
+
+    #[inline]
+    pub fn send_swap_buffers(&self, id: Option<WebGLOpaqueFramebufferId>) -> WebGLSendResult {
+        let swap_id = id
+	    .map(|id| SwapChainId::Framebuffer(self.ctx_id, id))
+	    .unwrap_or_else(|| SwapChainId::Context(self.ctx_id));
+	let (sender, receiver) = webgl_channel()?;
+        self.sender.send(WebGLMsg::SwapBuffers(vec![swap_id], sender))?;
+	receiver.recv()?;
+	Ok(())
+    }
+
     pub fn send_dom_to_texture(&self, command: DOMToTextureCommand) -> WebGLSendResult {
         self.sender.send(WebGLMsg::DOMToTextureCommand(command))
     }
@@ -253,7 +278,7 @@ pub enum WebGLCommand {
     CopyTexImage2D(u32, i32, u32, i32, i32, i32, i32, i32),
     CopyTexSubImage2D(u32, i32, i32, i32, i32, i32, i32, i32),
     CreateBuffer(WebGLSender<Option<WebGLBufferId>>),
-    CreateFramebuffer(WebGLSender<Option<WebGLFramebufferId>>),
+    CreateFramebuffer(WebGLSender<Option<WebGLTransparentFramebufferId>>),
     CreateRenderbuffer(WebGLSender<Option<WebGLRenderbufferId>>),
     CreateTexture(WebGLSender<Option<WebGLTextureId>>),
     CreateProgram(WebGLSender<Option<WebGLProgramId>>),
@@ -504,9 +529,9 @@ macro_rules! define_resource_id {
 }
 
 define_resource_id!(WebGLBufferId);
-define_resource_id!(WebGLFramebufferId);
 define_resource_id!(WebGLRenderbufferId);
 define_resource_id!(WebGLTextureId);
+define_resource_id!(WebGLTransparentFramebufferId);
 define_resource_id!(WebGLProgramId);
 define_resource_id!(WebGLShaderId);
 define_resource_id!(WebGLVertexArrayId);
@@ -519,13 +544,14 @@ pub struct WebGLContextId(pub u64);
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub enum SwapChainId {
     Context(WebGLContextId),
-    // TODO: support opaque framebuffers
+    Framebuffer(WebGLContextId, WebGLOpaqueFramebufferId),
 }
 
 impl SwapChainId {
     pub fn context_id(&self) -> WebGLContextId {
         match *self {
 	    SwapChainId::Context(id) => id,
+	    SwapChainId::Framebuffer(id, _) => id,
 	}
     }
 }
@@ -538,6 +564,18 @@ pub enum WebGLError {
     InvalidValue,
     OutOfMemory,
     ContextLost,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, MallocSizeOf, PartialEq, Serialize)]
+pub enum WebGLOpaqueFramebufferId {
+    // At the moment the only source of opaque framebuffers is webxr
+    WebXR(#[ignore_malloc_size_of = "ids don't malloc"] WebXRSwapChainId),
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, MallocSizeOf, PartialEq, Serialize)]
+pub enum WebGLFramebufferId {
+    Transparent(WebGLTransparentFramebufferId),
+    Opaque(WebGLOpaqueFramebufferId),
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
