@@ -5,22 +5,25 @@
 use crate::webgl_thread::{WebGLThread, WebGLThreadInit};
 use canvas_traits::webgl::{WebGLContextId, WebGLMsg, WebGLSender, WebGLThreads};
 use canvas_traits::webgl::{WebVRRenderHandler, webgl_channel};
+use canvas_traits::webgl::WebGLOpaqueFramebufferId;
 use euclid::default::Size2D;
 use fnv::FnvHashMap;
 use gleam::gl;
 use servo_config::pref;
 use std::cell::RefCell;
+use std::collections::hash_map::Entry;
 use std::default::Default;
+use std::num::NonZeroU32;
 use std::rc::Rc;
-use std::sync::{Arc, Mutex};
-use surfman::{self, Context, Device, SurfaceTexture};
+use std::sync::{Arc, Mutex, MutexGuard};
 use swap_chains::SwapChains;
+use surfman::{self, Adapter, Context, ContextAttributes, Device, Surface, SurfaceTexture};
 use webrender_traits::{WebrenderExternalImageApi, WebrenderExternalImageRegistry};
-use webxr_api::WebGLExternalImageApi;
+use webxr_api::SwapChainId as WebXRSwapChainId;
 
 pub struct WebGLComm {
     pub webgl_threads: WebGLThreads,
-    pub webxr_handler: Box<dyn webxr_api::WebGLExternalImageApi>,
+    pub webxr_swap_chains: SwapChains<WebXRSwapChainId>,
     pub image_handler: Box<dyn WebrenderExternalImageApi>,
     pub output_handler: Option<Box<dyn webrender::OutputImageHandler>>,
 }
@@ -39,6 +42,7 @@ impl WebGLComm {
         println!("WebGLThreads::new()");
         let (sender, receiver) = webgl_channel::<WebGLMsg>().unwrap();
         let webrender_swap_chains = SwapChains::new();
+        let webxr_swap_chains = SwapChains::new();
 
         // This implementation creates a single `WebGLThread` for all the pipelines.
         let init = WebGLThreadInit {
@@ -48,6 +52,7 @@ impl WebGLComm {
             sender: sender.clone(),
             receiver,
             webrender_swap_chains: webrender_swap_chains.clone(),
+            webxr_swap_chains: webxr_swap_chains.clone(),
             adapter: device.adapter(),
             api_type,
         };
@@ -69,28 +74,10 @@ impl WebGLComm {
 
         WebGLComm {
             webgl_threads: WebGLThreads(sender),
-            webxr_handler: SendableWebGLExternalImages.clone_box(),
+            webxr_swap_chains,
             image_handler: Box::new(external),
             output_handler: output_handler.map(|b| b as Box<_>),
         }
-    }
-}
-
-/// Bridge between the webxr_api::ExternalImage callbacks and the WebGLThreads.
-struct SendableWebGLExternalImages;
-
-impl webxr_api::WebGLExternalImageApi for SendableWebGLExternalImages {
-    fn lock(&self, _id: usize) -> Option<gl::GLsync> {
-        // TODO(pcwalton)
-        None
-    }
-
-    fn unlock(&self, _id: usize) {
-        // TODO(pcwalton)
-    }
-
-    fn clone_box(&self) -> Box<dyn webxr_api::WebGLExternalImageApi> {
-        Box::new(SendableWebGLExternalImages)
     }
 }
 

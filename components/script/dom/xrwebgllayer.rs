@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+use canvas_traits::webgl::WebGLFramebufferId;
 use crate::dom::bindings::codegen::Bindings::XRViewBinding::{XREye, XRViewMethods};
 use crate::dom::bindings::codegen::Bindings::XRWebGLLayerBinding;
 use crate::dom::bindings::codegen::Bindings::XRWebGLLayerBinding::XRWebGLLayerInit;
@@ -23,6 +24,7 @@ use crate::dom::xrviewport::XRViewport;
 use dom_struct::dom_struct;
 use js::rust::CustomAutoRooter;
 use std::convert::TryInto;
+use webxr_api::SwapChainId as WebXRSwapChainId;
 use webxr_api::Views;
 
 #[dom_struct]
@@ -32,6 +34,8 @@ pub struct XRWebGLLayer {
     depth: bool,
     stencil: bool,
     alpha: bool,
+    #[ignore_malloc_size_of = "ids don't malloc"]
+    swap_chain_id: WebXRSwapChainId,
     context: Dom<WebGLRenderingContext>,
     session: Dom<XRSession>,
     framebuffer: Dom<WebGLFramebuffer>,
@@ -39,6 +43,7 @@ pub struct XRWebGLLayer {
 
 impl XRWebGLLayer {
     pub fn new_inherited(
+        swap_chain_id: WebXRSwapChainId,
         session: &XRSession,
         context: &WebGLRenderingContext,
         init: &XRWebGLLayerInit,
@@ -50,6 +55,7 @@ impl XRWebGLLayer {
             depth: init.depth,
             stencil: init.stencil,
             alpha: init.alpha,
+            swap_chain_id,
             context: Dom::from_ref(context),
             session: Dom::from_ref(session),
             framebuffer: Dom::from_ref(framebuffer),
@@ -58,6 +64,7 @@ impl XRWebGLLayer {
 
     pub fn new(
         global: &GlobalScope,
+        swap_chain_id: WebXRSwapChainId,
         session: &XRSession,
         context: &WebGLRenderingContext,
         init: &XRWebGLLayerInit,
@@ -65,6 +72,7 @@ impl XRWebGLLayer {
     ) -> DomRoot<XRWebGLLayer> {
         reflect_dom_object(
             Box::new(XRWebGLLayer::new_inherited(
+                swap_chain_id,
                 session,
                 context,
                 init,
@@ -89,61 +97,29 @@ impl XRWebGLLayer {
         // XXXManishearth step 3: throw error if context is lost
         // XXXManishearth step 4: check XR compat flag for immersive sessions
 
-        let cx = global.get_cx();
-        let old_fbo = context.bound_framebuffer();
-        let old_texture = context
-            .textures()
-            .active_texture_for_image_target(TexImageTarget::Texture2D);
-
         // Step 8.2. "Initialize layer’s framebuffer to a new opaque framebuffer created with context."
-        let framebuffer = context.CreateFramebuffer().ok_or(Error::Operation)?;
+        let size = session.with_session(|session| session.recommended_framebuffer_resolution());
+        let (swap_chain_id, framebuffer) = WebGLFramebuffer::maybe_new_webxr(session, context, size).ok_or(Error::Operation)?;
 
         // Step 8.3. "Allocate and initialize resources compatible with session’s XR device,
         // including GPU accessible memory buffers, as required to support the compositing of layer."
 
-        // Create a new texture with size given by the session's recommended resolution
-        let texture = context.CreateTexture().ok_or(Error::Operation)?;
-        let resolution = session.with_session(|s| s.recommended_framebuffer_resolution());
-        let mut pixels = CustomAutoRooter::new(None);
-        context.BindTexture(constants::TEXTURE_2D, Some(&texture));
-        let sc = context.TexImage2D(
-            constants::TEXTURE_2D,
-            0,
-            constants::RGBA,
-            resolution.width,
-            resolution.height,
-            0,
-            constants::RGBA,
-            constants::UNSIGNED_BYTE,
-            pixels.root(*cx),
-        );
-
-        // Bind the new texture to the framebuffer
-        context.BindFramebuffer(constants::FRAMEBUFFER, Some(&framebuffer));
-        context.FramebufferTexture2D(
-            constants::FRAMEBUFFER,
-            constants::COLOR_ATTACHMENT0,
-            constants::TEXTURE_2D,
-            Some(&texture),
-            0,
-        );
-
-        // Restore the WebGL state while complaining about global mutable state
-        context.BindTexture(constants::TEXTURE_2D, old_texture.as_ref().map(|t| &**t));
-        context.BindFramebuffer(constants::FRAMEBUFFER, old_fbo.as_ref().map(|f| &**f));
-
         // Step 8.4: "If layer’s resources were unable to be created for any reason,
         // throw an OperationError and abort these steps."
-        sc.or(Err(Error::Operation))?;
 
         // Step 9. "Return layer."
         Ok(XRWebGLLayer::new(
             &global.global(),
+	    swap_chain_id,
             session,
             context,
             init,
             &framebuffer,
         ))
+    }
+
+    pub fn swap_chain_id(&self) -> WebXRSwapChainId {
+        self.swap_chain_id
     }
 
     pub fn session(&self) -> &XRSession {
@@ -152,6 +128,12 @@ impl XRWebGLLayer {
 
     pub fn framebuffer(&self) -> &WebGLFramebuffer {
         &self.framebuffer
+    }
+
+    pub fn swap_buffers(&self) {
+        if let WebGLFramebufferId::Opaque(id) = self.framebuffer.id() {
+            self.context.swap_buffers(Some(id));
+        }
     }
 }
 

@@ -10,6 +10,7 @@ use canvas_traits::webgl::{ProgramLinkInfo, TexDataType, TexFormat, WebGLBufferI
 use canvas_traits::webgl::{WebGLCommand, WebGLCommandBacktrace, WebGLContextId};
 use canvas_traits::webgl::{WebGLCreateContextResult, WebGLFramebufferBindingRequest};
 use canvas_traits::webgl::{WebGLFramebufferId, WebGLMsg, WebGLMsgSender, WebGLProgramId};
+use canvas_traits::webgl::{WebGLOpaqueFramebufferId, WebGLTransparentFramebufferId};
 use canvas_traits::webgl::{WebGLReceiver, WebGLRenderbufferId, WebGLSLVersion, WebGLSender};
 use canvas_traits::webgl::{WebGLShaderId, WebGLTextureId, WebGLVersion, WebGLVertexArrayId};
 use canvas_traits::webgl::{WebVRCommand, WebVRRenderHandler, YAxisTreatment};
@@ -22,13 +23,19 @@ use half::f16;
 use pixels::{self, PixelFormat};
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
+use std::collections::hash_map::Entry;
+use std::iter;
+use std::mem;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use surfman::{self, Adapter, Context, ContextAttributeFlags, ContextAttributes, Device};
 use surfman::GLVersion;
+use surfman::Surface;
 use surfman::SurfaceType;
 use swap_chains::SwapChains;
+use swap_chains::SwapChain;
+use webxr_api::SwapChainId as WebXRSwapChainId;
 use webrender_traits::{WebrenderExternalImageRegistry, WebrenderImageHandlerType};
 
 struct GLContextData {
@@ -88,6 +95,8 @@ pub(crate) struct WebGLThread {
     sender: WebGLSender<WebGLMsg>,
     /// The swap chains used by webrender
     webrender_swap_chains: SwapChains<WebGLContextId>,
+    /// The swap chains used by webxr
+    webxr_swap_chains: SwapChains<WebXRSwapChainId>,
     ///
     api_type: gl::GlType,
 }
@@ -106,6 +115,7 @@ pub(crate) struct WebGLThreadInit {
     pub sender: WebGLSender<WebGLMsg>,
     pub receiver: WebGLReceiver<WebGLMsg>,
     pub webrender_swap_chains: SwapChains<WebGLContextId>,
+    pub webxr_swap_chains: SwapChains<WebXRSwapChainId>,
     pub adapter: Adapter,
     pub api_type: gl::GlType,
 }
@@ -151,6 +161,7 @@ impl WebGLThread {
             sender,
             receiver,
             webrender_swap_chains,
+            webxr_swap_chains,
             adapter,
             api_type,
         }: WebGLThreadInit,
@@ -167,6 +178,7 @@ impl WebGLThread {
             sender,
             receiver,
             webrender_swap_chains,
+            webxr_swap_chains,
             api_type,
         }
     }
@@ -264,6 +276,9 @@ impl WebGLThread {
             WebGLMsg::WebVRCommand(ctx_id, command) => {
                 self.handle_webvr_command(ctx_id, command);
             },
+            WebGLMsg::CreateWebXRSwapChain(ctx_id, size, sender) => {
+                let _ = sender.send(self.create_webxr_swap_chain(ctx_id, size));
+            },
             WebGLMsg::SwapBuffers(swap_ids, sender) => {
                 self.handle_swap_buffers(swap_ids, sender);
             },
@@ -297,6 +312,20 @@ impl WebGLThread {
                                                     &mut self.bound_context_id);
 
         if let Some(data) = data {
+            // We have to handle framebuffer binding differently, because `apply`
+            // assumes that the currently attached surface is the right one for binding
+            // the framebuffer, and since it doesn't get passed the swap buffers
+            // it casn't do that itself. At some point we could refactor apply so
+            // it takes a self parameter, at which point that won't be necessary.
+            if let WebGLCommand::BindFramebuffer(_, request) = command {
+                println!("WebGLImpl::attach_surface({:?} in {:?})", command, context_id);
+                WebGLImpl::attach_surface(context_id,
+					  &self.webrender_swap_chains,
+					  &self.webxr_swap_chains,
+					  request,
+					  &mut data.ctx,
+					  &mut self.device);
+            }
             println!("WebGLImpl::apply({:?} in {:?})", command, context_id);
             WebGLImpl::apply(&self.device,
                              &data.ctx,
@@ -485,6 +514,7 @@ impl WebGLThread {
 
         // Destroy the swap chains
         self.webrender_swap_chains.destroy(context_id, &mut self.device, &mut data.ctx);
+        self.webxr_swap_chains.destroy_all(&mut self.device, &mut data.ctx);
 
         // Destroy the context
         self.device.destroy_context(&mut data.ctx).unwrap();
@@ -512,8 +542,11 @@ impl WebGLThread {
             let framebuffer_rebinding_info =
                 FramebufferRebindingInfo::detect(&self.device, &data.ctx, &*data.gl);
 
+            let swap_chain = match swap_id {
+                SwapChainId::Context(id) => self.webrender_swap_chains.get(id),
+                SwapChainId::Framebuffer(_, WebGLOpaqueFramebufferId::WebXR(id)) => self.webxr_swap_chains.get(id),
+            }.expect("Where's the swap chain?");
 
-            let swap_chain = self.webrender_swap_chains.get(context_id).expect("Where's the swap chain?");
             swap_chain.swap_buffers(&mut self.device, &mut data.ctx).unwrap();
 
             // Rebind framebuffers as appropriate.
@@ -526,6 +559,30 @@ impl WebGLThread {
         }
 
         completed_sender.send(()).unwrap();
+    }
+
+    /// Creates a new WebXR swap chain
+    #[allow(unsafe_code)]
+    fn create_webxr_swap_chain(
+        &mut self,
+        context_id: WebGLContextId,
+        size: Size2D<i32>,
+    ) -> Option<WebXRSwapChainId> {
+        println!("WebGLThread::create_webxr_swap_chain()");
+        let data = Self::make_current_if_needed_mut(
+            &self.device,
+            context_id,
+            &mut self.contexts,
+            &mut self.bound_context_id,
+        )?;
+        let id = WebXRSwapChainId::new();
+        self.webxr_swap_chains.create_detached_swap_chain(
+            id,
+            size,
+            &mut self.device,
+            &mut data.ctx,
+        ).ok()?;
+        Some(id)
     }
 
     fn handle_dom_to_texture(&mut self, command: DOMToTextureCommand) {
@@ -996,7 +1053,12 @@ impl WebGLImpl {
                 Self::create_shader(gl, shader_type, chan)
             },
             WebGLCommand::DeleteBuffer(id) => gl.delete_buffers(&[id.get()]),
-            WebGLCommand::DeleteFramebuffer(id) => gl.delete_framebuffers(&[id.get()]),
+            WebGLCommand::DeleteFramebuffer(WebGLFramebufferId::Transparent(id)) => {
+                gl.delete_framebuffers(&[id.get()])
+            },
+            WebGLCommand::DeleteFramebuffer(WebGLFramebufferId::Opaque(WebGLOpaqueFramebufferId::WebXR(id))) => {
+	        // TODO: deleting a WebXR framebuffer (which happens when the framebuffer is GCd)
+	    },
             WebGLCommand::DeleteRenderbuffer(id) => gl.delete_renderbuffers(&[id.get()]),
             WebGLCommand::DeleteTexture(id) => gl.delete_textures(&[id.get()]),
             WebGLCommand::DeleteProgram(id) => gl.delete_program(id.get()),
@@ -1658,12 +1720,12 @@ impl WebGLImpl {
     }
 
     #[allow(unsafe_code)]
-    fn create_framebuffer(gl: &dyn gl::Gl, chan: &WebGLSender<Option<WebGLFramebufferId>>) {
+    fn create_framebuffer(gl: &dyn gl::Gl, chan: &WebGLSender<Option<WebGLTransparentFramebufferId>>) {
         let framebuffer = gl.gen_framebuffers(1)[0];
         let framebuffer = if framebuffer == 0 {
             None
         } else {
-            Some(unsafe { WebGLFramebufferId::new(framebuffer) })
+            Some(unsafe { WebGLTransparentFramebufferId::new(framebuffer) })
         };
         chan.send(framebuffer).unwrap();
     }
@@ -1723,6 +1785,37 @@ impl WebGLImpl {
         chan.send(vao).unwrap();
     }
 
+    /// Updates the swap buffers if the context surface needs to be changed
+    fn attach_surface(context_id: WebGLContextId,
+                      webrender_swap_chains: &SwapChains<WebGLContextId>,
+                      webxr_swap_chains: &SwapChains<WebXRSwapChainId>,
+                      request: WebGLFramebufferBindingRequest,
+                      ctx: &mut Context,
+                      device: &mut Device) -> Option<()> {
+        let requested_framebuffer = match request {
+            WebGLFramebufferBindingRequest::Explicit(WebGLFramebufferId::Opaque(id)) => Some(id),
+            WebGLFramebufferBindingRequest::Explicit(WebGLFramebufferId::Transparent(_)) => None?,
+            WebGLFramebufferBindingRequest::Default => None,
+        };
+	let attached_framebuffer = webxr_swap_chains.iter(device, ctx)
+	    .filter_map(|(id, swap_chain)| if swap_chain.is_attached() { Some(id) } else { None })
+	    .map(WebGLOpaqueFramebufferId::WebXR)
+	    .next();
+        if requested_framebuffer == attached_framebuffer {
+            None?;
+        }
+        let requested_swap_chain = match requested_framebuffer {
+            Some(WebGLOpaqueFramebufferId::WebXR(id)) => webxr_swap_chains.get(id)?,
+            None => webrender_swap_chains.get(context_id)?,
+        };
+        let current_swap_chain = match attached_framebuffer {
+            Some(WebGLOpaqueFramebufferId::WebXR(id)) => webxr_swap_chains.get(id)?,
+            None => webrender_swap_chains.get(context_id)?,
+        };
+        requested_swap_chain.take_attachment_from(device, ctx, &current_swap_chain).unwrap();
+        Some(())
+    }
+
     #[inline]
     fn bind_framebuffer(gl: &dyn gl::Gl,
                         target: u32,
@@ -1730,8 +1823,9 @@ impl WebGLImpl {
                         ctx: &Context,
                         device: &Device) {
         let id = match request {
-            WebGLFramebufferBindingRequest::Explicit(id) => id.get(),
-             WebGLFramebufferBindingRequest::Default => {
+            WebGLFramebufferBindingRequest::Explicit(WebGLFramebufferId::Transparent(id)) => id.get(),
+            WebGLFramebufferBindingRequest::Explicit(WebGLFramebufferId::Opaque(_)) |
+            WebGLFramebufferBindingRequest::Default => {
                 device.context_surface_framebuffer_object(ctx)
                       .expect("No surface attached!")
             },

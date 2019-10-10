@@ -1000,7 +1000,7 @@ fn create_webgl_threads<W>(window: &W,
 
     let WebGLComm {
         webgl_threads,
-        webxr_handler,
+        webxr_swap_chains,
         image_handler,
         output_handler,
     } = WebGLComm::new(Rc::new(device),
@@ -1015,7 +1015,7 @@ fn create_webgl_threads<W>(window: &W,
     external_image_handlers.set_handler(image_handler, WebrenderImageHandlerType::WebGL);
 
     // Set webxr external image handler for WebGL textures
-    webxr_main_thread.set_webgl(webxr_handler);
+    webxr_main_thread.set_swap_chains(webxr_swap_chains);
 
     // Set DOM to texture handler, if enabled.
     if let Some(output_handler) = output_handler {

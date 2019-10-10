@@ -54,8 +54,8 @@ use backtrace::Backtrace;
 use canvas_traits::webgl::WebGLError::*;
 use canvas_traits::webgl::{
     webgl_channel, AlphaTreatment, DOMToTextureCommand, GLContextAttributes, GLLimits, GlType,
-    Parameter, TexDataType, TexFormat, TexParameter, WebGLChan, WebGLCommand,
-    WebGLCommandBacktrace, WebGLContextId, WebGLError,
+    Parameter, SwapChainId, TexDataType, TexFormat, TexParameter, WebGLChan, WebGLCommand,
+    WebGLCommandBacktrace, WebGLContextId, WebGLError, WebGLOpaqueFramebufferId,
     WebGLFramebufferBindingRequest, WebGLMsg, WebGLMsgSender, WebGLProgramId, WebGLResult,
     WebGLSLVersion, WebGLSendResult, WebGLSender, WebGLVersion, WebVRCommand, YAxisTreatment,
 };
@@ -81,6 +81,7 @@ use std::cmp;
 use std::ptr::{self, NonNull};
 use std::rc::Rc;
 use webrender_api::ImageKey;
+use webxr_api::SwapChainId as WebXRSwapChainId;
 
 // From the GLES 2.0.25 spec, page 85:
 //
@@ -341,6 +342,10 @@ impl WebGLRenderingContext {
         let _ = self
             .webgl_sender
             .send(command, capture_webgl_backtrace(self));
+    }
+
+    pub fn swap_buffers(&self, id: Option<WebGLOpaqueFramebufferId>) {
+        let _ = self.webgl_sender.send_swap_buffers(id);
     }
 
     #[inline]
@@ -2168,6 +2173,10 @@ impl WebGLRenderingContextMethods for WebGLRenderingContext {
     // https://www.khronos.org/registry/webgl/specs/latest/1.0/#5.14.6
     fn DeleteFramebuffer(&self, framebuffer: Option<&WebGLFramebuffer>) {
         if let Some(framebuffer) = framebuffer {
+            // https://immersive-web.github.io/webxr/#opaque-framebuffer
+            // Can opaque framebuffers be deleted?
+            // https://github.com/immersive-web/webxr/issues/855
+            handle_potential_webgl_error!(self, framebuffer.validate_transparent(), return);
             handle_potential_webgl_error!(self, self.validate_ownership(framebuffer), return);
             handle_object_deletion!(
                 self,
@@ -2178,7 +2187,7 @@ impl WebGLRenderingContextMethods for WebGLRenderingContext {
                     WebGLFramebufferBindingRequest::Default
                 ))
             );
-            framebuffer.delete(false)
+            framebuffer.delete(false);
         }
     }
 
@@ -2327,7 +2336,11 @@ impl WebGLRenderingContextMethods for WebGLRenderingContext {
         pname: u32,
     ) -> JSVal {
         // Check if currently bound framebuffer is non-zero as per spec.
-        if self.bound_framebuffer.get().is_none() {
+        if let Some(fb) = self.bound_framebuffer.get() {
+            // Opaque framebuffers cannot have their attachments inspected
+            // https://immersive-web.github.io/webxr/#opaque-framebuffer
+            handle_potential_webgl_error!(self, fb.validate_transparent(), return NullValue());
+        } else {
             self.webgl_error(InvalidOperation);
             return NullValue();
         }
@@ -2430,6 +2443,8 @@ impl WebGLRenderingContextMethods for WebGLRenderingContext {
 
     // https://www.khronos.org/registry/webgl/specs/latest/1.0/#5.14.7
     fn GetRenderbufferParameter(&self, _cx: SafeJSContext, target: u32, pname: u32) -> JSVal {
+        // We do not check to see if the renderbuffer came from an opaque framebuffer
+        // https://github.com/immersive-web/webxr/issues/862
         let target_matches = target == constants::RENDERBUFFER;
 
         let pname_matches = match pname {
@@ -4350,6 +4365,18 @@ impl WebGLMessageSender {
 
     pub fn send_vr(&self, command: WebVRCommand) -> WebGLSendResult {
         self.wake_after_send(|| self.sender.send_vr(command))
+    }
+
+    pub fn send_swap_buffers(&self, id: Option<WebGLOpaqueFramebufferId>) -> WebGLSendResult {
+        self.wake_after_send(|| self.sender.send_swap_buffers(id))
+    }
+
+    pub fn send_create_webxr_swap_chain(
+        &self,
+        size: Size2D<i32>,
+        sender: WebGLSender<Option<WebXRSwapChainId>>,
+    ) -> WebGLSendResult {
+        self.wake_after_send(|| self.sender.send_create_webxr_swap_chain(size, sender))
     }
 
     pub fn send_resize(
