@@ -387,6 +387,10 @@ impl WebGLThread {
         let mut ctx = self.device
                       .create_context(&context_descriptor, &surface_type)
                       .expect("Failed to create the GL context!");
+        // https://github.com/pcwalton/surfman/issues/7
+        self.device
+            .make_context_current(&ctx)
+            .expect("failed to make new context current");
 
         let id = WebGLContextId(
             self.external_images
