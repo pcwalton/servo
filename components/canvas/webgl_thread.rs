@@ -33,8 +33,8 @@ use surfman::{self, Adapter, Context, ContextAttributeFlags, ContextAttributes, 
 use surfman::GLVersion;
 use surfman::Surface;
 use surfman::SurfaceType;
-use swap_chains::SwapChains;
-use swap_chains::SwapChain;
+use surfman_chains::SwapChains;
+use surfman_chains::SwapChain;
 use webxr_api::SwapChainId as WebXRSwapChainId;
 use webrender_traits::{WebrenderExternalImageRegistry, WebrenderImageHandlerType};
 

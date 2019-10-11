@@ -16,7 +16,7 @@ use std::default::Default;
 use std::num::NonZeroU32;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex, MutexGuard};
-use swap_chains::SwapChains;
+use surfman_chains::SwapChains;
 use surfman::{self, Adapter, Context, ContextAttributes, Device, Surface, SurfaceTexture};
 use webrender_traits::{WebrenderExternalImageApi, WebrenderExternalImageRegistry};
 use webxr_api::SwapChainId as WebXRSwapChainId;
