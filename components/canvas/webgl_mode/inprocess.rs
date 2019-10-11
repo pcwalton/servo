@@ -103,6 +103,12 @@ impl WebGLExternalImages {
     }
 }
 
+impl Drop for WebGLExternalImages {
+    fn drop(&mut self) {
+        self.device.destroy_context(&mut *self.context.borrow_mut());
+    }
+}
+
 impl WebGLExternalImages {
     fn lock_swap_chain(&mut self, id: WebGLContextId) -> Option<(u32, Size2D<i32>)> {
         println!("... locking chain {:?}", id);
