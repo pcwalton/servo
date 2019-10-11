@@ -780,6 +780,18 @@
     <None Include="..\..\..\target\aarch64-pc-windows-msvc\debug\gstsdp-1.0-0.dll">
       <Filter>DebugARM64ServoDLLs</Filter>
     </None>
+    <None Include="..\..\..\target\debug\msvcp140.dll">
+      <Filter>DebugServoDLLs</Filter>
+    </None>
+    <None Include="..\..\..\target\debug\vcruntime140.dll">
+      <Filter>DebugServoDLLs</Filter>
+    </None>
+    <None Include="..\..\..\target\release\msvcp140.dll">
+      <Filter>ReleaseServoDLLs</Filter>
+    </None>
+    <None Include="..\..\..\target\release\vcruntime140.dll">
+      <Filter>ReleaseServoDLLs</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <Filter Include="Assets">
