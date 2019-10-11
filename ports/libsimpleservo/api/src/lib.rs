@@ -187,7 +187,7 @@ pub fn init(
     gl.clear(gl::COLOR_BUFFER_BIT);
     gl.finish();
 
-    let (device, mut surfman_context) = unsafe {                                                                                                            +        surfman::Device::from_current_context().expect("failed to create device")
+    let (device, mut surfman_context) = unsafe {
         surfman::Device::from_current_context().expect("failed to create device")
     };
     device.destroy_context(&mut surfman_context).unwrap();
