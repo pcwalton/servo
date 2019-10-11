@@ -437,11 +437,11 @@ dependencies = [
  "serde_bytes 0.10.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "servo_config 0.0.1",
  "surfman 0.23.0 (git+https://github.com/pcwalton/surfman)",
- "swap-chains 0.1.0",
+ "swap-chains 0.1.0 (git+https://github.com/asajeffrey/swap-chains)",
  "webrender 0.60.0 (git+https://github.com/servo/webrender)",
  "webrender_api 0.60.0 (git+https://github.com/servo/webrender)",
  "webrender_traits 0.0.1",
- "webxr-api 0.0.1",
+ "webxr-api 0.0.1 (git+https://github.com/asajeffrey/webxr?branch=surfman)",
 ]
 
 [[package]]
@@ -462,7 +462,7 @@ dependencies = [
  "typetag 0.1.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "webrender_api 0.60.0 (git+https://github.com/servo/webrender)",
  "webvr_traits 0.0.1",
- "webxr-api 0.0.1",
+ "webxr-api 0.0.1 (git+https://github.com/asajeffrey/webxr?branch=surfman)",
 ]
 
 [[package]]
@@ -675,7 +675,7 @@ dependencies = [
  "webrender_api 0.60.0 (git+https://github.com/servo/webrender)",
  "webvr 0.0.1",
  "webvr_traits 0.0.1",
- "webxr-api 0.0.1",
+ "webxr-api 0.0.1 (git+https://github.com/asajeffrey/webxr?branch=surfman)",
 ]
 
 [[package]]
@@ -718,7 +718,7 @@ dependencies = [
  "style_traits 0.0.1",
  "webrender_api 0.60.0 (git+https://github.com/servo/webrender)",
  "webvr_traits 0.0.1",
- "webxr-api 0.0.1",
+ "webxr-api 0.0.1 (git+https://github.com/asajeffrey/webxr?branch=surfman)",
 ]
 
 [[package]]
@@ -1152,7 +1152,7 @@ dependencies = [
  "servo_url 0.0.1",
  "style_traits 0.0.1",
  "webrender_api 0.60.0 (git+https://github.com/servo/webrender)",
- "webxr-api 0.0.1",
+ "webxr-api 0.0.1 (git+https://github.com/asajeffrey/webxr?branch=surfman)",
 ]
 
 [[package]]
@@ -2632,7 +2632,7 @@ dependencies = [
  "webrender_traits 0.0.1",
  "webvr 0.0.1",
  "webvr_traits 0.0.1",
- "webxr-api 0.0.1",
+ "webxr-api 0.0.1 (git+https://github.com/asajeffrey/webxr?branch=surfman)",
 ]
 
 [[package]]
@@ -4011,7 +4011,7 @@ dependencies = [
  "uuid 0.7.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "webrender_api 0.60.0 (git+https://github.com/servo/webrender)",
  "webvr_traits 0.0.1",
- "webxr-api 0.0.1",
+ "webxr-api 0.0.1 (git+https://github.com/asajeffrey/webxr?branch=surfman)",
  "xml5ever 0.14.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
@@ -4103,7 +4103,7 @@ dependencies = [
  "url 1.7.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "webrender_api 0.60.0 (git+https://github.com/servo/webrender)",
  "webvr_traits 0.0.1",
- "webxr-api 0.0.1",
+ "webxr-api 0.0.1 (git+https://github.com/asajeffrey/webxr?branch=surfman)",
 ]
 
 [[package]]
@@ -4201,8 +4201,8 @@ dependencies = [
  "sig 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "surfman 0.23.0 (git+https://github.com/pcwalton/surfman)",
  "tinyfiledialogs 3.3.5 (registry+https://github.com/rust-lang/crates.io-index)",
- "webxr 0.0.1",
- "webxr-api 0.0.1",
+ "webxr 0.0.1 (git+https://github.com/asajeffrey/webxr?branch=surfman)",
+ "webxr-api 0.0.1 (git+https://github.com/asajeffrey/webxr?branch=surfman)",
  "winapi 0.3.7 (registry+https://github.com/rust-lang/crates.io-index)",
  "winres 0.1.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "x11 2.17.3 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -4870,6 +4870,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 [[package]]
 name = "swap-chains"
 version = "0.1.0"
+source = "git+https://github.com/asajeffrey/swap-chains#be5b014700377abbd9063e966ebdfa63a0632bce"
 dependencies = [
  "euclid 0.20.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "fnv 1.0.6 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -5640,6 +5641,7 @@ dependencies = [
 [[package]]
 name = "webxr"
 version = "0.0.1"
+source = "git+https://github.com/asajeffrey/webxr?branch=surfman#5c7a3f84962622056144a1eba3f3e8b49c7d68ea"
 dependencies = [
  "bindgen 0.51.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "euclid 0.20.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -5649,19 +5651,20 @@ dependencies = [
  "log 0.4.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde 1.0.88 (registry+https://github.com/rust-lang/crates.io-index)",
  "surfman 0.23.0 (git+https://github.com/pcwalton/surfman)",
- "webxr-api 0.0.1",
+ "webxr-api 0.0.1 (git+https://github.com/asajeffrey/webxr?branch=surfman)",
 ]
 
 [[package]]
 name = "webxr-api"
 version = "0.0.1"
+source = "git+https://github.com/asajeffrey/webxr?branch=surfman#5c7a3f84962622056144a1eba3f3e8b49c7d68ea"
 dependencies = [
  "euclid 0.20.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "ipc-channel 0.11.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.4.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde 1.0.88 (registry+https://github.com/rust-lang/crates.io-index)",
  "surfman 0.23.0 (git+https://github.com/pcwalton/surfman)",
- "swap-chains 0.1.0",
+ "swap-chains 0.1.0 (git+https://github.com/asajeffrey/swap-chains)",
 ]
 
 [[package]]
@@ -6249,6 +6252,7 @@ dependencies = [
 "checksum surfman 0.23.0 (git+https://github.com/pcwalton/surfman)" = "<none>"
 "checksum svg_fmt 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)" = "c666f0fed8e1e20e057af770af9077d72f3d5a33157b8537c1475dd8ffd6d32b"
 "checksum sw-composite 0.5.10 (registry+https://github.com/rust-lang/crates.io-index)" = "5eba1755094da86216f071f7a28b0453345c3e6e558ea2fd7821c55eef8fb9b2"
+"checksum swap-chains 0.1.0 (git+https://github.com/asajeffrey/swap-chains)" = "<none>"
 "checksum swapper 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)" = "e454d048db5527d000bfddb77bd072bbf3a1e2ae785f16d9bd116e07c2ab45eb"
 "checksum syn 0.15.39 (registry+https://github.com/rust-lang/crates.io-index)" = "b4d960b829a55e56db167e861ddb43602c003c7be0bee1d345021703fac2fb7c"
 "checksum synstructure 0.10.1 (registry+https://github.com/rust-lang/crates.io-index)" = "73687139bf99285483c96ac0add482c3776528beac1d97d444f6e91f203a2015"
@@ -6319,6 +6323,8 @@ dependencies = [
 "checksum webrender 0.60.0 (git+https://github.com/servo/webrender)" = "<none>"
 "checksum webrender_api 0.60.0 (git+https://github.com/servo/webrender)" = "<none>"
 "checksum webrender_build 0.0.1 (git+https://github.com/servo/webrender)" = "<none>"
+"checksum webxr 0.0.1 (git+https://github.com/asajeffrey/webxr?branch=surfman)" = "<none>"
+"checksum webxr-api 0.0.1 (git+https://github.com/asajeffrey/webxr?branch=surfman)" = "<none>"
 "checksum weedle 0.10.0 (registry+https://github.com/rust-lang/crates.io-index)" = "3bb43f70885151e629e2a19ce9e50bd730fd436cfd4b666894c9ce4de9141164"
 "checksum which 2.0.1 (registry+https://github.com/rust-lang/crates.io-index)" = "b57acb10231b9493c8472b20cb57317d0679a49e0bdbee44b3b803a6473af164"
 "checksum which 3.0.0 (registry+https://github.com/rust-lang/crates.io-index)" = "240a31163872f7e8e49f35b42b58485e35355b07eb009d9f3686733541339a69"
