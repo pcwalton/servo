@@ -57,9 +57,6 @@ pub struct FloatContext {
     pub containing_block_position: Length,
     /// The distance in the block direction from the top content edge of the block formatting
     /// context to the position where the next block will be placed.
-    ///
-    /// This is unused by the float context itself, but block layout uses this value to adjust
-    /// `containing_block_position` appropriately when moving around the tree.
     pub current_block_position: Length,
 }
 
@@ -109,15 +106,36 @@ impl FloatContext {
         }
     }
 
+    pub fn clearance_here(&self, side: ClearSide) -> Length {
+        if side == ClearSide::None {
+            return Length::zero();
+        }
+
+        let mut band = self.bands.find(self.current_block_position).unwrap();
+        while !band.is_clear(side) {
+            band = self.bands.find_next(band.top).unwrap();
+        }
+        return band.top - self.current_block_position;
+    }
+
+    pub fn nonfloat_fits_here(&self, nonfloat: &NonfloatPlacementInfo) -> bool {
+        let band = self.bands.find(self.containing_block_position).unwrap();
+        band.nonfloat_fits(nonfloat, self.left_wall, self.right_wall)
+    }
+
+    pub fn used_float_space_here(&self) -> (Length, Length) {
+        let band = self.bands.find(self.containing_block_position).unwrap();
+        let left = band.left_edge(self.left_wall) - self.left_wall;
+        let right = self.right_wall - band.right_edge(self.right_wall);
+        (left, right)
+    }
+
     /// Determines where a float with the given placement would go, but leaves the float context
     /// unmodified. Returns the start corner of its margin box.
-    ///
-    /// This should be used for placing inline elements and block formatting contexts so that they
-    /// don't collide with floats.
-    pub fn place_object(&self, object: &PlacementInfo) -> Vec2<Length> {
+    pub fn place_float(&self, float: &FloatPlacementInfo) -> Vec2<Length> {
         // Find the first band this float fits in.
         let mut first_band = self.bands.find(self.ceiling).unwrap();
-        while !first_band.object_fits(&object, self.left_wall, self.right_wall) {
+        while !first_band.float_fits(&float, self.left_wall, self.right_wall) {
             let next_band = self.bands.find_next(first_band.top).unwrap();
             if next_band.top.px().is_infinite() {
                 break;
@@ -125,25 +143,25 @@ impl FloatContext {
             first_band = next_band;
         }
 
-        // The object fits perfectly here. Place it.
-        let global_offset = match object.side {
+        // The float fits perfectly here. Place it.
+        let global_offset = match float.side {
             FloatSide::Left => {
-                let left_object_edge = match first_band.left {
+                let left_float_edge = match first_band.left {
                     Some(band_left) => band_left.max(self.left_wall),
                     None => self.left_wall,
                 };
                 Vec2 {
-                    inline: left_object_edge,
+                    inline: left_float_edge,
                     block: first_band.top.max(self.ceiling),
                 }
             },
             FloatSide::Right => {
-                let right_object_edge = match first_band.right {
+                let right_float_edge = match first_band.right {
                     Some(band_right) => band_right.min(self.right_wall),
                     None => self.right_wall,
                 };
                 Vec2 {
-                    inline: right_object_edge - object.size.inline,
+                    inline: right_float_edge - float.size.inline,
                     block: first_band.top.max(self.ceiling),
                 }
             },
@@ -153,9 +171,9 @@ impl FloatContext {
     }
 
     /// Places a new float and adds it to the list. Returns the start corner of its margin box.
-    pub fn add_float(&mut self, new_float: &PlacementInfo) -> Vec2<Length> {
+    pub fn add_float(&mut self, new_float: &FloatPlacementInfo) -> Vec2<Length> {
         // Place the float.
-        let new_float_origin = &self.place_object(new_float) + &self.containing_block_position();
+        let new_float_origin = &self.place_float(new_float) + &self.containing_block_position();
         let new_float_extent = match new_float.side {
             FloatSide::Left => new_float_origin.inline + new_float.size.inline,
             FloatSide::Right => new_float_origin.inline,
@@ -191,14 +209,20 @@ impl FloatContext {
     }
 }
 
-/// Information needed to place an object so that it doesn't collide with existing floats.
+/// Information needed to place a float so that it doesn't collide with existing floats.
 #[derive(Clone, Debug)]
-pub struct PlacementInfo {
-    /// The *margin* box size of the object.
+pub struct FloatPlacementInfo {
+    /// The *margin* box size of the float.
     pub size: Vec2<Length>,
-    /// Whether the object is (logically) aligned to the left or right.
+    /// Whether the float is (logically) aligned to the left or right.
     pub side: FloatSide,
     /// Which side or sides to clear floats on.
+    pub clear: ClearSide,
+}
+
+#[derive(Clone, Debug)]
+pub struct NonfloatPlacementInfo {
+    pub inline_size: Length,
     pub clear: ClearSide,
 }
 
@@ -251,7 +275,7 @@ impl FloatSide {
 }
 
 impl ClearSide {
-    fn from_style(style: &ComputedValues) -> ClearSide {
+    pub fn from_style(style: &ComputedValues) -> ClearSide {
         match style.get_box().clear {
             ClearProperty::None => ClearSide::None,
             ClearProperty::Left => ClearSide::Left,
@@ -276,24 +300,45 @@ impl FloatBand {
         }
     }
 
-    // Determines whether an object fits in a band.
-    fn object_fits(&self, object: &PlacementInfo, left_wall: Length, right_wall: Length) -> bool {
-        // If we must be clear on the given side and we aren't, this object doesn't fit.
-        if !self.is_clear(object.clear) {
+    fn left_edge(&self, left_wall: Length) -> Length {
+        match self.left {
+            None => left_wall,
+            Some(left) => left.max(left_wall),
+        }
+    }
+
+    fn right_edge(&self, right_wall: Length) -> Length {
+        match self.right {
+            None => right_wall,
+            Some(right) => right.min(right_wall),
+        }
+    }
+
+    fn nonfloat_fits(&self,
+                     nonfloat: &NonfloatPlacementInfo,
+                     left_wall: Length,
+                     right_wall: Length)
+                     -> bool {
+        self.is_clear(nonfloat.clear) &&
+            self.right_edge(right_wall) - self.left_edge(left_wall) >= nonfloat.inline_size
+    }
+
+    // Determines whether a float fits in a band.
+    fn float_fits(&self, float: &FloatPlacementInfo, left_wall: Length, right_wall: Length)
+                  -> bool {
+        // If we must be clear on the given side and we aren't, this float doesn't fit.
+        if !self.is_clear(float.clear) {
             return false;
         }
 
-        match object.side {
+        match float.side {
             FloatSide::Left => {
-                // Compute a candidate left position for the object.
-                let candidate_left = match self.left {
-                    None => left_wall,
-                    Some(left) => left.max(left_wall),
-                };
+                // Compute a candidate left position for the float.
+                let candidate_left = self.left_edge(left_wall);
 
-                // If this band has an existing left float in it, then make sure that the object
+                // If this band has an existing left float in it, then make sure that the float
                 // doesn't stick out past the right edge (rule 7).
-                if self.left.is_some() && candidate_left + object.size.inline > right_wall {
+                if self.left.is_some() && candidate_left + float.size.inline > right_wall {
                     return false;
                 }
 
@@ -301,20 +346,17 @@ impl FloatBand {
                 // it (rule 3).
                 match self.right {
                     None => true,
-                    Some(right) => object.size.inline <= right - candidate_left,
+                    Some(right) => float.size.inline <= right - candidate_left,
                 }
             },
 
             FloatSide::Right => {
-                // Compute a candidate right position for the object.
-                let candidate_right = match self.right {
-                    None => right_wall,
-                    Some(right) => right.min(right_wall),
-                };
+                // Compute a candidate right position for the float.
+                let candidate_right = self.right_edge(right_wall);
 
                 // If this band has an existing right float in it, then make sure that the new
                 // object doesn't stick out past the left edge (rule 7).
-                if self.right.is_some() && candidate_right - object.size.inline < left_wall {
+                if self.right.is_some() && candidate_right - float.size.inline < left_wall {
                     return false;
                 }
 
@@ -322,7 +364,7 @@ impl FloatBand {
                 // it (rule 3).
                 match self.left {
                     None => true,
-                    Some(left) => object.size.inline <= candidate_right - left,
+                    Some(left) => float.size.inline <= candidate_right - left,
                 }
             },
         }
@@ -701,7 +743,7 @@ impl FloatBox {
                 };
 
                 // Calculate the containing-block-relative float position.
-                let margin_box_start_corner = float_context.add_float(&PlacementInfo {
+                let margin_box_start_corner = float_context.add_float(&FloatPlacementInfo {
                     size: &content_size + &pbm_sums.sum(),
                     side: FloatSide::from_style(&style).expect("Float box wasn't floated!"),
                     clear: ClearSide::from_style(&style),
@@ -720,6 +762,7 @@ impl FloatBox {
                     pbm.padding,
                     pbm.border,
                     margin,
+                    Length::zero(),
                     CollapsedBlockMargins::zero(),
                 )
             },

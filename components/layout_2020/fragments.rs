@@ -96,6 +96,9 @@ pub(crate) struct BoxFragment {
     pub border: Sides<Length>,
     pub margin: Sides<Length>,
 
+    /// Extra block-direction space needed to clear floats.
+    pub clearance: Length,
+
     pub block_margins_collapsed_with_children: CollapsedBlockMargins,
 
     /// The scrollable overflow of this box fragment.
@@ -340,6 +343,7 @@ impl BoxFragment {
         padding: Sides<Length>,
         border: Sides<Length>,
         margin: Sides<Length>,
+        clearance: Length,
         block_margins_collapsed_with_children: CollapsedBlockMargins,
     ) -> BoxFragment {
         // FIXME(mrobinson, bug 25564): We should be using the containing block
@@ -361,6 +365,7 @@ impl BoxFragment {
             padding,
             border,
             margin,
+            clearance,
             block_margins_collapsed_with_children,
             scrollable_overflow_from_children,
         }

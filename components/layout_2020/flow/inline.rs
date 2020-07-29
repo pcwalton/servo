@@ -4,7 +4,7 @@
 
 use crate::cell::ArcRefCell;
 use crate::context::LayoutContext;
-use crate::flow::float::{FloatBox, FloatContext};
+use crate::flow::float::{ClearSide, FloatBox, FloatContext, NonfloatPlacementInfo};
 use crate::flow::FlowLayout;
 use crate::formatting_contexts::IndependentFormattingContext;
 use crate::fragments::{
@@ -413,10 +413,23 @@ impl Lines {
                 }
             },
         };
+
+        // Figure out how much space is occupied by floats on this line.
+        //
+        // TODO(pcwalton): If there isn't enough space for the line at all, redo its layout. This
+        // will require making inline layout data structures persistent so that we can rewind them.
+        let (left_float_space, right_float_space) = match float_context {
+            None => (Length::zero(), Length::zero()),
+            Some(ref float_context) => float_context.used_float_space_here(),
+        };
+
         let move_by = match text_align {
-            TextAlign::Start => Length::zero(),
-            TextAlign::Center => (containing_block.inline_size - line_content_inline_size) / 2.,
-            TextAlign::End => containing_block.inline_size - line_content_inline_size,
+            TextAlign::Start => left_float_space,
+            TextAlign::Center => {
+                left_float_space +
+                    (containing_block.inline_size - left_float_space - right_float_space) * 0.5
+            }
+            TextAlign::End => containing_block.inline_size - left_float_space - right_float_space,
         };
         if move_by > Length::zero() {
             for fragment in &mut line_contents {
@@ -529,6 +542,7 @@ impl<'box_tree> PartialInlineBoxFragment<'box_tree> {
             self.padding.clone(),
             self.border.clone(),
             self.margin.clone(),
+            Length::zero(),
             CollapsedBlockMargins::zero(),
         );
         let last_fragment = self.last_box_tree_fragment && !at_line_break;
@@ -597,6 +611,7 @@ fn layout_atomic(
                 pbm.padding,
                 pbm.border,
                 margin,
+                Length::zero(),
                 CollapsedBlockMargins::zero(),
             )
         },
@@ -672,6 +687,7 @@ fn layout_atomic(
                 pbm.padding,
                 pbm.border,
                 margin,
+                Length::zero(),
                 CollapsedBlockMargins::zero(),
             )
         },
@@ -772,6 +788,7 @@ impl TextRun {
             break_at_start: _,
         } = self.break_and_shape(layout_context);
         let font_size = self.parent_style.get_font().font_size.size.0;
+        let clear_side = ClearSide::from_style(&self.parent_style);
         let mut runs = runs.iter();
         loop {
             let mut glyphs = vec![];
@@ -787,9 +804,19 @@ impl TextRun {
                     .as_ref()
                     .map_or(true, |run| run.glyph_store.is_whitespace())
                 {
-                    // If this run exceeds the bounds of the containing block, then
-                    // we need to attempt to break the line.
-                    if advance_width > ifc.containing_block.inline_size - ifc.inline_position {
+                    let new_line_inline_size = ifc.inline_position + advance_width;
+                    let run_fits = match ifc.float_context {
+                        None => new_line_inline_size <= ifc.containing_block.inline_size,
+                        Some(ref float_context) => {
+                            float_context.nonfloat_fits_here(&NonfloatPlacementInfo {
+                                inline_size: new_line_inline_size,
+                                clear: clear_side,
+                            })
+                        }
+                    };
+                    // If this run exceeds the available space, then we need to attempt to break
+                    // the line.
+                    if !run_fits {
                         // Reset the text run iterator to the last whitespace if possible,
                         // to attempt to re-layout the most recent glyphs on a new line.
                         if let Some((len, width, iter)) = last_break_opportunity.take() {

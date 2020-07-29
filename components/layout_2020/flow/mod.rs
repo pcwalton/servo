@@ -6,7 +6,7 @@
 
 use crate::cell::ArcRefCell;
 use crate::context::LayoutContext;
-use crate::flow::float::{FloatBox, FloatContext};
+use crate::flow::float::{ClearSide, FloatBox, FloatContext};
 use crate::flow::inline::InlineFormattingContext;
 use crate::formatting_contexts::{
     IndependentFormattingContext, IndependentLayout, NonReplacedFormattingContext,
@@ -177,39 +177,50 @@ fn layout_block_level_children(
                     fragment.border.block_sum() +
                     fragment.content_rect.size.block;
 
-                if placement_state.next_in_flow_margin_collapses_with_parent_start_margin {
-                    assert_eq!(placement_state.current_margin.solve(), Length::zero());
-                    placement_state
-                        .start_margin
-                        .adjoin_assign(&fragment_block_margins.start);
-                    if fragment_block_margins.collapsed_through {
+                // Perform margin collapse if there is no clearance.
+                if fragment.clearance == Length::zero() {
+                    if placement_state.next_in_flow_margin_collapses_with_parent_start_margin {
+                        assert_eq!(placement_state.current_margin.solve(), Length::zero());
                         placement_state
                             .start_margin
+                            .adjoin_assign(&fragment_block_margins.start);
+                        if fragment_block_margins.collapsed_through {
+                            placement_state
+                                .start_margin
+                                .adjoin_assign(&fragment_block_margins.end);
+                            return;
+                        }
+                        placement_state.next_in_flow_margin_collapses_with_parent_start_margin =
+                            false;
+                    } else {
+                        placement_state
+                            .current_margin
+                            .adjoin_assign(&fragment_block_margins.start);
+                    }
+                    fragment.content_rect.start_corner.block +=
+                        placement_state.current_margin.solve() +
+                        placement_state.current_block_direction_position;
+                    if fragment_block_margins.collapsed_through {
+                        placement_state
+                            .current_margin
                             .adjoin_assign(&fragment_block_margins.end);
                         return;
                     }
-                    placement_state.next_in_flow_margin_collapses_with_parent_start_margin = false;
+                    placement_state.current_block_direction_position +=
+                        placement_state.current_margin.solve() + fragment_block_size;
+                    placement_state.current_margin = fragment_block_margins.end;
                 } else {
-                    placement_state
-                        .current_margin
-                        .adjoin_assign(&fragment_block_margins.start);
+                    fragment.content_rect.start_corner.block +=
+                        placement_state.current_block_direction_position;
+                    placement_state.current_block_direction_position += fragment.clearance +
+                        fragment_block_size;
                 }
-                fragment.content_rect.start_corner.block += placement_state.current_margin.solve() +
-                    placement_state.current_block_direction_position;
-                if fragment_block_margins.collapsed_through {
-                    placement_state
-                        .current_margin
-                        .adjoin_assign(&fragment_block_margins.end);
-                    return;
-                }
-                placement_state.current_block_direction_position +=
-                    placement_state.current_margin.solve() + fragment_block_size;
-                placement_state.current_margin = fragment_block_margins.end;
 
                 // Update float ceiling if necessary.
                 // https://drafts.csswg.org/css2/#propdef-float
                 if let Some(ref mut float_context) = float_context {
-                    float_context.current_block_position = float_context.containing_block_position +
+                    float_context.current_block_position =
+                        float_context.containing_block_position +
                         placement_state.current_block_direction_position;
                     float_context.lower_ceiling(float_context.current_block_position);
                 }
@@ -443,6 +454,12 @@ fn layout_in_flow_non_replaced_block_level(
     tree_rank: usize,
     mut float_context: Option<&mut FloatContext>,
 ) -> BoxFragment {
+    // Clear past floats if necessary.
+    let clearance = match float_context {
+        None => Length::zero(),
+        Some(ref float_context) => float_context.clearance_here(ClearSide::from_style(style)),
+    };
+
     let pbm = style.padding_border_margin(containing_block);
     let box_size = style.content_box_size(containing_block, &pbm);
     let max_box_size = style.content_max_box_size(containing_block, &pbm);
@@ -502,10 +519,16 @@ fn layout_in_flow_non_replaced_block_level(
         None => None,
         Some(ref float_context) => {
             let mut new_float_context = (*float_context).clone();
-            new_float_context.containing_block_position = new_float_context.current_block_position;
+            new_float_context.containing_block_position =
+                new_float_context.current_block_position +
+                clearance +
+                pbm.border.block_start +
+                pbm.padding.block_start;
             new_float_context.left_wall +=
                 pbm.padding.inline_start + pbm.border.inline_start + margin.inline_start;
             new_float_context.right_wall = new_float_context.left_wall + inline_size;
+            new_float_context.current_block_position = new_float_context.containing_block_position;
+            new_float_context.lower_ceiling(new_float_context.containing_block_position);
             Some(new_float_context)
         },
     };
@@ -590,7 +613,7 @@ fn layout_in_flow_non_replaced_block_level(
     });
     let content_rect = Rect {
         start_corner: Vec2 {
-            block: pbm.padding.block_start + pbm.border.block_start,
+            block: pbm.padding.block_start + pbm.border.block_start + clearance,
             inline: pbm.padding.inline_start + pbm.border.inline_start + margin.inline_start,
         },
         size: Vec2 {
@@ -606,6 +629,7 @@ fn layout_in_flow_non_replaced_block_level(
         pbm.padding,
         pbm.border,
         margin,
+        clearance,
         block_margins_collapsed_with_children,
     )
 }
@@ -639,6 +663,7 @@ fn layout_in_flow_replaced_block_level<'a>(
         size,
     };
     let block_margins_collapsed_with_children = CollapsedBlockMargins::from_margin(&margin);
+    // FIXME(pcwalton): Clearance!
     BoxFragment::new(
         tag,
         style.clone(),
@@ -647,6 +672,7 @@ fn layout_in_flow_replaced_block_level<'a>(
         pbm.padding,
         pbm.border,
         margin,
+        Length::zero(),
         block_margins_collapsed_with_children,
     )
 }

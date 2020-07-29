@@ -561,6 +561,7 @@ impl HoistedAbsolutelyPositionedBox {
                 pbm.padding,
                 pbm.border,
                 margin,
+                Length::zero(),
                 CollapsedBlockMargins::zero(),
             )
         };
