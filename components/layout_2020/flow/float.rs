@@ -115,7 +115,7 @@ impl FloatContext {
         while !band.is_clear(side) {
             band = self.bands.find_next(band.top).unwrap();
         }
-        return band.top - self.current_block_position;
+        return (band.top - self.current_block_position).max(Length::zero());
     }
 
     pub fn nonfloat_fits_here(&self, nonfloat: &NonfloatPlacementInfo) -> bool {
@@ -128,6 +128,16 @@ impl FloatContext {
         let left = band.left_edge(self.left_wall) - self.left_wall;
         let right = self.right_wall - band.right_edge(self.right_wall);
         (left, right)
+    }
+
+    /// Returns the block position of the (logically) bottom edge of the last float, relative to
+    /// the start of the block formatting context.
+    pub fn last_float_bottom_edge(&self) -> Length {
+        let mut band = self.bands.find_prev(Length::new(f32::INFINITY)).unwrap();
+        while band.left.is_some() || band.right.is_some() {
+            band = self.bands.find_prev(band.top).unwrap();
+        }
+        band.top
     }
 
     /// Determines where a float with the given placement would go, but leaves the float context
@@ -424,6 +434,11 @@ impl FloatBandTree {
         self.root.find_next(block_position)
     }
 
+    /// Returns the last band whose top is strictly less than to the given `block_position`.
+    pub fn find_prev(&self, block_position: Length) -> Option<FloatBand> {
+        self.root.find_prev(block_position)
+    }
+
     /// Sets the side values of all bands within the given half-open range to be at least
     /// `new_value`.
     #[must_use]
@@ -545,6 +560,26 @@ impl FloatBandLink {
         // It's somewhere in this subtree, but we aren't sure whether it's here or in the left
         // subtree.
         if let Some(band) = this.left.find_next(block_position) {
+            return Some(band);
+        }
+
+        Some(this.band.clone())
+    }
+
+    /// Returns the last band whose top is strictly less than the given `block_position`.
+    fn find_prev(&self, block_position: Length) -> Option<FloatBand> {
+        let this = match self.0 {
+            None => return None,
+            Some(ref node) => node,
+        };
+
+        if block_position <= this.band.top {
+            return this.left.find_prev(block_position);
+        }
+
+        // It's somewhere in this subtree, but we aren't sure whether it's here or in the right
+        // subtree.
+        if let Some(band) = this.right.find_prev(block_position) {
             return Some(band);
         }
 

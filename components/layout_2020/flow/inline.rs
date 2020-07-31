@@ -426,10 +426,14 @@ impl Lines {
         let move_by = match text_align {
             TextAlign::Start => left_float_space,
             TextAlign::Center => {
-                left_float_space +
-                    (containing_block.inline_size - left_float_space - right_float_space) * 0.5
+                left_float_space + (containing_block.inline_size -
+                                    line_content_inline_size -
+                                    left_float_space -
+                                    right_float_space) * 0.5
             }
-            TextAlign::End => containing_block.inline_size - left_float_space - right_float_space,
+            TextAlign::End => {
+                containing_block.inline_size - line_content_inline_size - right_float_space
+            }
         };
         if move_by > Length::zero() {
             for fragment in &mut line_contents {

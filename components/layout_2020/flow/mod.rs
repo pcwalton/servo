@@ -79,18 +79,18 @@ impl BlockFormattingContext {
         tree_rank: usize,
     ) -> IndependentLayout {
         let mut float_context;
-        let float_context = if self.contains_floats {
+        let mut float_context = if self.contains_floats {
             float_context = FloatContext::new();
             Some(&mut float_context)
         } else {
             None
         };
-        let flow_layout = self.contents.layout(
+        let mut flow_layout = self.contents.layout(
             layout_context,
             positioning_context,
             containing_block,
             tree_rank,
-            float_context,
+            float_context.as_mut().map(|c| &mut **c),
             CollapsibleWithParentStartMargin(false),
         );
         assert!(
@@ -98,9 +98,18 @@ impl BlockFormattingContext {
                 .collapsible_margins_in_children
                 .collapsed_through
         );
+
+        // The content block size of a block formatting context includes all its floats.
+        let content_block_size = match float_context {
+            None => flow_layout.content_block_size,
+            Some(float_context) => {
+                flow_layout.content_block_size.max(float_context.last_float_bottom_edge())
+            }
+        };
+
         IndependentLayout {
             fragments: flow_layout.fragments,
-            content_block_size: flow_layout.content_block_size +
+            content_block_size: content_block_size +
                 flow_layout.collapsible_margins_in_children.end.solve(),
         }
     }
@@ -363,6 +372,7 @@ impl BlockLevelBox {
                                 replaced.tag,
                                 &replaced.style,
                                 &replaced.contents,
+                                float_context,
                             )
                         },
                     ))
@@ -642,7 +652,14 @@ fn layout_in_flow_replaced_block_level<'a>(
     tag: Tag,
     style: &Arc<ComputedValues>,
     replaced: &ReplacedContent,
+    float_context: Option<&mut FloatContext>,
 ) -> BoxFragment {
+    // Clear past floats if necessary.
+    let clearance = match float_context {
+        None => Length::zero(),
+        Some(ref float_context) => float_context.clearance_here(ClearSide::from_style(style)),
+    };
+
     let pbm = style.padding_border_margin(containing_block);
     let size = replaced.used_size_as_if_inline_element(containing_block, style, &pbm);
 
@@ -663,7 +680,6 @@ fn layout_in_flow_replaced_block_level<'a>(
         size,
     };
     let block_margins_collapsed_with_children = CollapsedBlockMargins::from_margin(&margin);
-    // FIXME(pcwalton): Clearance!
     BoxFragment::new(
         tag,
         style.clone(),
@@ -672,7 +688,7 @@ fn layout_in_flow_replaced_block_level<'a>(
         pbm.padding,
         pbm.border,
         margin,
-        Length::zero(),
+        clearance,
         block_margins_collapsed_with_children,
     )
 }
